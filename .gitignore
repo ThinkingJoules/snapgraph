@@ -28,3 +28,4 @@ node_modules
 
 # Browserify bundle
 bundle.js
+util/test.js
