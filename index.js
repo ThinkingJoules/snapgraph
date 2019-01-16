@@ -15,9 +15,9 @@ var nextIndex = util.nextIndex
 //import Ajv from 'ajv';
 if(typeof window !== "undefined"){
     var Gun = globalVar.Gun;
-  } else {
+}else{
     var Gun = global.Gun;
-  }
+}
 //var ajv = new Ajv();
 var GB = {}
 let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
@@ -29,6 +29,7 @@ if (!Gun)
 base(Gun.chain);
 
 function base(gun) {
+    //config api
     gun.loadGBase = loadGBase;
     gun.modifyGBconfig = modifyGBconfig
     gun.newBase = newBase;
@@ -36,25 +37,29 @@ function base(gun) {
     gun.addColumn = addColumn
     gun.addRow = addRow
 
+    //usage api
     gun.gbase = gbase
     gun.getTable = getTable
     gun.getColumn = getColumn
     gun.config = getConfig
     gun.getRow = getHID
     gun.edit = edits
+    gun.retrieve = retrieve
+
+    //react api
+    gun.buildTable = buildTable
+    gun.buildRow = buildRow
     
-    gun.massNewPut = massNewPut
-    gun.importSettle = importSettle
+    //import api
+    gun.tsvParse = tsvJSONgb //not gun.chain
+    gun.importTable = importTable
 
    
-    gun.settle = settle;
     gun.archive = archive
     gun.unarchive = unarchive
     gun.delete = deleteNode
     gun.cascade = cascade
 
-    gun.rePut = rePut
-    gun.linkImport = linkImport
 }
 
 //utility helpers
@@ -196,17 +201,23 @@ function edits(putObj){
             
             
             //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
+            let editTypes = {string: true, number: true, boolean: true}
             for (const pAlias in putObj) {
                 if(GB.byAlias[args.base].props[args.t].props[pAlias]){
                     let pGBname = GB.byAlias[args.base].props[args.t].props[pAlias].alias
                     let pType = GB.byAlias[args.base].props[args.t].props[pAlias].GBtype
-                    const value = putObj[pAlias];
-                    let valid = checkGBtype(value, pType)
-                    if(valid){
-                        params.put = {[pGBname]: value}
+                    let typeCheck = editTypes[pType]
+                    if(typeCheck){
+                        const value = putObj[pAlias];
+                        let valid = checkGBtype(value, pType)
+                        if(valid){
+                            params.put = {[pGBname]: value}
+                        }else{
+                            //do something to alert that nothing is getting put in the DB
+                            return console.log('Edit failed!', value, 'is not of type', pType,'. NOTHING WRITTEN TO DATABASE')
+                        }
                     }else{
-                        //do something to alert that nothing is getting put in the DB
-                        return console.log('Edit failed!', value, 'is not of type', pType,'. NOTHING WRITTEN TO DATABASE')
+                        console.log('Warning: Ignoring non root properties')
                     }
                 }else{
                     return console.log('Cannot find', pAlias, 'on table', args.t,'. NOTHING WRITTEN TO DATABASE') 
@@ -251,12 +262,20 @@ function edits(putObj){
         return console.log('Not sure what you are trying todo, NOTHING WRITTEN TO DB')
     }
 }
+let validGBtypes = {string: true, number: true, boolean: true, null: true, prev: true, next: true, function: true, tags: true}
 function checkGBtype(value, GBtype){
-    //root types, root data stored in gun
-    //GB specific static: tags, 
-    //GB specific active: function, ??cascade things??
-    //GB or Gun structure: link
-    return true
+    let valid = validGBtypes
+    if(!valid[GBtype]){
+        console.log('Invalid Column Type')
+        return false
+    }else if(value === undefined){//validates modify config type entered
+        return true
+    }
+    if(typeof value === GBtype){
+        return true
+    }else{
+        return false
+    }
 }
 function modifyGBconfig(configObj, baseID, tname, pname){
     // need to add more checks for valid configObj, whole app is built from this config so if it screws up it makes a mess.
@@ -457,7 +476,12 @@ function loadGBase() {
                 gun.get(HIDsoul).on(function(data,id){
                     let souls = Gun.obj.copy(data)
                     delete souls['_']
-                    tconfig.HID = souls
+                    for (const key in souls) {
+                        const value = souls[key];
+                        if (value) {
+                            tconfig.HID[key] = value
+                        }
+                    }
                 })
             
                 gun.get(key + '/state').get('history').on(function(data){
@@ -479,10 +503,10 @@ function loadGBase() {
 // let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
 // let tParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {})
 // let pParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, GBtype: {}, required: false, default: false, fn: false, usedIn:{}}
-function newBase(baseName, tname, pname){
+function newBase(baseName, tname, pname, baseID){
     let gun = this
     let id = Gun.text.random(12)
-    let soul = 'GB/' + id
+    let soul = (baseID) ? baseID : 'B' + id
     let param = Gun.obj.copy(baseParams)
     tname = (tname) ? tname : 'table1'
     pname = (pname) ? pname : 'HumanID'
@@ -508,7 +532,7 @@ function addTable(tAlias, pAlias){
     let args = JSON.parse(gun['_']['get'])
     let idx = Object.keys(args).length
     pAlias = (pAlias)? pAlias : 'HumanID'//optional
-    if(args.base && idx == 1){//gun.gbase.getTable.newTable('tableName')
+    if(args.base && idx == 1){//gun.gbase.addTable('table Name', 'HID col Name')
         args['t'] = tAlias
         if(!GB.byAlias[args.base].props[tAlias]){
             let param = Gun.obj.copy(GB.byAlias[args.base])
@@ -543,8 +567,10 @@ function addColumn(pAlias, gbcoltype){
     let args = JSON.parse(gun['_']['get'])
     let idx = Object.keys(args).length
     gbcoltype = (gbcoltype) ? gbcoltype : 'string'//optional
+    let check = checkGBtype(undefined, gbcoltype)
+    if(!check){return console.log('Error: Invalid column type')}
     //Need to validate the entered gbcoltype with gbase types
-    if(args.base && args.t && idx == 2){//gun.gbase.getTable.newTable('tableName')
+    if(args.base && args.t && idx == 2){//gun.gbase.getTable('tableName').addColumn('Col Name', 'string')
         args['p'] = pAlias
         if(GB.byAlias[args.base].props[args.t] && !GB.byAlias[args.base].props[args.t].props[pAlias]){
             let param = Gun.obj.copy(GB.byAlias[args.base])
@@ -587,133 +613,343 @@ function addRow(userHID){
     }
     return gun.get(JSON.stringify(args)) 
 }
-
-function massNewPut(putString, data, opt) {
-    let gun = this;
-    var nodes
-    if(opt){
-        if (opt.length == 1){
-            opt[0] = parseInt(opt[0])
-            opt.push(data.length)
-            nodes = data.length-parseInt(opt[0])
+function retrieve(colName){
+    //used like gun.gbase(GB/uuid).getTable('Table Name').retrieve('Column Name').on(CB)
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    
+    if(colName === undefined || !args.base || !args.t){
+        let error = {on: function(){return console.log('Error: Missing parameters, use gun.gbase("GB/uuid").getTable("Table Name").retrieve("Column Name").on(CB)')}}
+        return error
+    }else{//retrieving column obj
+        let tval = GB.byAlias[args.base].props[args.t].alias
+        if(!GB.byAlias[args.base].props[args.t].props[colName] && !GB.byAlias[args.base].props[args.t].props[colName].alias){
+            let error = {on: function(){return console.log('Error: Cannot find column name specified', colName)}}
+            return error
         }
-    }else if (opt && opt.length == 2){
-        opt[0] = parseInt(opt[0])
-        opt[1] = parseInt(opt[1]) 
-        nodes = parseInt(opt[1])-parseInt(opt[0])
-    }else{
-        opt = [0, data.length]
+        let pval = GB.byAlias[args.base].props[args.t].props[colName].alias
+        let colSoul = args.base + '/' + tval + '/' + pval
+        console.log(colName)
+        return gunRoot.get(colSoul)
     }
-        nodes = data.length
-    nodes = parseInt(opt[1])-parseInt(opt[0])
-    let keys = Object.keys(data[0]).length
-    console.log(nodes)
-    let wait = parseInt(nodes)*keys*1.3
-    let entities = parseInt(nodes)*keys
-    console.log('entities = ', entities)
-    console.log('start');
-    //if (data.length > 1500){return console.log('Limited to only 1000 nodes at a time!')}
-    var tempIdObj = {};
-    for(let i = parseInt(opt[0]); i < parseInt(opt[1]); i++) {
-        // if(i && (i % 50 == 0)) {
-        //   localStorage.clear();
-        // }
+}
+function buildTable(thisReact){
+    //gun.gbase(GB/uuid).getTable('Table Name').buildTable(this) <---react component this
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    if(typeof thisReact.setState !== 'function' || !args.base || !args.t){
+        return console.log('Error: Missing parameters or cannot find .setState function on this object')
+    }
+    for (const pName in GB.byAlias[args.base].props[args.t].props) {
+        if (GB.byAlias[args.base].props[args.t].props[pName]) {
+            gunRoot.gbase(args.base).getTable(args.t).retrieve(pName).on(function(data){
+                thisReact.setState({
+                    [pName] : data
+                })
+            })
+        }
+    }
+}
+function buildRow(thisReact){
+    //gun.gbase(GB/uuid).getTable('Table Name').getRow('Human ID').buildRow(this) <---react component this
+    let gun = this
+    let args = JSON.parse(gun['_']['get'])
+    if(typeof thisReact.setState !== 'function' || !args.base || !args.t || !args.HID){
+        return console.log('Error: Missing parameters or cannot find .setState function on "this" object')
+    }
+    let obj = {}
+    if(!GB.byAlias[args.base].props[args.t].HID[args.HID]){
+        return console.log('Error: Cannot find HID specified on this table', args.HID)
+    }
+    let HIDalias = GB.byAlias[args.base].props[args.t].HID[args.HID]
+    for (const pName in GB.byAlias[args.base].props[args.t].props) {
+        if (GB.byAlias[args.base].props[args.t].props[pName]) {
+            if(GB.byAlias[args.base].props[args.t].props[pName].alias === 'p0'){
+                obj[pName] = thisReact.state[pName][args.HID]
+            }else{
+                obj[pName] = thisReact.state[pName][HIDalias]
+            }
+        }
+    }
+    thisReact.setState({
+        [args.HID] : obj
+    })
+}
+function tsvJSONgb(tsv){
+ 
+    var lines=tsv.split("\r\n");
+   
+    var result = [];
+   
+    var headers=lines[0].split("\t");
+   
+    for(var i=0;i<lines.length;i++){
+      result[i] = []
+   
+        var currentline=lines[i].split("\t");
+   
+        for(var j=0;j<headers.length;j++){
+        let value = currentline[j]
         
-        let newNode = gun.newNode(putString)
-        let id = newNode['_']['soul'].split('/')[1]
-        data[i]['!ID'] = id
-
-        newNode.importSettle(data[i]);
+        let valType = Number(value) || value.toString()
+        result[i][j] = valType;
+        } 
     }
-    console.log('Done')
-			
+     
+    return result; //JavaScript object
+    //return JSON.stringify(result); //JSON
+}
+function importTable(dataArr, tAlias, oldTalias){
+    let gunargs = this
+    let gun = this.back(-1)
+    let args = JSON.parse(gunargs['_']['get'])
+    let GBcopy = Gun.obj.copy(GB)
+    if(oldTalias && GBcopy.byAlias[args.base].props[oldTalias]){
+        gun.gbase(args.base).getTable(oldTalias).config().edit({alias: tAlias})
+        GBcopy.byAlias[args.base].props[tAlias] = Object.assign({},GBcopy.byAlias[args.base].props[oldTalias])//temporary change
+    }else if(oldTalias && !GBcopy.byAlias[args.base].props[oldTalias]){
+        return console.log('Abort: cannot find old table to rename:', oldTalias)
+    }
+    let merge = true
+    let overwriteExisting = true
+    let create
+    let HIDcolName = dataArr[0][0]
+    let tparams
+    let GBtval
+    if(tAlias && args.base){//firgure out what user wants, create configs and such
+        if(GB.byAlias[args.base].props[tAlias]){//parse and match existing data
+            tparams = GB.byAlias[args.base].props[tAlias]
+            GBtval = GB.byAlias[args.base].props[tAlias].alias
+            merge = confirm("Table entered matches existing table. Do you want to merge import with existing data? If you click 'OK', another dialog will ask which data to keep if there is a match")
+            if(merge){
+                let colMatch = []
+                for (let j = 0; j < dataArr[0].length; j++) {
+                    const col = dataArr[0][j];
+                    if(!GBcopy.byAlias[args.base].props[tAlias].props[col]){
+                    colMatch.push(col)
+                    }
+                }
+                
+                overwriteExisting = confirm("Click 'OK' to overwrite any matching data. Click 'Cancel' to only add non-matching data to database")
+                if(!overwriteExisting && colMatch.length && !confirm("These columns don't match, should they be added? " + colMatch)){//add columns
+                    for (let j = 0; j < dataArr[0].length; j++) {
+                        const col = dataArr[0][j];
+                        if(!GBcopy.byAlias[args.base].props[tAlias].props[col] && j === 0){//rename HID col
+                            return console.log('Import aborted: Human ID column must already match')
+                        }else if(!GBcopy.byAlias[args.base].props[tAlias].props[col]){//add rest
+                            gun.gbase(args.base).getTable(tAlias).addColumn(col,'string')
+                        }
+                    }
+                }else if (overwriteExisting && colMatch.length){
+                    for (let j = 0; j < dataArr[0].length; j++) {
+                        const col = dataArr[0][j];
+                        if(!GBcopy.byAlias[args.base].props[tAlias].props[col] && j === 0){//rename HID col
+                            let curp0name = GBcopy.byGB[args.base].props[GBtval].props.p0.alias
+                            gun.gbase(args.base).getTable(tAlias).getColumn(curp0name).config().edit({alias: col})
+                        }else if(!GBcopy.byAlias[args.base].props[tAlias].props[col]){//add rest
+                            gun.gbase(args.base).getTable(tAlias).addColumn(col,'string')
+                        }
+                    }
+                }else if(colMatch.length){
+                    return alert('Import aborted: Following columns were not found ' + colMatch)
+                }
+            }else{
+                return alert('Import aborted. Please re-import with a different table name')
+            }
+        }else{
+            GBcopy.byAlias[args.base].props[tAlias] = {HID: {}}
+            tparams = GBcopy.byAlias[args.base].props[tAlias]
+            create = confirm("Click 'OK' to create a new table with a name of " + tAlias)
+            if (!create){
+                return alert('Import aborted.')
+            }else{// create configs
+                let restColName = dataArr[0].slice(1)
+                gun.gbase(args.base).addTable(tAlias,HIDcolName)
+                for (let i = 0; i < restColName.length; i++) {
+                    const colName = restColName[i];
+                    gun.gbase(args.base).getTable(tAlias).addColumn(colName, 'string')
+                }
+                
+            }
+        }
+
+    }else{
+        return console.log('IMPORT ABORTED: Please specify a table name')
+    }
+    let result = {}
+    let headers = dataArr[0]
+    
+
+    if(Array.isArray(dataArr)){
+        for (let i = 1; i < dataArr.length; i++) {
+            const rowArr = dataArr[i];
+            let rowsoul
+            if(!tparams.HID || !tparams.HID[rowArr[0]]){
+                GBtval = GB.byAlias[args.base].props[tAlias].alias
+                rowsoul =  args.base + '/' + GBtval + '/' + Gun.text.random(12)
+            }else{
+                rowsoul = tparams.HID[rowArr[0]]
+            }
+            if(!tparams.HID || tparams.HID[rowArr[0]] && overwriteExisting || !tparams.HID[rowArr[0]]){//skip if row exists and user does not wants it to overwrite
+                if(Array.isArray(rowArr) && rowArr[0]){//skip if HID is blank
+                    for (let j = 0; j < rowArr.length; j++) {
+                        const value = rowArr[j];
+                        if(value){
+                            const header = headers[j]
+                            let GBidx = {}
+                            if(j === 0){//HID
+                                GBidx[value] = rowsoul
+                            }else{
+                                GBidx[rowsoul] = value
+                            }
+                            result[header] = Object.assign({}, result[header], GBidx)
+                        }
+                    }
+                }
+            } 
+        }
+    }
+    console.log(result)
+    //put alias keys in first, to ensure they write first in case of disk error, can reimport
+    let HIDpropindex = args.base + '/' + GBtval + '/p0'
+    gun.get(HIDpropindex).put(result[HIDcolName])
+    //create instance nodes
+    for (const HID in result[HIDcolName]) {
+            const gbid = result[HIDcolName][HID]
+            gun.get(gbid).get('p0').put(HID)
+    }
+    tparams = GB.byAlias[args.base].props[tAlias]
+    //put column idx objs
+    for (const key in result) {
+        if (key !== HIDcolName) {
+            if(tparams.props[key]){
+                let pVal = tparams.props[key].alias
+                const putObj = result[key];
+                let gbsoul = args.base + '/' + GBtval + '/' + pVal
+                gun.get(gbsoul).put(putObj)
+            }else{
+                console.log('column not found, skipping')
+            }
+            
+            
+        }
+    }
+
+    console.log(result)
+    //trigger config node subscription
+    gun.get('GBase').get('tick').put(Gun.text.random(4))
+    //return result
+}
+function changeColumnType(newType){
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    let check = checkGBtype(undefined, newType)
+    if(!check){return console.log('Error: Invalid column type')}
+    if(args.base && args.t && args.p){
+        let colParam = GB.byAlias[args.base].props[args.t].props[args.p]
+        let oldType = colParam.GBtype
+        let colSoul = args.base + '/' + args.t + '/' + args.p
+        let currentData = gunGet(gunRoot, colSoul)
+        currentData.then(data => {
+            //forin keys and attempt to change values over
+            //if cannot convert?? wipe out -> If wipe out then we need to store the change in the node undo
+            // otherwise if we don't wipe out could do with a single new put to Gun with values we could convert
+            //but then what do we do with cells that are wrong type?
+            //maybe just abort the conversion and alert user which cell(s) needs attention
+
+
+        })
+
+    }else{
+        return console.log('ERROR: Invalid parameters')
+    }
+    
+}
+function linkColumn(gbaseGetRow){
+    //gbaseGetRow = gun.gbase(GBUUID).getTable('TableName').getRow('Human ID') <--Should return with .get as JSON args obj
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    let targetLink = JSON.parse(gbaseGetRow['_']['get'])
+
+
+
+
 }
 
-function rePut(type, keylen, data){
-    console.log('starting rePut')
+
+
+
+
+
+async function cascade(method, curNode, doSettle){
+    let currentNode = Gun.obj.copy(curNode)
+    if(doSettle == undefined){
+        doSettle = true
+    }
     let gun = this.back(-1)
-    let get = '!TYPE/' + type
-    let hid = GB[type].nav.humanID
-    let next = gunGetListNodes(gun,get)
-    next.then(nodeArr =>{
-        console.log('nodes found', nodeArr.length)
-        let keyCheck = {}
-        let hids = {}
-        let missing = []
-        for (let i = 0; i < nodeArr.length; i++) {
-            const node = nodeArr[i];
-            hids[node[hid]] = node
-            let keys = Object.keys(node).length
-            if(keys < keylen){
-                let soul = type + '/' + nodeArr[i]['!ID']
-                keyCheck[hid] = soul
-            }
-            
+    console.log('cascading: ', method)
+    let type = currentNode['!TYPE']
+    let nodeSoul = type + '/' + currentNode['!ID']
+    let next = Object.keys(GB[type].next)[0]
+    let nextSet = currentNode[next]['#']
+    let prevsForCalc = GB[type].methods[method].fields
+    let prevs = Object.keys(prevsForCalc)
+    let methodFn = GB[type].methods[method].fn
+    let prevNodes = []
+
+    for (let i = 0; i < prevs.length; i++) {
+        const prop = prevs[i];
+        let cur = prevNodes[i];
+        const prevProp = prevsForCalc[prevs[i]]
+        if(currentNode[prop] && typeof currentNode[prop] === 'object'){
+            cur = await gunGetListNodes(gun,currentNode[prop]['#'])
+        }else{
+            cur = currentNode[prop]
         }
-        for (let i = 0; i < data.length; i++) {
-            const node = data[i];
-            const ref = data[i][hid];
-            if (!hids[ref]) {
-                missing.push(node)
-            }
-            
+        if(Array.isArray(cur)){
+            let curRed = cur.reduce(function(acc,node,idx){
+                let num = (Number(node[prevProp])) ? Number(node[prevProp]) : 0
+                acc += num
+                return acc
+            }, 0)
+            currentNode[prop] = curRed
+        }else{
+            currentNode[prop] = cur
         }
-        console.log(missing)
-        if(Object.keys(keyCheck).length){
-            console.log('nodes missing props:', Object.keys(keyCheck).length)
-            for (let i = 0; i < data.length; i++) {
-                const node = data[i];
-                if(keyCheck[node[hid]]){
-                    for (const key in node) {
-                        gun.get(keyCheck[hid]).get(key).put(node[key])
-                        
-                    }
+    }
+    console.log(currentNode)
+    let fnres = methodFn(currentNode)
+    if(!doSettle){
+        let mutate = Object.assign({}, currentNode, fnres)
+        return mutate
+    }else{
+        gun.get(nodeSoul).settle(fnres,{cascade:false})
+        let nextNodes
+        if(currentNode[next] && typeof currentNode[next] === 'object'){
+            nextNodes = await gunGetListNodes(gun,nextSet)
+            if(Array.isArray(nextNodes)){
+                for (let i = 0; i < nextNodes.length; i++) {
+                    const node = Gun.obj.copy(nextNodes[i])
+                    let nextType = node['!TYPE']
+                    let nextID = node['!ID']
+                    let nextSoul = nextType +'/'+nextID
+                    let cascadeProp = (GB[nextType].cascade) ? getKeyByValue(GB[nextType].cascade,method) : false
+                    console.log('Number of next cascades:', nextNodes.length)
+                    let putObj = {}
+                    putObj[cascadeProp] = 0
+                    let opt = {prevData: node}
+                    gun.get(nextSoul).settle(putObj,opt)
                 }
             }
         }
-        if(missing.length){
-            gun.massNewPut(0,type,missing)
-        }else{
-            return console.log('No Missing Nodes!')
-        }
-         
-    })
-    
-   
+    }
 }
 
 
-function importSettle (newData){
-    let gun = this;
-    let gunRoot = this.back(-1);
-    let nodeID = newData['!ID'] || gun['_']['soul'].split('/')[1] || null//or ID string
-    let type = newData['!TYPE'] || gun['_']['soul'].split('/')[0] || null
-    let nodeSoul = gun['_']['soul'] || type + '/' + nodeID//gun id 'get' string
-    let aliasProp = (GB[type].nav.importID) ? GB[type].nav.humanID : false
-    let alias = (aliasProp && newData[aliasProp]) ? newData[aliasProp] : false
-
-    if(!GB[type]){return console.log('INVALID NODETYPE')}
-    //for a new node
-    gun.get('!ID').put(nodeID)
-    gunRoot.get('!TYPE/'+type).get(nodeSoul).put({'#':nodeSoul}) //setlist collection of same type nodes
-    if (alias){
-        gunRoot.get('!TYPE/'+type + '/!ALIAS').get(alias).put({'#': nodeSoul}) //setlist keyd by importID
-    }
-    let result = GB[type].settle(newData,false)
-    let obj = {}
-    for(let key in result.putObj){
-        if(!GB[type].whereTag.includes(key)){//skip tag fields, tag() handles this
-            gun.get(key).put(result.putObj[key])
-        }else{
-            if (newData[key] && typeof newData[key] == 'string' && newData[key].length){
-                result[key].add = result[key].add.concat(newData[key].split(','))
-            }else if (newData[key] && Array.isArray(newData[key])){
-                result[key].add = result[key].add.concat(newData[key])
-            }
-        }
-    }
-    handleTags(gun, result, type) 
-}
 
 
 
@@ -969,464 +1205,6 @@ function treeReduceRight(startNodeID, method, acc, max){
 //Tree Logic
 
 
-function reLinkNext(nextType, linkProp, prevType, nextData){
-    //nextData should acutally be orevData
-    //this one is a mess, it will make no sense reading it
-    //it is c&p of reLinkPrev with changes made to check
-    //should rename variables so it is not confusing
-    let gun = this.back(-1)
-    let prevNextLink = Object.keys(GB[prevType].next)[0]
-    let importID = GB[prevType].nav.importID
-    let nextGet = '!TYPE/' + nextType + '/!ALIAS'
-    let prevGet = '!TYPE/' + prevType + '/!ALIAS'
-    let prevLinks = '!TYPE/' + prevType
-    //let nextIDs = gunGetListProp(gun, nextGet, '!ID')
-    let next = gunGet(gun, nextGet)
-    let prev = gunGet(gun, prevGet)
-    let nodes = gunGetListNodes(gun,prevLinks)
-    let links = nodes.then(data =>{
-        return Promise.all(data.map(function(curr, idx){
-            const linksoul = curr[prevNextLink]['#']
-            if(linksoul){
-                return gunGet(gun,linksoul)
-            }else{
-                return curr[prevNextLink]
-            }
-        }))
-    })
-    let curLinks = Promise.all([nodes,links]).then(data =>{
-        let [nodes, links] = data
-        return nodes.reduce(function(acc,curr,idx){
-            let soul = curr[importID]
-            acc[soul] = links[idx]
-            return acc
-        },{})
-
-    })
-    Promise.all([next, prev, curLinks])
-        .then(data => {
-            let [nobj ,pobj, prevs] = data
-            let nout = {}
-            let missing = {}
-            let nextLinks = {}
-
-            for (let i = 0; i < nextData.length; i++) {
-
-                const key = pobj[nextData[i][importID]]['#'];
-                const value = nextData[i][prevNextLink]
-                const existing = prevs[nextData[i][importID]]
-                if(((typeof value === 'string' && value.length) || typeof value === 'number') || value === null){
-                    if(typeof value !== 'string'){
-                        let not = []
-                        not.push(value)
-                        nout[key] = not
-                    }else if (typeof value == 'string'){
-                        let idx = value.lastIndexOf(',') + 7
-                        let check = value[idx]
-                        if(!check){
-                            let not = []
-                            not.push(value)
-                            nout[key] = not  
-                        }else{
-                        let arr = value.split(', ')
-                        nout[key] = arr
-                        }
-                    }
-                }
-                let thisN = nout[key]
-                
-                if(thisN && thisN.length){
-                    for (let i = 0; i < thisN.length; i++) {
-                        
-                        const link = thisN[i];
-                        const linkalias = nobj[link]['#']
-
-                        if(!existing[linkalias]){
-                            if(!Array.isArray(missing[key])){
-                                missing[key] = []
-                                missing[key].push(link)
-                            }else{
-                                missing[key].push(link)
-                            }
-                        }
-                        if(!Array.isArray(nextLinks[key])){
-                            nextLinks[key] = []
-                            nextLinks[key].push(link)
-                        }else{
-                            nextLinks[key].push(link)
-                        }
-                    }
-                }
-            }
-            //missing object is all missing prev links
-            console.log(missing)
-            let puts = {} 
-            for (const nkey in missing) {
-                const links = missing[nkey];
-                puts[nkey] = []
-                for (let i = 0; i < links.length; i++) {
-                    let link = links[i];
-                    if (link[0] == '"'){
-                        link = link.slice(1, -1)
-                    }
-                    let prevKey = (nobj[link]) ? nobj[link]['#'] || false : false
-                    //console.log(prevKey)
-                    if(prevKey){
-                        gun.get(nkey).get(prevNextLink).put({})
-                        gun.get(nkey).get(prevNextLink).get(prevKey).put({'#': prevKey})
-                        console.log(nkey, link)
-
-                    }else{
-                        console.log(link)
-                    }
-                }
-            }
-        })
-}
-function reLinkPrev(nextType, linkProp, prevType, nextData){
-    let gun = this.back(-1)
-    let prevNextLink = Object.keys(GB[prevType].next)[0]
-    let importID = GB[nextType].nav.importID
-    let nextGet = '!TYPE/' + nextType + '/!ALIAS'
-    let prevGet = '!TYPE/' + prevType + '/!ALIAS'
-    let prevLinks = '!TYPE/' + nextType
-    //let nextIDs = gunGetListProp(gun, nextGet, '!ID')
-    let next = gunGet(gun, nextGet)
-    let prev = gunGet(gun, prevGet)
-    let nodes = gunGetListNodes(gun,prevLinks)
-    let links = nodes.then(data =>{
-        return Promise.all(data.map(function(curr, idx){
-            const linksoul = curr[linkProp]['#']
-            if(linksoul){
-                return gunGet(gun,linksoul)
-            }else{
-                return curr[linkProp]
-            }
-        }))
-    })
-    let curLinks = Promise.all([nodes,links]).then(data =>{
-        let [nodes, links] = data
-        return nodes.reduce(function(acc,curr,idx){
-            let soul = curr[importID]
-            acc[soul] = links[idx]
-            return acc
-        },{})
-
-    })
-    Promise.all([next, prev, curLinks])
-        .then(data => {
-            let [nobj ,pobj, prevs] = data
-            let nout = {}
-            let missing = {}
-            let nextLinks = {}
-
-            for (let i = 0; i < nextData.length; i++) {
-
-                const key = nobj[nextData[i][importID]]['#'];
-                const value = nextData[i][linkProp]
-                const existing = prevs[nextData[i][importID]]
-                if(((typeof value === 'string' && value.length) || typeof value === 'number') || value === null){
-                    if(typeof value !== 'string'){
-                        let not = []
-                        not.push(value)
-                        nout[key] = not
-                    }else if (typeof value == 'string'){
-                        let idx = value.lastIndexOf(',') + 7
-                        let check = value[idx]
-                        if(!check){
-                            let not = []
-                            not.push(value)
-                            nout[key] = not  
-                        }else{
-                        let arr = value.split(', ')
-                        nout[key] = arr
-                        }
-                    }
-                }
-                let thisN = nout[key]
-                
-                if(thisN && thisN.length){
-                    for (let i = 0; i < thisN.length; i++) {
-                        
-                        const link = thisN[i];
-                        const linkalias = pobj[link]['#']
-
-                        if(!existing[linkalias]){
-                            if(!Array.isArray(missing[key])){
-                                missing[key] = []
-                                missing[key].push(link)
-                            }else{
-                                missing[key].push(link)
-                            }
-                        }
-                        if(!Array.isArray(nextLinks[key])){
-                            nextLinks[key] = []
-                            nextLinks[key].push(link)
-                        }else{
-                            nextLinks[key].push(link)
-                        }
-                    }
-                }
-            }
-            //missing object is all missing prev links
-            //console.log(missing)
-            let puts = {} 
-            for (const nkey in missing) {
-                const links = missing[nkey];
-                puts[nkey] = []
-                for (let i = 0; i < links.length; i++) {
-                    let link = links[i];
-                    if (link[0] == '"'){
-                        link = link.slice(1, -1)
-                    }
-                    let prevKey = (pobj[link]) ? pobj[link]['#'] || false : false
-                    if(prevKey){
-                        //gun.get(key).get(linkProp).link(gun.get(prevKey))
-                        puts[nkey].push(prevKey)
-                        gun.get(nkey).get(linkProp).get(prevKey).put({'#': prevKey})
-                        gun.get(prevKey).get(prevNextLink).get(nkey).put({'#': nkey})
-                        //console.log(key,link,prevKey)
-                    }else{
-                        //console.log(link)
-                    }
-                }
-            }
-        })
-}   
-
-function linkImport(nextType, linkProp, prevType){
-    let gun = this.back(-1)
-    let prevNextLink = Object.keys(GB[prevType].next)[0]
-    let nextGet = '!TYPE/' + nextType
-    let prevGet = '!TYPE/' + prevType + '/!ALIAS'
-    //let nextIDs = gunGetListProp(gun, nextGet, '!ID')
-    let next = gunGetListNodes(gun, nextGet)
-    let prev = gunGet(gun, prevGet)
-    Promise.all([next, prev])
-        .then(data => {
-            console.log(data)
-            let [nodes ,pobj] = data
-            let nout = {}
-            var pout = {}
-
-
-            for (let i = 0; i < nodes.length; i++) {
-                const key = nodes[i]['!ID'];
-                const value = nodes[i][linkProp]
-                if(((typeof value === 'string' && value.length) || typeof value === 'number') || value === null){
-                    let fullkey = nextType + '/' + key
-                    if(typeof value !== 'string'){
-                        let not = []
-                        not.push(value)
-                        nout[fullkey] = not
-                    }else if (typeof value == 'string'){
-                        let idx = value.lastIndexOf(',') + 7
-                        let check = value[idx]
-                        if(!check){
-                            let not = []
-                            not.push(value)
-                            nout[fullkey] = not  
-                        }else{
-                        let arr = value.split(', ')
-                        nout[fullkey] = arr
-                        }
-                    }
-                }
-            }
-            let puts = {} 
-            for (const nkey in nout) {
-                const links = nout[nkey];
-                puts[nkey] = []
-                for (let i = 0; i < links.length; i++) {
-                    let link = links[i];
-                    if (link[0] == '"'){
-                        link = link.slice(1, -1)
-                    }
-                    let prevKey = (pobj[link]) ? pobj[link]['#'] || false : false
-                    if(prevKey){
-                        //gun.get(key).get(linkProp).link(gun.get(prevKey))
-                        puts[nkey].push(prevKey)
-                        gun.get(nkey).get(linkProp).put({})
-                        gun.get(nkey).get(linkProp).get(prevKey).put({'#': prevKey})
-                        gun.get(prevKey).get(prevNextLink).put({})
-                        gun.get(prevKey).get(prevNextLink).get(nkey).put({'#': nkey})
-                        //console.log(key,link,prevKey)
-                    }else{
-                        console.log(link)
-                    }
-                }
-            }
-            console.log(nout, puts)
-        })
-}   
-async function cascade(method, curNode, doSettle){
-    let currentNode = Gun.obj.copy(curNode)
-    if(doSettle == undefined){
-        doSettle = true
-    }
-    let gun = this.back(-1)
-    console.log('cascading: ', method)
-    let type = currentNode['!TYPE']
-    let nodeSoul = type + '/' + currentNode['!ID']
-    let next = Object.keys(GB[type].next)[0]
-    let nextSet = currentNode[next]['#']
-    let prevsForCalc = GB[type].methods[method].fields
-    let prevs = Object.keys(prevsForCalc)
-    let methodFn = GB[type].methods[method].fn
-    let prevNodes = []
-
-    for (let i = 0; i < prevs.length; i++) {
-        const prop = prevs[i];
-        let cur = prevNodes[i];
-        const prevProp = prevsForCalc[prevs[i]]
-        if(currentNode[prop] && typeof currentNode[prop] === 'object'){
-            cur = await gunGetListNodes(gun,currentNode[prop]['#'])
-        }else{
-            cur = currentNode[prop]
-        }
-        if(Array.isArray(cur)){
-            let curRed = cur.reduce(function(acc,node,idx){
-                let num = (Number(node[prevProp])) ? Number(node[prevProp]) : 0
-                acc += num
-                return acc
-            }, 0)
-            currentNode[prop] = curRed
-        }else{
-            currentNode[prop] = cur
-        }
-    }
-    console.log(currentNode)
-    let fnres = methodFn(currentNode)
-    if(!doSettle){
-        let mutate = Object.assign({}, currentNode, fnres)
-        return mutate
-    }else{
-        gun.get(nodeSoul).settle(fnres,{cascade:false})
-        let nextNodes
-        if(currentNode[next] && typeof currentNode[next] === 'object'){
-            nextNodes = await gunGetListNodes(gun,nextSet)
-            if(Array.isArray(nextNodes)){
-                for (let i = 0; i < nextNodes.length; i++) {
-                    const node = Gun.obj.copy(nextNodes[i])
-                    let nextType = node['!TYPE']
-                    let nextID = node['!ID']
-                    let nextSoul = nextType +'/'+nextID
-                    let cascadeProp = (GB[nextType].cascade) ? getKeyByValue(GB[nextType].cascade,method) : false
-                    console.log('Number of next cascades:', nextNodes.length)
-                    let putObj = {}
-                    putObj[cascadeProp] = 0
-                    let opt = {prevData: node}
-                    gun.get(nextSoul).settle(putObj,opt)
-                }
-            }
-        }
-    }
-}
-
-async function settle(newData, opt) {
-    let shouldCascade
-    if(!opt){
-        shouldCascade = true
-    }else{
-        shouldCascade = (opt.cascade !== undefined) ? opt.cascade : true
-    }
-    let gun = this;
-    let gunRoot = this.back(-1);
-    let nodeID = newData['!ID'] || gun['_']['soul'].split('/')[1] || null//or ID string
-    let type = newData['!TYPE'] || gun['_']['soul'].split('/')[0] || null
-    let nodeSoul = gun['_']['soul'] || type + '/' + nodeID//gun id 'get' string
-    let aliasProp = (GB[type].nav.importID) ? GB[type].nav.humanID : false
-    let alias = (aliasProp && newData[aliasProp]) ? newData[aliasProp] : false
-    let cascadeKeys = (GB[type].cascade) ? GB[type].cascade : {}
-    let oldData, exists
-    if(opt && opt.prevData){
-        oldData = opt.prevData
-        exists = true
-        
-    }else{
-        let data = await gun.then()
-        oldData = Gun.obj.copy(data)
-        if(oldData){
-            exists = true
-        }else{
-            exists = false
-        }
-    }
-    if (exists){
-        if(!GB[type]){
-            if(oldData['!TYPE']){
-                if(!GB[oldData['!TYPE']]){
-                    return console.log('INVALID NODETYPE')
-                }else{
-                    type = oldData['!TYPE']
-                }
-            }else{
-                return console.log('INVALID NODETYPE')
-            }
-        }
-        //if the node already exists
-        let result = GB[type].settle(newData,oldData)
-        let triggeredMethods = {}
-        console.log(result.putObj)
-        for(const key in result.putObj){
-            if(!GB[type].whereTag.includes(key) || key == '_'){//skip tag fields, tags() handles this
-                gun.get(key).put(result.putObj[key])
-            }
-            if(cascadeKeys[key]){
-                triggeredMethods[cascadeKeys[key]] = key
-            }
-        }
-        if(shouldCascade){
-            let newObj = Object.assign({},oldData,result.putObj)
-            for (const method in triggeredMethods) {
-                gunRoot.cascade(method, newObj)
-            }
-        }
-        handleTags(gun, result, type)
-    }else{
-        if(!GB[type]){return console.log('INVALID NODETYPE')}
-        //for a new node
-        gun.get('!ID').put(nodeID)
-        gunRoot.get('!TYPE/'+type).get(nodeSoul).put({'#':nodeSoul}) //setlist collection of same type nodes
-        if (alias){
-            gunRoot.get('!TYPE/'+type + '/!ALIAS').get(alias).put({'#': nodeSoul}) //setlist keyd by importID
-        }
-        if (GB[type].uniqueFields){
-            let fields = GB[type].uniqueFields
-            for (let i = 0; i < fields.length; i++) {
-                let gs = '!TYPE/'+ type + '/uniqueFields'
-                let field = Object.keys(fields[i])[0]
-                if (!newData[field]){
-                    let curNum = await gunRoot.get(gs).get(field).then()
-                    if (curNum){
-                        gun.get(field).put(curNum)
-                        curNum++
-                        gunRoot.get(gs).get(field).put(curNum)
-                    }else{
-                        curNum = GB[type].uniqueFields[i][field].start
-                        gun.get(field).put(curNum)
-                        curNum++
-                        gunRoot.get(gs).get(field).put(curNum)
-                    }
-                }
-            }
-        }
-        let result = GB[type].settle(newData,false)
-        for(const key in result.putObj){
-            if(!GB[type].whereTag.includes(key) || key == '_'){//skip tag fields and gun fields, tag() handles this
-                gun.get(key).put(result.putObj[key])
-            }else{
-                if (newData[key] && typeof newData[key] == 'string' && newData[key].length){
-                    result[key].add = result[key].add.concat(newData[key].split(','))
-                }else if (newData[key] && Array.isArray(newData[key])){
-                    result[key].add = result[key].add.concat(newData[key])
-                }
-            }
-        }
-        handleTags(gun, result, type) 
-    }
-    return gunRoot.get(nodeSoul)
-}
 
 function doubleLink(target){//intended to be used in place of .set. Target should be a gun.get("nodeType/00someID00")
     console.log('Linking!')
