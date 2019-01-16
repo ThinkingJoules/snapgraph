@@ -400,7 +400,6 @@ function modifyGBconfig(configObj, baseID, tname, pname){
     }
 }
 function aliasTransform(aliasObj){
-    console.log(aliasObj)
     let output = {byGB: Gun.obj.copy(aliasObj), forUI: Gun.obj.copy(aliasObj)}
     for (const bid in aliasObj) {
         output.forUI[bid] = {}
@@ -460,7 +459,7 @@ function aliasTransform(aliasObj){
     }
     return output
 }
-function loadGBase() {
+function loadGBase(thisReact) {
     gun = this
     gun.get('GBase').on(function(data, id){
         let gbconfig = {}
@@ -497,7 +496,7 @@ function loadGBase() {
         GB.byGB = transform['byGB']
         GB.forUI = transform['forUI']
         console.log(GB)
-        return GB
+        thisReact.setState({config: GB})
     })
 }
 // let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
@@ -645,8 +644,9 @@ function buildTable(thisReact){
     for (const pName in GB.byAlias[args.base].props[args.t].props) {
         if (GB.byAlias[args.base].props[args.t].props[pName]) {
             gunRoot.gbase(args.base).getTable(args.t).retrieve(pName).on(function(data){
+                let merge = Object.assign({},thisReact.state[pName],data)
                 thisReact.setState({
-                    [pName] : data
+                    [pName] : merge
                 })
             })
         }
@@ -702,6 +702,7 @@ function tsvJSONgb(tsv){
     //return JSON.stringify(result); //JSON
 }
 function importTable(dataArr, tAlias, oldTalias){
+    //gun.gbase(BUUID).importTable(dataArr, tAlias, oldTalias)
     let gunargs = this
     let gun = this.back(-1)
     let args = JSON.parse(gunargs['_']['get'])
