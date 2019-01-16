@@ -1,6 +1,6 @@
 {
   "name": "gundb-gbase",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Used to help organize and define node types and their relations in GBase.",
   "main": "index.js",
   "scripts": {
