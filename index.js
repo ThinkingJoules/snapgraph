@@ -460,6 +460,7 @@ function aliasTransform(aliasObj){
     return output
 }
 function loadGBase(thisReact) {
+    console.log(thisReact)
     gun = this
     gun.get('GBase').on(function(data, id){
         let gbconfig = {}
@@ -478,6 +479,9 @@ function loadGBase(thisReact) {
                     for (const key in souls) {
                         const value = souls[key];
                         if (value) {
+                            if(!tconfig.HID){
+                                tconfig.HID={}
+                            }
                             tconfig.HID[key] = value
                         }
                     }
@@ -496,7 +500,10 @@ function loadGBase(thisReact) {
         GB.byGB = transform['byGB']
         GB.forUI = transform['forUI']
         console.log(GB)
-        thisReact.setState({config: GB})
+        if(thisReact !== undefined){
+            thisReact.setState({config: GB})
+        }
+        return GB
     })
 }
 // let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
@@ -608,7 +615,7 @@ function addRow(userHID){
         args['HID'] = userHID
         args['newNode'] = true
     }else{
-        return console.log('ERROR: Invalid use of newNode in chain. Should be: gun.gbase("GB/-your uuid-").getTable("TableName").newNode("Human Readable UID/string")')
+        return console.log('ERROR: Invalid use of addRow in chain. Should be: gun.gbase("GB/-your uuid-").getTable("TableName").addRow("Human Readable UID/string")')
     }
     return gun.get(JSON.stringify(args)) 
 }
