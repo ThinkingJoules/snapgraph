@@ -403,56 +403,67 @@ function aliasTransform(aliasObj){
     let output = {byGB: Gun.obj.copy(aliasObj), forUI: Gun.obj.copy(aliasObj)}
     for (const bid in aliasObj) {
         output.forUI[bid] = {}
-        const sheetobj = Object.assign({},aliasObj[bid].props);
-        for (const sname in sheetobj) {
-            if(sheetobj[sname]){
+        const tableobj = Object.assign({},aliasObj[bid].props);
+        for (const tname in tableobj) {
+            let tconfig = tableobj[tname]
+            if(tconfig){
                 //byGB
-                let salias = sheetobj[sname].alias
-                let prev = output.byGB[bid].props[sname]
+                let talias = tconfig.alias
+                let prev = output.byGB[bid].props[tname]
                 let newdata = Object.assign({},prev)
-                newdata.alias = sname
-                output.byGB[bid].props[salias] = newdata
-                delete output.byGB[bid].props[sname]
-
-                let svis = sheetobj[sname].vis
-                if(svis){
-                    let ssort = sheetobj[sname].sortval
-                    output.forUI[bid][ssort] = {[sname]: {}}
-
-                    for (const prop in sheetobj[sname].props) {
-                        const pconfig = sheetobj[sname].props[prop];
-                        if(pconfig.vis){
-                            let psort = pconfig.sortval
-                            output.forUI[bid][ssort][sname][psort] = prop
-                        }
-                    }
-                }else{
-                    for (const prop in sheetobj[sname].props) {
-                        const pconfig = sheetobj[sname].props[prop];
-                        if(pconfig.vis){
-                            let psort = pconfig.sortval
-                            output.forUI[bid][ssort][sname][psort] = prop
+                newdata.alias = tname
+                output.byGB[bid].props[talias] = newdata
+                delete output.byGB[bid].props[tname]
+                output.byGB[bid].props[talias].HID = {} 
+                if(tconfig.HID){//Invert Key/Values in HID Alias obj
+                    for (const HID in tconfig.HID) {
+                        if (tconfig.HID[HID]) {
+                            const GBalias = tconfig.HID[HID];
+                            output.byGB[bid].props[talias].HID[GBalias] = HID
                         }
                     }
                 }
 
-                const columnobj = Object.assign({}, sheetobj[sname].props);
+                let tvis = tableobj[tname].vis
+                if(tvis){
+                    let tsort = tableobj[tname].sortval
+                    output.forUI[bid][tsort] = {[talias]: {}}
+
+                    for (const prop in tableobj[tname].props) {
+                        const pconfig = tableobj[tname].props[prop];
+                        if(pconfig.vis){
+                            let palias = pconfig.alias
+                            let psort = pconfig.sortval
+                            output.forUI[bid][tsort][talias][psort] = palias
+                        }
+                    }
+                }else{//if table is not visible
+                    // for (const prop in tableobj[tname].props) {
+                    //     const pconfig = tableobj[tname].props[prop];
+                    //     if(pconfig.vis){
+                    //         let psort = pconfig.sortval
+                    //         output.forUI[bid][tsort][talias][psort] = prop
+                    //     }
+                    // }
+                }
+
+                const columnobj = Object.assign({}, tableobj[tname].props);
             
                 for (const pname in columnobj) {
                     if(columnobj[pname]){
 
                         const palias = columnobj[pname].alias;
-                        let prev = output.byGB[bid].props[salias].props[pname]
+                        let prev = output.byGB[bid].props[talias].props[pname]
                         let newdata = Object.assign({},prev)
                         newdata.alias = pname
-                        output.byGB[bid].props[salias].props[palias] = newdata
-                        delete output.byGB[bid].props[salias].props[pname]
+                        output.byGB[bid].props[talias].props[palias] = newdata
+                        delete output.byGB[bid].props[talias].props[pname]
 
                         
                     }
                 }
             }else{//falsy value for prop (old, now available gun alias for reuse)
-                delete output.byGB[bid].props[sname]
+                delete output.byGB[bid].props[tname]
             }
         }
 
@@ -460,7 +471,6 @@ function aliasTransform(aliasObj){
     return output
 }
 function loadGBase(thisReact) {
-    console.log(thisReact)
     gun = this
     gun.get('GBase').on(function(data, id){
         let gbconfig = {}
@@ -636,7 +646,6 @@ function retrieve(colName){
         }
         let pval = GB.byAlias[args.base].props[args.t].props[colName].alias
         let colSoul = args.base + '/' + tval + '/' + pval
-        console.log(colName)
         return gunRoot.get(colSoul)
     }
 }
@@ -650,11 +659,21 @@ function buildTable(thisReact){
     }
     for (const pName in GB.byAlias[args.base].props[args.t].props) {
         if (GB.byAlias[args.base].props[args.t].props[pName]) {
-            gunRoot.gbase(args.base).getTable(args.t).retrieve(pName).on(function(data){
-                let merge = Object.assign({},thisReact.state[pName],data)
-                thisReact.setState({
-                    [pName] : merge
-                })
+            gunRoot.gbase(args.base).getTable(args.t).retrieve(pName).on(function(gundata){
+                let data = Gun.obj.copy(gundata)
+                delete data['_']
+                let merge
+                if(!thisReact.state[pName]){
+                    merge = data
+                }else{
+                    merge = Object.assign({},thisReact.state[pName],data)
+                }
+                if(JSON.stringify(thisReact.state[pName]) !== JSON.stringify(merge)){
+                    setTimeout(() => thisReact.setState({
+                        [pName] : merge
+                    }), Math.floor(Math.random() * 200));
+                }
+                
             })
         }
     }
@@ -663,8 +682,8 @@ function buildRow(thisReact){
     //gun.gbase(GB/uuid).getTable('Table Name').getRow('Human ID').buildRow(this) <---react component this
     let gun = this
     let args = JSON.parse(gun['_']['get'])
-    if(typeof thisReact.setState !== 'function' || !args.base || !args.t || !args.HID){
-        return console.log('Error: Missing parameters or cannot find .setState function on "this" object')
+    if(!args.base || !args.t || !args.HID){
+        return console.log('Error: Missing parameters')
     }
     let obj = {}
     if(!GB.byAlias[args.base].props[args.t].HID[args.HID]){
@@ -673,16 +692,24 @@ function buildRow(thisReact){
     let HIDalias = GB.byAlias[args.base].props[args.t].HID[args.HID]
     for (const pName in GB.byAlias[args.base].props[args.t].props) {
         if (GB.byAlias[args.base].props[args.t].props[pName]) {
-            if(GB.byAlias[args.base].props[args.t].props[pName].alias === 'p0'){
-                obj[pName] = thisReact.state[pName][args.HID]
+            let colData
+            if(!thisReact.state[pName]){
+                colData = {}
             }else{
-                obj[pName] = thisReact.state[pName][HIDalias]
+                coldData = thisReact.state[pName]
+            }
+            if(GB.byAlias[args.base].props[args.t].props[pName].alias === 'p0'){
+                obj[pName] = colData[args.HID]
+            }else{
+                obj[pName] = (colData[HIDalias]) ? colData[HIDalias] : ""
             }
         }
     }
-    thisReact.setState({
-        [args.HID] : obj
-    })
+    // thisReact.setState({
+    //     [args.HID] : obj
+    // })
+    console.log(obj)
+    return obj
 }
 function tsvJSONgb(tsv){
  
