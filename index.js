@@ -598,7 +598,7 @@ function addColumn(pAlias, gbcoltype){
             let nextP = 'p' + (Math.max(...pvals)+1)
             columnparams.alias = nextP
             let sSort = GB.byAlias[args.base].props[args.t].sortval
-            let nextSort = Object.keys(GB.forUI[args.base][sSort][args.t])
+            let nextSort = Object.keys(GB.forUI[args.base][sSort][tval])
             columnparams.sortval = Math.max(...nextSort)+10
             let defcolumn = {[pAlias]: columnparams}
             sheetparams.props = Object.assign(sheetparams.props,GB.byAlias[args.base].props[args.t].props, defcolumn)
