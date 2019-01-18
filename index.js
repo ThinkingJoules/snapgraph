@@ -1441,7 +1441,7 @@ function buildRows(thisReact){
                 for (let i = 0; i < thisReact.props.columns.length; i++) {
                     const pval = thisReact.props.columns[i];
                     if(pval === 'p0'){
-                        obj[pval] = thisReact.props.columnData[pval][HID]
+                        obj[pval] = HID
                     }else{
                         obj[pval] = thisReact.props.columnData[pval][GBkey]
                     }
