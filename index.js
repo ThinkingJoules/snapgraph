@@ -49,6 +49,7 @@ function base(gun) {
     //react api
     gun.buildTable = buildTable
     gun.buildRow = buildRow
+    gun.loadBaseData = loadBaseData
     
     //import api
     gun.tsvParse = tsvJSONgb //not gun.chain
@@ -111,7 +112,15 @@ function getHID(aliasString){
     }
     return gun.get(JSON.stringify(args))
 }
-
+function byGB(){
+    //chain off gbase; gun.gbase('GB/1234567').gets('Part')
+    //detect prev gets string to know if we are chaining from .gbase or antoher .gets
+    let gun = this
+    let args = JSON.parse(gun['_']['get'])
+    let idx = Object.keys(args).length
+    args['BYGB'] = true
+    return gun.get(JSON.stringify(args))
+}
 function getConfig(){
     //chain off gbase; gun.gbase('GB/1234567').gets('Part')
     //detect prev gets string to know if we are chaining from .gbase or antoher .gets
@@ -647,6 +656,48 @@ function retrieve(colName){
         let pval = GB.byAlias[args.base].props[args.t].props[colName].alias
         let colSoul = args.base + '/' + tval + '/' + pval
         return gunRoot.get(colSoul)
+    }
+}
+
+function loadBaseData(thisReact){
+    //gun.gbase(GB/uuid).loadBaseData(this) <---react component this
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    // if(typeof thisReact.setState !== 'function' || !args.base){
+    //     return console.log('Error: Cannot find base or setState is not a Fn. BASE: '+ args.base + 'setState typeof: '+ typeof thisReact.setState)
+    // }
+    let tables = GB.byGB[args.base].props
+    for (const table in tables) {
+        if (tables[table] && tables[table].vis) {
+            const tableConfig = tables[table];
+            let columns = tableConfig.props
+                for (const column in columns) {
+                    if (columns[column] && columns[column].vis) {
+                        const columnConfig = columns[column];
+                        let gunsoul = args.base + '/' + table + '/' + column
+                        if(!thisReact.state[gunsoul]){
+                            gunRoot.get(gunsoul).on(function(gundata){
+                                let data = Gun.obj.copy(gundata)
+                                delete data['_']
+                                let merge
+                                if(!thisReact.state[gunsoul]){
+                                    merge = data
+                                }else{
+                                    merge = Object.assign({},thisReact.state[gunsoul],data)
+                                }
+                                if(JSON.stringify(thisReact.state[gunsoul]) !== JSON.stringify(merge)){
+                                    console.log('setting state for '+ gunsoul)
+                                    setTimeout(() => thisReact.setState({
+                                        [gunsoul] : merge
+                                    }), Math.floor(Math.random() * 2000));
+                                }
+
+                            })
+                        }
+                    }
+                }
+        }
     }
 }
 function buildTable(thisReact){
@@ -1369,4 +1420,34 @@ function doubleUnlink(target){//intended to be used in place of .set. Target sho
         }
     })
     return gun
+}
+
+function buildRoutes(thisReact, baseID){
+    let result = []
+    let tables = Object.values(GB.forUI[baseID])
+    
+    for (let i = 0; i < tables.length; i++) {
+        let tableObj = {}
+        const table = tables[i];
+        let tval = Object.keys(table)[0]
+        tableObj.key = tval
+        tableObj.cols = []
+        tableObj.colData = {}
+        result.push(tableObj)
+        let columns = Object.values(table[tval])
+        for (let j = 0; j < columns.length; j++) {
+            const pval = columns[j];
+            let gunsoul = baseID + '/' + tval + '/' + pval
+            result[i].cols.push(pval)
+            console.log(gunsoul)
+            if(thisReact.state[gunsoul]){
+                result[i].colData[pval] = thisReact.state[gunsoul]
+            }
+        }
+    }
+    return result
+}
+
+module.exports = {
+    buildRoutes
 }
