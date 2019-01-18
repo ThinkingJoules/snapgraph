@@ -47,8 +47,6 @@ function base(gun) {
     gun.retrieve = retrieve
 
     //react api
-    gun.buildTable = buildTable
-    gun.buildRow = buildRow
     gun.loadBaseData = loadBaseData
     
     //import api
@@ -690,7 +688,7 @@ function loadBaseData(thisReact){
                                     console.log('setting state for '+ gunsoul)
                                     setTimeout(() => thisReact.setState({
                                         [gunsoul] : merge
-                                    }), Math.floor(Math.random() * 2000));
+                                    }), Math.floor(Math.random() * 200));
                                 }
 
                             })
@@ -728,39 +726,6 @@ function buildTable(thisReact){
             })
         }
     }
-}
-function buildRow(thisReact){
-    //gun.gbase(GB/uuid).getTable('Table Name').getRow('Human ID').buildRow(this) <---react component this
-    let gun = this
-    let args = JSON.parse(gun['_']['get'])
-    if(!args.base || !args.t || !args.HID){
-        return console.log('Error: Missing parameters')
-    }
-    let obj = {}
-    if(!GB.byAlias[args.base].props[args.t].HID[args.HID]){
-        return console.log('Error: Cannot find HID specified on this table', args.HID)
-    }
-    let HIDalias = GB.byAlias[args.base].props[args.t].HID[args.HID]
-    for (const pName in GB.byAlias[args.base].props[args.t].props) {
-        if (GB.byAlias[args.base].props[args.t].props[pName]) {
-            let colData
-            if(!thisReact.state[pName]){
-                colData = {}
-            }else{
-                coldData = thisReact.state[pName]
-            }
-            if(GB.byAlias[args.base].props[args.t].props[pName].alias === 'p0'){
-                obj[pName] = colData[args.HID]
-            }else{
-                obj[pName] = (colData[HIDalias]) ? colData[HIDalias] : ""
-            }
-        }
-    }
-    // thisReact.setState({
-    //     [args.HID] : obj
-    // })
-    console.log(obj)
-    return obj
 }
 function tsvJSONgb(tsv){
  
@@ -1430,14 +1395,28 @@ function buildRoutes(thisReact, baseID){
         let tableObj = {}
         const table = tables[i];
         let tval = Object.keys(table)[0]
+        tableObj.alias = GB.byGB[baseID].props[tval].alias
+        tableObj.base = baseID
         tableObj.key = tval
         tableObj.cols = []
         tableObj.colData = {}
+        tableObj.colalias = {}
+        tableObj.rowHID = []
+        if(GB.byGB[baseID].props[tval].HID){
+            for (const HID in GB.byAlias[baseID].props[tableObj.alias].HID) {
+                const GBID = GB.byAlias[baseID].props[tableObj.alias].HID[HID];
+                if (GBID) {
+                    tableObj.rowHID.push({[HID]: GBID})
+                }
+            }
+        }
         result.push(tableObj)
         let columns = Object.values(table[tval])
         for (let j = 0; j < columns.length; j++) {
             const pval = columns[j];
+            let palias = GB.byGB[baseID].props[tval].props[pval].alias
             let gunsoul = baseID + '/' + tval + '/' + pval
+            tableObj.colalias[pval] = palias
             result[i].cols.push(pval)
             console.log(gunsoul)
             if(thisReact.state[gunsoul]){
@@ -1445,9 +1424,38 @@ function buildRoutes(thisReact, baseID){
             }
         }
     }
-    return result
+    if(JSON.stringify(thisReact.state.GBroutes) !== JSON.stringify(result)){
+        thisReact.setState({GBroutes: result})
+    }
 }
-
+function buildRows(thisReact){
+    console.log(thisReact)
+    let rows= []
+    if(thisReact.props){
+        let HIDalias = Object.keys(thisReact.props.config.HID)
+        for (let i = 0; i < HIDalias.length; i++) {
+            let obj = {}
+            const HID = HIDalias[i];
+            if(thisReact.props.config.HID[HID]){
+                let GBkey = thisReact.props.config.HID[HID]
+                for (let i = 0; i < thisReact.props.columns.length; i++) {
+                    const pval = thisReact.props.columns[i];
+                    if(pval === 'p0'){
+                        obj[pval] = thisReact.props.columnData[pval][HID]
+                    }else{
+                        obj[pval] = thisReact.props.columnData[pval][GBkey]
+                    }
+                }
+            }
+            rows.push(obj)
+        }
+        
+        if(JSON.stringify(thisReact.state.GBrows) !== JSON.stringify(rows)){
+            thisReact.setState({GBrows: rows})
+        }
+    }
+}
 module.exports = {
-    buildRoutes
+    buildRoutes,
+    buildRows
 }
