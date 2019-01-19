@@ -477,7 +477,7 @@ function aliasTransform(aliasObj){
     }
     return output
 }
-function loadGBase(thisReact) {
+function loadGBase(thisReact, baseID) {
     gun = this
     gun.get('GBase').on(function(data, id){
         let gbconfig = {}
@@ -517,8 +517,9 @@ function loadGBase(thisReact) {
         GB.byGB = transform['byGB']
         GB.forUI = transform['forUI']
         console.log(GB)
+
         if(thisReact !== undefined){
-            thisReact.setState({config: GB})
+            thisReact.setState({config: GB});
         }
         return GB
     })
@@ -559,7 +560,6 @@ function addTable(tAlias, pAlias){
         args['t'] = tAlias
         if(!GB.byAlias[args.base].props[tAlias]){
             let param = Gun.obj.copy(GB.byAlias[args.base])
-            console.log(param)
             let sheetparams = Gun.obj.copy(tParams)
             let columnparams = Gun.obj.copy(pParams)
             columnparams.alias = 'p0'
@@ -685,7 +685,6 @@ function loadBaseData(thisReact){
                                     merge = Object.assign({},thisReact.state[gunsoul],data)
                                 }
                                 if(JSON.stringify(thisReact.state[gunsoul]) !== JSON.stringify(merge)){
-                                    console.log('setting state for '+ gunsoul)
                                     setTimeout(() => thisReact.setState({
                                         [gunsoul] : merge
                                     }), Math.floor(Math.random() * 200));
@@ -829,6 +828,7 @@ function importTable(dataArr, tAlias, oldTalias){
     }else{
         return console.log('IMPORT ABORTED: Please specify a table name')
     }
+
     let result = {}
     let headers = dataArr[0]
     
@@ -843,7 +843,7 @@ function importTable(dataArr, tAlias, oldTalias){
             }else{
                 rowsoul = tparams.HID[rowArr[0]]
             }
-            if(!tparams.HID || tparams.HID[rowArr[0]] && overwriteExisting || !tparams.HID[rowArr[0]]){//skip if row exists and user does not wants it to overwrite
+            if(!tparams.HID || (tparams.HID[rowArr[0]] && overwriteExisting) || !tparams.HID[rowArr[0]]){//skip if row exists and user does not wants it to overwrite
                 if(Array.isArray(rowArr) && rowArr[0]){//skip if HID is blank
                     for (let j = 0; j < rowArr.length; j++) {
                         const value = rowArr[j];
@@ -862,7 +862,6 @@ function importTable(dataArr, tAlias, oldTalias){
             } 
         }
     }
-    console.log(result)
     //put alias keys in first, to ensure they write first in case of disk error, can reimport
     let HIDpropindex = args.base + '/' + GBtval + '/p0'
     gun.get(HIDpropindex).put(result[HIDcolName])
@@ -872,6 +871,7 @@ function importTable(dataArr, tAlias, oldTalias){
             gun.get(gbid).get('p0').put(HID)
     }
     tparams = GB.byAlias[args.base].props[tAlias]
+
     //put column idx objs
     for (const key in result) {
         if (key !== HIDcolName) {
@@ -888,7 +888,6 @@ function importTable(dataArr, tAlias, oldTalias){
         }
     }
 
-    console.log(result)
     //trigger config node subscription
     gun.get('GBase').get('tick').put(Gun.text.random(4))
     //return result
@@ -1418,7 +1417,6 @@ function buildRoutes(thisReact, baseID){
             let gunsoul = baseID + '/' + tval + '/' + pval
             tableObj.colalias[pval] = palias
             result[i].cols.push(pval)
-            console.log(gunsoul)
             if(thisReact.state[gunsoul]){
                 result[i].colData[pval] = thisReact.state[gunsoul]
             }
@@ -1442,8 +1440,13 @@ function buildRows(thisReact){
                     const pval = thisReact.props.columns[i];
                     if(pval === 'p0'){
                         obj[pval] = HID
-                    }else{
-                        obj[pval] = thisReact.props.columnData[pval][GBkey]
+                    }else{   
+                        if(thisReact.props.columnData[pval] && thisReact.props.columnData[pval][GBkey] ) {
+                            obj[pval] = thisReact.props.columnData[pval][GBkey]
+                        }
+                        else {
+                            obj[pval] = ''
+                        }
                     }
                 }
             }
