@@ -22,7 +22,18 @@ if(typeof window !== "undefined"){
 var GB = {}
 let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
 let tParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
-let pParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, GBtype: 'string', required: false, default: false, fn: false, usedIn:{}}
+let pParams = {alias: false, 
+                sortval: 0,
+                vis: true, 
+                archived: false, 
+                deleted: false, 
+                GBtype: 'string', 
+                required: false, 
+                default: false, 
+                fn: false, 
+                usedIn:{}, 
+                linksTo: false, 
+                linkMultiple: true}
 if (!Gun)
 	throw new Error("gundb-gbase: Gun was not found globally!");
 
@@ -45,6 +56,7 @@ function base(gun) {
     gun.getRow = getHID
     gun.edit = edits
     gun.retrieve = retrieve
+    gun.changeColumnType = changeColumnType
 
     //react api
     gun.loadBaseData = loadBaseData
@@ -63,12 +75,9 @@ function base(gun) {
 
 //utility helpers
 function gbase(baseID){
-if(baseID.length == 12){//naive base soul coerce
-    baseID = 'GB/' + baseID
-}
-  let gun = this
-  let obj = {base: baseID}
-  return gun.get(JSON.stringify(obj))
+    let gun = this
+    let obj = {base: baseID}
+    return gun.get(JSON.stringify(obj))
 }
 function getTable(aliasString){
     //chain off gbase; gun.gbase('GB/1234567').getTable('Part')
@@ -140,6 +149,7 @@ function edits(putObj){
 
     if(args.CONFIG){
         //changing config for base/table/col
+        console.log('changing config', args)
         if(args.base && idx == 2){
             if(GB.byAlias[args.base]){
                 gun.modifyGBconfig(putObj,args.base)
@@ -275,7 +285,7 @@ function checkGBtype(value, GBtype){
     if(!valid[GBtype]){
         console.log('Invalid Column Type')
         return false
-    }else if(value === undefined){//validates modify config type entered
+    }else if(value === undefined || GBtype === 'link'){//validates modify config type entered
         return true
     }
     if(typeof value === GBtype){
@@ -357,9 +367,7 @@ function modifyGBconfig(configObj, baseID, tname, pname){
                     gun.get(HIDsoul).get(configObj.oldHID).put(false)
                     gun.get(baseID + '/state').get('history').put(JSON.stringify(fullList))
                     //node undo
-                    gun.get(soul + '/history').get(time).put(JSON.stringify(undo))
-                    
-                    
+                    gun.get(soul + '/history').get(time).put(JSON.stringify(undo))   
                 }else{//write table changes
                     gun.get(baseID+'/config/history').get(time).put(JSON.stringify(fullConfig))
                     gun.get('GBase').get(baseID).put(JSON.stringify(fullConfig))   
@@ -391,7 +399,17 @@ function modifyGBconfig(configObj, baseID, tname, pname){
                     }                
                 for (const config in GB.byAlias[baseID].props[tname].props[pname]) {
                     if(params[config]){
-                        matches[config] = params[config] 
+                        let check = true
+                        if(config === 'GBtype'){
+                            check = checkGBtype(undefined, params[config])
+                            check = (params[config] === 'link') ? false : true //checkGBtype purposefully returns true on 'link'
+                        }
+                        if(check){
+                            matches[config] = params[config] 
+                        }else{
+                            return console.log('ERROR: Cannot set GBtype to invalid value of: '+ params[config]+ ' Config change aborted')
+                        }
+                        
                     }                    
                 }
                 fullConfig.props[tname].props[paliasName] = Object.assign({}, GB.byAlias[baseID].props[tname].props[pname], matches)
@@ -525,8 +543,19 @@ function loadGBase(thisReact, baseID) {
     })
 }
 // let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
-// let tParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {})
-// let pParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, GBtype: {}, required: false, default: false, fn: false, usedIn:{}}
+// let tParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
+// let pParams = {alias: false, 
+                // sortval: 0,
+                // vis: true, 
+                // archived: false, 
+                // deleted: false, 
+                // GBtype: 'string', 
+                // required: false, 
+                // default: false, 
+                // fn: false, 
+                // usedIn:{}, 
+                // linksTo: false, 
+                // linkMultiple: true}
 function newBase(baseName, tname, pname, baseID){
     let gun = this
     let id = Gun.text.random(12)
@@ -892,7 +921,7 @@ function importTable(dataArr, tAlias, oldTalias){
     gun.get('GBase').get('tick').put(Gun.text.random(4))
     //return result
 }
-function changeColumnType(newType){
+function changeColumnType(newType, linksTo, backLinkCol){
     let gun = this
     let gunRoot = this.back(-1)
     let args = JSON.parse(gun['_']['get'])
@@ -900,18 +929,64 @@ function changeColumnType(newType){
     if(!check){return console.log('Error: Invalid column type')}
     if(args.base && args.t && args.p){
         let colParam = GB.byAlias[args.base].props[args.t].props[args.p]
-        let oldType = colParam.GBtype
-        let colSoul = args.base + '/' + args.t + '/' + args.p
-        let currentData = gunGet(gunRoot, colSoul)
-        currentData.then(data => {
-            //forin keys and attempt to change values over
-            //if cannot convert?? wipe out -> If wipe out then we need to store the change in the node undo
-            // otherwise if we don't wipe out could do with a single new put to Gun with values we could convert
-            //but then what do we do with cells that are wrong type?
-            //maybe just abort the conversion and alert user which cell(s) needs attention
+        let talias = GB.byAlias[args.base].props[args.t].alias
+        let palias = colParam.alias
+        let colSoul = args.base + '/' + talias + '/' + palias
+        if(newType === 'string' || 'number' || 'boolean'){
+            let currentData = gunGet(gunRoot, colSoul)
+            currentData.then(gundata => {
+                let data = Gun.obj.copy(gundata)
+                if(!gundata){
+                    gun.config().edit({GBtype: newType})
+                    return console.log('No data to convert, config updated')
+                }
+                delete data['_']
+                //forin keys and attempt to change values over
+                //maybe just abort the conversion and alert user which cell(s) needs attention
+                let putObj = {}
+                if(newType === 'string'){
+                    for (const key in data) {
+                        putObj[key] = String(data[key])
+                    }
+                }else if(newType === 'number'){
+                    for (const key in data) {
+                        let HID = GB.byGB[args.base].props[talias].HID[key]
+                        const value = data[key];
+                        let num = value*1
+                        if(String(num) === 'NaN'){
+                            return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
+                        }else{
+                            putObj[key] = num
+                        }
+                    }
+                }else if(newType === 'boolean'){
+                    for (const key in data) {
+                        let HID = GB.byGB[args.base].props[talias].HID[key]
+                        const value = String(data[key])
+                        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){
+                            putObj[key] = false
+                        }else if (value == '1' || 'true' || 'Infinity'){
+                            putObj[key] = true
+                        }else{
+                            return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
+                        }
+                    }
+                }
+                console.log(putObj)
+                gun.config().edit({GBtype: newType})
+                gunRoot.get(colSoul).put(putObj)
+            })
+        }else if (newType === 'link' || 'prev' || 'next'){//parse values for linking
+            //check linksTo is valid table
+            //if backLinkCol specified, validate it exists
+            //for values, create array from string
+            //build new array/object of GBids
+            //build second array/obj of backLinks for either existing column put or new column put
+            // stringify and store in new putObj for that col
+            
 
 
-        })
+        }
 
     }else{
         return console.log('ERROR: Invalid parameters')
