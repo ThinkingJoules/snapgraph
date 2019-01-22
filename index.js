@@ -12,14 +12,13 @@ var nextIndex = util.nextIndex
  
 
 
-//import Ajv from 'ajv';
 if(typeof window !== "undefined"){
     var Gun = globalVar.Gun;
 }else{
     var Gun = global.Gun;
 }
-//var ajv = new Ajv();
-var GB = {}
+let GB = {}
+let cache = {}
 let baseParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
 let tParams = {alias: false, sortval: 0, vis: true, archived: false, deleted: false, props: {}}
 let pParams = {alias: false, 
@@ -57,9 +56,15 @@ function base(gun) {
     gun.edit = edits
     gun.retrieve = retrieve
     gun.changeColumnType = changeColumnType
+    gun.byGB = byGB
 
     //react api
     gun.loadBaseData = loadBaseData
+    gun.loadColDataToCache = loadColDataToCache
+    gun.buildTable = buildTable
+    //gbase.checkRowStates
+    //gbase.buildRow
+
     
     //import api
     gun.tsvParse = tsvJSONgb //not gun.chain
@@ -146,6 +151,15 @@ function edits(putObj){
     let idx = Object.keys(args).length
     let params = {}
     let GBid
+    if(args.BYGB){//convert t and p args to what other API's expect
+        if(args.base && args.t && !args.p){
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+        if(args.base && args.t && args.p){
+            args.p = GB.byGB[args.base].props[args.t].props[args.p].alias//pname
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+    }
 
     if(args.CONFIG){
         //changing config for base/table/col
@@ -495,7 +509,7 @@ function aliasTransform(aliasObj){
     }
     return output
 }
-function loadGBase(thisReact, baseID) {
+function loadGBase(thisReact) {
     gun = this
     gun.get('GBase').on(function(data, id){
         let gbconfig = {}
@@ -503,10 +517,12 @@ function loadGBase(thisReact, baseID) {
         delete clean['_']
         if(clean['tick']){delete clean['tick']}
         for (const key in clean) {
-            
+            if(!cache[key]){cache[key]={}}//build cache structure
             gbconfig[key] = JSON.parse(clean[key])
             for (const k in gbconfig[key].props) {
+                
                 let tconfig = gbconfig[key].props[k]
+                if(!cache[key][tconfig.alias]){cache[key][tconfig.alias]={}}
                 let HIDsoul = key + '/' + tconfig.alias + '/p0'
                 gun.get(HIDsoul).on(function(data,id){
                     let souls = Gun.obj.copy(data)
@@ -670,10 +686,18 @@ function retrieve(colName){
     let gun = this
     let gunRoot = this.back(-1)
     let args = JSON.parse(gun['_']['get'])
+    if(args.BYGB){//convert t and p args to what other API's expect
+        if(args.base && args.t && !args.p){
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+        if(args.base && args.t && args.p){
+            args.p = GB.byGB[args.base].props[args.t].props[args.p].alias//pname
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+    }
     
     if(colName === undefined || !args.base || !args.t){
-        let error = {on: function(){return console.log('Error: Missing parameters, use gun.gbase("GB/uuid").getTable("Table Name").retrieve("Column Name").on(CB)')}}
-        return error
+        return console.log('Error: Missing parameters, use gun.gbase("Buuid").getTable("Table Name").retrieve("Column Name").on(CB)')
     }else{//retrieving column obj
         let tval = GB.byAlias[args.base].props[args.t].alias
         if(!GB.byAlias[args.base].props[args.t].props[colName] && !GB.byAlias[args.base].props[args.t].props[colName].alias){
@@ -686,7 +710,7 @@ function retrieve(colName){
     }
 }
 
-function loadBaseData(thisReact){
+function loadBaseData(thisReact){//no longer needed
     //gun.gbase(GB/uuid).loadBaseData(this) <---react component this
     let gun = this
     let gunRoot = this.back(-1)
@@ -726,32 +750,95 @@ function loadBaseData(thisReact){
         }
     }
 }
-function buildTable(thisReact){
-    //gun.gbase(GB/uuid).getTable('Table Name').buildTable(this) <---react component this
+function loadColDataToCache(tval, pval, thisReact){
+    //gun.gbase(baseID).loadColDataToCache('t0','p0', this)
+    console.log(cache)
     let gun = this
     let gunRoot = this.back(-1)
     let args = JSON.parse(gun['_']['get'])
-    if(typeof thisReact.setState !== 'function' || !args.base || !args.t){
+    let colSoul = args.base + '/' + tval + '/' + pval
+    if(!cache[args.base][tval][pval]){//create subscription
+        gunRoot.get(colSoul, function(msg,eve){//check for existence only
+            eve.off()
+            if(msg.put === undefined){
+                cache[args.base][tval][pval] = {}
+            if(thisReact && thisReact.setState){
+                thisReact.setState({colsCached : Object.keys(cache[args.base][tval]).length-1})
+                //trigger componentdidupdate and push all new props to all rows
+                //rows should be a pure component (shallow compare)
+            }
+            }
+        })
+        gunRoot.get(colSoul).on(function(gundata){
+            let data = Gun.obj.copy(gundata)
+            delete data['_']
+            if(!cache[args.base][tval][pval]){cache[args.base][tval][pval] = {}}
+            cache[args.base][tval][pval] = Object.assign(cache[args.base][tval][pval],data)
+            //rebuildRowCache(args.base, tval, pval, data)
+            for (const key in data) {
+                if (cache[args.base][tval].HID[key]) {
+                    delete cache[args.base][tval].HID[key] 
+                }
+            }
+            if(thisReact && thisReact.setState){
+                thisReact.setState({tick : Gun.text.random(4), colsCached : Object.keys(cache[args.base][tval]).length-1})
+                //trigger componentdidupdate and push all new props to all rows
+                //rows should be a pure component (shallow compare)
+            }
+            console.log(cache[args.base][tval])
+        })
+        
+        
+    }else{//do nothing, gun is already subscribed and cache is updating
+        if(thisReact && thisReact.setState){
+            thisReact.setState({colsCached : Object.keys(cache[args.base][tval]).length-1})
+            //trigger componentdidupdate and push all new props to all rows
+            //rows should be a pure component (shallow compare)
+        }
+    }
+}
+function rebuildRowCache(base, tval, pval, newData){
+    for (const id in newData) {
+        const value = newData[id];
+        if(pval === 'p0'){
+            if(!cache[base][tval].HID[value]){cache[base][tval].HID[value]={}}
+            cache[base][tval].HID[value][pval] = id
+        }else{
+            if(!cache[base][tval].HID[id]){cache[base][tval].HID[id]={}}
+            cache[base][tval].HID[id][pval] = value
+        }
+    }
+
+}
+function getRow(base, tval, GBID){
+    if(cache[base][tval].HID[GBID]){
+        return cache[base][tval].HID[GBID]
+    }else{
+        cache[base][tval].HID[GBID] = {}
+        for (const col in cache[base][tval]) {
+            const colData = cache[base][tval][col];
+            if(col === 'p0'){
+                cache[base][tval].HID[GBID][col] = GB.byGB[base].props[tval].HID[GBID]
+            }else{
+                cache[base][tval].HID[GBID][col] = colData[GBID]
+            }
+        }
+        return cache[base][tval].HID[GBID]
+    }
+
+}
+function buildTable(tval, thisReact){//use in component did mount
+    //gun.gbase(GB/uuid).buildTable('t0', this)<---react component this
+    let gun = this
+    let gunRoot = this.back(-1)
+    let args = JSON.parse(gun['_']['get'])
+    if(typeof thisReact.setState !== 'function' || !args.base){
         return console.log('Error: Missing parameters or cannot find .setState function on this object')
     }
-    for (const pName in GB.byAlias[args.base].props[args.t].props) {
-        if (GB.byAlias[args.base].props[args.t].props[pName]) {
-            gunRoot.gbase(args.base).getTable(args.t).retrieve(pName).on(function(gundata){
-                let data = Gun.obj.copy(gundata)
-                delete data['_']
-                let merge
-                if(!thisReact.state[pName]){
-                    merge = data
-                }else{
-                    merge = Object.assign({},thisReact.state[pName],data)
-                }
-                if(JSON.stringify(thisReact.state[pName]) !== JSON.stringify(merge)){
-                    setTimeout(() => thisReact.setState({
-                        [pName] : merge
-                    }), Math.floor(Math.random() * 200));
-                }
-                
-            })
+    if(!cache[args.base][tval].HID){cache[args.base][tval].HID = {} }
+    for (const pval in GB.byGB[args.base].props[tval].props){//load cols into cache
+        if (GB.byGB[args.base].props[tval].props[pval]) {
+            gunRoot.gbase(args.base).loadColDataToCache(tval, pval, thisReact)
         }
     }
 }
@@ -926,13 +1013,23 @@ function changeColumnType(newType, linksTo, backLinkCol){
     let gunRoot = this.back(-1)
     let args = JSON.parse(gun['_']['get'])
     let check = checkGBtype(undefined, newType)
+    if(args.BYGB){//convert t and p args to byALias
+        if(args.base && args.t && !args.p){
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+        if(args.base && args.t && args.p){
+            args.p = GB.byGB[args.base].props[args.t].props[args.p].alias//pname
+            args.t = GB.byGB[args.base].props[args.t].alias //tname
+        }
+    }
     if(!check){return console.log('Error: Invalid column type')}
+    console.log(args.base, args.t, args.p)
     if(args.base && args.t && args.p){
         let colParam = GB.byAlias[args.base].props[args.t].props[args.p]
         let talias = GB.byAlias[args.base].props[args.t].alias
         let palias = colParam.alias
         let colSoul = args.base + '/' + talias + '/' + palias
-        if(newType === 'string' || 'number' || 'boolean'){
+        if(newType === ('string' || 'number' || 'boolean')){//100% pass, or error and change nothing.
             let currentData = gunGet(gunRoot, colSoul)
             currentData.then(gundata => {
                 let data = Gun.obj.copy(gundata)
@@ -963,29 +1060,76 @@ function changeColumnType(newType, linksTo, backLinkCol){
                     for (const key in data) {
                         let HID = GB.byGB[args.base].props[talias].HID[key]
                         const value = String(data[key])
-                        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){
+                        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
                             putObj[key] = false
-                        }else if (value == '1' || 'true' || 'Infinity'){
+                        }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
                             putObj[key] = true
                         }else{
                             return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
                         }
                     }
                 }
-                console.log(putObj)
                 gun.config().edit({GBtype: newType})
                 gunRoot.get(colSoul).put(putObj)
             })
-        }else if (newType === 'link' || 'prev' || 'next'){//parse values for linking
-            //check linksTo is valid table
-            //if backLinkCol specified, validate it exists
-            //for values, create array from string
-            //build new array/object of GBids
-            //build second array/obj of backLinks for either existing column put or new column put
+        }else if (newType === ('link' || 'prev' || 'next')){//parse values for linking
+            //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
+            if(linksTo && GB.byAlias[args.base].props[linksTo]){//check linksTo is valid table
+                if(backLinkCol && !GB.byAlias[args.base].props[linksTo].props[backLinkCol]){//if backLinkCol specified, validate it exists
+                    return console.log('ERROR-Aborted Linking: Back link column on sheet: '+ linksTo + ' Not Found')
+                }
+                //if backLinkCol is valid, we will overwrite, if non specified, will create
+                let currentData = gunGet(gunRoot, colSoul)
+                currentData.then(gundata => {
+                    let data = Gun.obj.copy(gundata)
+                    if(!gundata){
+                        gun.config().edit({GBtype: newType})
+                        return console.log('No data to convert, config updated')
+                    }
+                    delete data['_']
+                    //forin keys and attempt to change values over
+                    //maybe just abort the conversion and alert user which cell(s) needs attention
+                    let putObj = {}
+                    let nextObj = {}
+                    for (const GBID in data) {//for values, create array from string
+                        const linkStr = data[GBID];
+                        if(linkStr){
+                            putObj[GBID] = {}
+                            nextObj[GBID] = {}
+                            let linkArr = linkStr.split(', ')
+                            for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
+                                const HID = linkArr[i];
+                                if(GB.byAlias[args.base].props[linksTo].HID[HID]){
+                                    let linkGBID = GB.byAlias[args.base].props[linksTo].HID[HID]
+                                    putObj[GBID][linkGBID] = true
+                                    nextObj[linkGBID][GBID] = true
+                                }else{
+                                    return console.log('LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + linksTo)
+                                }
+                                putObj[GBID] = JSON.stringify(putObj[GBID])
+                                nextObj[GBID] = JSON.stringify(nextObj[GBID])
+                            }
+
+                        }
+                    }
+                    console.log(putObj)
+                    console.log(nextObj)
+
+
+
+
+                })
+            }else{
+                return console.log('ERROR: 2nd argument linksTo either is not defined or is not valid')
+            }
+
+
             // stringify and store in new putObj for that col
             
 
 
+        }else{
+            return console.log('ERROR: gbase, getTable, or getColumn not specified')
         }
 
     }else{
@@ -1473,7 +1617,6 @@ function buildRoutes(thisReact, baseID){
         tableObj.base = baseID
         tableObj.key = tval
         tableObj.cols = []
-        tableObj.colData = {}
         tableObj.colalias = {}
         tableObj.rowHID = []
         if(GB.byGB[baseID].props[tval].HID){
@@ -1489,12 +1632,8 @@ function buildRoutes(thisReact, baseID){
         for (let j = 0; j < columns.length; j++) {
             const pval = columns[j];
             let palias = GB.byGB[baseID].props[tval].props[pval].alias
-            let gunsoul = baseID + '/' + tval + '/' + pval
             tableObj.colalias[pval] = palias
             result[i].cols.push(pval)
-            if(thisReact.state[gunsoul]){
-                result[i].colData[pval] = thisReact.state[gunsoul]
-            }
         }
     }
     if(JSON.stringify(thisReact.state.GBroutes) !== JSON.stringify(result)){
@@ -1535,5 +1674,6 @@ function buildRows(thisReact){
 }
 module.exports = {
     buildRoutes,
-    buildRows
+    buildRows,
+    getRow
 }
