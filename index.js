@@ -534,45 +534,45 @@ function injectHIDs(souls, HIDsoul, tname){
     let base = args[0]
     let tval = args[1]
     let byA = {}
-    byA[base] = {}
-    byA[base].props = {}
-    byA[base].props[tname] = {}
-    byA[base].props[tname].HID = {}
-    let aHID = byA[base].props[tname].HID
+    // byA[base] = {}
+    // byA[base].props = {}
+    // byA[base].props[tname] = {}
+    // byA[base].props[tname].HID = {}
+    //let aHID = byA[base].props[tname].HID
     let byGB = {}
-    byGB[base] = {}
-    byGB[base].props = {}
-    byGB[base].props[tval] = {}
-    byGB[base].props[tval].HID = {}
-    let bHID = byGB[base].props[tval].HID
+    // byGB[base] = {}
+    // byGB[base].props = {}
+    // byGB[base].props[tval] = {}
+    // byGB[base].props[tval].HID = {}
+    //let bHID = byGB[base].props[tval].HID
     
     for (const key in souls) {
         const value = souls[key];
         if (value) {
-            aHID[key] = value
-            bHID[value] = key
+            byA[key] = value
+            byGB[value] = key
         }
     }
-    // if(!GB.byAlias[base]){
-    //     GB.byAlias[base] = {}
-    //     GB.byAlias[base].props = {}
-    //     GB.byAlias[base].props[tname] = {}
-    // }else if(!GB.byAlias[base].props[tname]){
-    //     GB.byAlias[base].props[tname] = {}
-    // }else{
-    //     GB.byAlias[base].props[tname].HID = {}
-    // }
-    GB.byAlias = Object.assign(byA, GB.byAlias)
-    // if(!GB.byGB[base]){
-    //     GB.byGB[base] = {}
-    //     GB.byGB[base].props = {}
-    //     GB.byGB[base].props[tval] = {}
-    // }else if(!GB.byGB[base].props[tval]){
-    //     GB.byGB[base].props[tval] = {}
-    // }else{
-    //     GB.byGB[base].props[tval].HID = {}
-    // }
-    GB.byGB = Object.assign(byGB, GB.byGB)
+    if(!GB.byAlias[base]){
+        GB.byAlias[base] = {}
+        GB.byAlias[base].props = {}
+        GB.byAlias[base].props[tname] = {}
+    }else if(!GB.byAlias[base].props[tname]){
+        GB.byAlias[base].props[tname] = {}
+    }else{
+        GB.byAlias[base].props[tname].HID = {}
+    }
+    GB.byAlias[base].props[tname].HID = Object.assign(GB.byAlias[base].props[tname].HID ,byA)
+    if(!GB.byGB[base]){
+        GB.byGB[base] = {}
+        GB.byGB[base].props = {}
+        GB.byGB[base].props[tval] = {}
+    }else if(!GB.byGB[base].props[tval]){
+        GB.byGB[base].props[tval] = {}
+    }else{
+        GB.byGB[base].props[tval].HID = {}
+    }
+    GB.byGB[base].props[tval].HID = Object.assign(GB.byGB[base].props[tval].HID, byGB)
     // console.log('injected:',GB.byGB[base].props[tval])
 }
 function loadGBase(thisReact) {
@@ -608,7 +608,7 @@ function loadGBase(thisReact) {
             }
         }
         let aftercopy = Gun.obj.copy(GB)
-        GB.byAlias = Object.assign(aftercopy.byAlias,gbconfig)
+        GB.byAlias = Object.assign(gbconfig,aftercopy.byAlias)
         let trans = Gun.obj.copy(GB.byAlias)
         for (const base in trans) {//remove byAlias HIDs
             const baseconfig = trans[base];
@@ -620,6 +620,7 @@ function loadGBase(thisReact) {
         let transform = aliasTransform(Gun.obj.copy(trans))
         GB.byGB = Object.assign(GB.byGB,transform['byGB'])//merge transformed tree with injected byGB HIDs
         GB.forUI = transform['forUI']
+        console.log(GB)
         if(thisReact !== undefined){
             thisReact.setState({config: GB});
         }
