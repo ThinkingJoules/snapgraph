@@ -579,6 +579,7 @@ function loadGBase(thisReact) {
     gun = this
     gun.get('GBase').on(function(data, id){
         console.log(".get(GBase).on() fired")
+        let oldConfig = Gun.obj.copy(GB)
         let gbconfig = {}
         let clean = Gun.obj.copy(data)
         delete clean['_']
@@ -618,8 +619,8 @@ function loadGBase(thisReact) {
             }
         }
         let transform = aliasTransform(Gun.obj.copy(trans))
-        GB.byGB = Object.assign(GB.byGB,transform['byGB'])//merge transformed tree with injected byGB HIDs
-        GB.forUI = transform['forUI']
+        GB.byGB = Object.assign(aftercopy.byGB,transform.byGB)//merge transformed tree with injected byGB HIDs
+        GB.forUI = transform.forUI
         console.log(GB)
         if(thisReact !== undefined){
             thisReact.setState({config: GB});
@@ -982,7 +983,6 @@ function getOrderedRowArr(base, tval, GBID){
                 }else{
                     colData = cache[base][tval][col]
                 }
-                console.log(colData)
                 if(col === 'p0'){
                     temp[col] = GB.byGB[base].props[tval].HID[GBID]
                 }else{
