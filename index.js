@@ -948,6 +948,13 @@ function tableToState(base, tval, thisReact){
     }
     
     if(!GB.byAlias[base].props[talias].HID){return}
+    if(!GB.byGB[base].props[tval].HID){return}
+    for (const col in GB.byGB[base].props[tval].props) {
+        if(col !== 'HID'){
+            if(!cache[base][tval][col]){return}
+        }
+    }
+    
     let table = []
     let GBIDs = Object.values(GB.byAlias[base].props[talias].HID)
     for (let i = 0; i < GBIDs.length; i++) {
@@ -968,12 +975,14 @@ function getOrderedRowArr(base, tval, GBID){
         let temp = {}
         for (const col in GB.byGB[base].props[tval].props) {
             if(col !== 'HID'){
+                if(!cache[base][tval][col]){return}
                 let colData
                 if(!cache[base][tval][col]){
                     colData = {};
                 }else{
                     colData = cache[base][tval][col]
                 }
+                console.log(colData)
                 if(col === 'p0'){
                     temp[col] = GB.byGB[base].props[tval].HID[GBID]
                 }else{
