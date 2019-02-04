@@ -105,7 +105,6 @@ function hashCode(string) {
     }
     return hash;
 }
-
 module.exports = {
     gunGet,
     gunGetGet,
