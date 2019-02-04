@@ -285,6 +285,7 @@ const newBaseConfig = (config) =>{
     return {alias, sortval, vis, archived, deleted}
 }
 const newTableConfig = (config) =>{
+    config = config || {}
     let alias = config.alias || 'New Table'
     let sortval = config.sortval || 0
     let vis = config.vis || true
@@ -293,7 +294,7 @@ const newTableConfig = (config) =>{
     return {alias, sortval, vis, archived, deleted}
 }
 const newColumnConfig = (config) =>{
-    if(config === undefined){config = {}}
+    config = config || {}
     let alias = config.alias || 'New Column'
     let sortval = config.sortval || 0
     let vis = config.vis || true
@@ -555,7 +556,6 @@ const gbByAlias = (gb) =>{
             delete output[bid].props[tval]
             delete output[bid].props[talias].rows
             if(tconfig.rows){//Invert Key/Values in HID Alias obj
-                console.log('inverting row Aliases')
                 for (const rowID in tconfig.rows) {
                     if (tconfig.rows[rowID]) {
                         const GBalias = tconfig.rows[rowID];
@@ -1129,7 +1129,8 @@ function importNewTable(tsv, tAlias,){
     let dataArr = tsvJSONgb(tsv)
     let path = this._path // should be 'baseID'
     let tval = findNextID(path)
-    let tconfig = newTableConfig({alias: tAlias})
+    let nextSort = nextSortval(path)
+    let tconfig = newTableConfig({alias: tAlias, sortval: nextSort})
     gun.get(path + '/' + tval + '/config').put(tconfig)
     let result = {}
     let headers = dataArr[0]
@@ -1469,7 +1470,7 @@ function handleSubUpdate(subID, buffer){
             if(pvals[0] !== 'ALL'){
                 for (const rowid in table) {
                     const row = table[rowid];
-                    let rowCopy = Gun.obj.copy(row)
+                    let rowCopy = Gun.obj.copy(row) || {}
                     for (const pval in rowCopy) {
                         let includes = pvals.includes(pval)
                         if(!includes){
@@ -1604,10 +1605,9 @@ function buildRoutes(thisReact, baseID){
     let result = []
     let byAlias = gbByAlias(gb)
     let forUI = gbForUI(gb)
-    console.log(forUI)
     if(byAlias === undefined || forUI[baseID] === undefined){return}
     let tables = Object.values(forUI[baseID])
-    
+    console.log(tables)
     for (let i = 0; i < tables.length; i++) {
         let tableObj = {}
         const table = tables[i];
@@ -1635,6 +1635,7 @@ function buildRoutes(thisReact, baseID){
             result[i].cols.push(pval)
         }
     }
+    console.log(result)
     if(!thisReact.state.GBroutes || JSON.stringify(thisReact.state.GBroutes) !== JSON.stringify(result)){
         thisReact.setState({GBroutes: result})
     }
