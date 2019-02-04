@@ -711,7 +711,8 @@ function nextSortval(path){
     let nextSort = 0
     for (const key in curIDs) {
         const sortval = curIDs[key].sortval;
-        if(sortval && sortval > nextSort){
+        console.log(sortval, nextSort)
+        if(sortval && sortval >= nextSort){
             nextSort = sortval
         }
     }
@@ -1446,7 +1447,7 @@ function parseSubID(subID){
 function handleSubUpdate(subID, buffer){
     let out = {}
     let [type, base, tval, pvals, rowid] = parseSubID(subID)
-    //console.log(subID, type)
+    console.log(subID, type)
     if(type === 'row'){
         let row = getValue([base,tval,rowid], buffer)
         if(row !== undefined && pvals[0] !== 'ALL'){
@@ -1466,7 +1467,9 @@ function handleSubUpdate(subID, buffer){
         }
     }else if(type === 'table'){
         let table = getValue([base,tval], buffer)
+        console.log(table)
         if(table !== undefined){
+            console.log(pvals[0])
             if(pvals[0] !== 'ALL'){
                 for (const rowid in table) {
                     const row = table[rowid];
@@ -1477,10 +1480,12 @@ function handleSubUpdate(subID, buffer){
                             delete rowCopy[pval]
                         }
                     }
-                    out = object.assign(out,rowCopy)
+                    out = Object.assign(out,rowCopy)
+                    console.log(out)
                 }
             }else{
                 out = table
+                console.log('all',out)
             }
             
         }
@@ -1497,10 +1502,10 @@ function handleSubUpdate(subID, buffer){
             }
         }
     }
-    //console.log(out)
+    console.log(out)
     if(Object.keys(out).length > 0){
         gsubs[base][subID] = out //should fire user CB from .watch
-        //console.log(gsubs[base][subID])
+        console.log(gsubs[base][subID])
     }
 }
 function handleNewData(soul, data){
@@ -1533,6 +1538,7 @@ function loadGBaseConfig(thisReact){
 function tableToState(base, tval, thisReact){
     
     let _path = base + '/' + tval
+    let subID = base + '+' + tval
     let call = {_path, subscribe}
     call.subscribe(function(data){
         let columns = getValue([base, 'props', tval, 'props'], gb)
@@ -1599,7 +1605,7 @@ function tableToState(base, tval, thisReact){
         }
         vTable[base][tval].last = JSON.stringify(newTable)
         thisReact.setState({vTable: newTable})
-    }, undefined, true, true, _path)
+    }, undefined, true, true, subID)
 }
 function buildRoutes(thisReact, baseID){
     let result = []
@@ -1607,7 +1613,6 @@ function buildRoutes(thisReact, baseID){
     let forUI = gbForUI(gb)
     if(byAlias === undefined || forUI[baseID] === undefined){return}
     let tables = Object.values(forUI[baseID])
-    console.log(tables)
     for (let i = 0; i < tables.length; i++) {
         let tableObj = {}
         const table = tables[i];
@@ -1635,7 +1640,6 @@ function buildRoutes(thisReact, baseID){
             result[i].cols.push(pval)
         }
     }
-    console.log(result)
     if(!thisReact.state.GBroutes || JSON.stringify(thisReact.state.GBroutes) !== JSON.stringify(result)){
         thisReact.setState({GBroutes: result})
     }
