@@ -354,7 +354,7 @@ function handleConfigChange(configObj, path, backLinkCol){
     }else{//base (or row, but validConfig is not called)
         validConfig = newBaseConfig()
     }
-    if(cpath[cpath.length-2] === 'props'){//base,table,col config change
+    if(cpath[cpath.length-2] === 'props' || cpath.length === 1){//base,table,col config change
         let configCheck = checkConfig(validConfig, configObj)
         let checkAlias = (configObj.alias) ? checkUniqueAlias(cpath, configObj.alias) : true
         let checkSortval = (configObj.sortval) ? checkUniqueSortval(cpath, configObj.sortval) : true
@@ -683,7 +683,7 @@ function checkUniqueAlias(pathArr, alias){
     let configPath = pathArr.slice()
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
-    if(configPath.length === 1){
+    if(pathArr.length === 1){
         return true //base alias, those are not unique
     }
     if(things !== undefined){
