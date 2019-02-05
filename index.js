@@ -1816,24 +1816,15 @@ function linkColumn(path, configObj, backLinkCol){
     let targetLink = configObj.linksTo
     let targetBackLink = backLinkCol
     let targetTable = targetLink.t
-    let targetBase = targetLink.base
-    let linkTval
-    let linkPval
+
     let targetColSoul
-    let colSoul = base + '/' + tval + '/' + pval
-    if(targetLink.p){
-        targetBackLink = targetLink.p
-    }else{
-        targetBackLink = false
-    }
-    let linkConfig = GB.byAlias[targetBase].props[targetTable]
-    linkTval = linkConfig.alias
+    let colSoul = base + '/' + tval + '/r/' + pval
+    
     if(targetBackLink){
-        linkPval = linkConfig.props[targetBackLink]
-        targetColSoul = targetBase + '/' + linkTval + '/' + linkPval
+        targetColSoul = linkBase + '/' + linkTval + '/' + linkPval
     }
     let prevConfig = {base: args.base, t: args.t, p: args.p,tval,pval,colSoul}
-    let nextConfig = {targetBase,targetTable,targetBackLink,targetTval: linkTval,targetPval: linkPval,targetColSoul}
+    let nextConfig = {targetBase: linkBase,targetTable,targetBackLink,targetTval: linkTval,targetPval: linkPval,targetColSoul}
 
     let currentData = gunGet(gun, colSoul)
     currentData.then(gundata => {
