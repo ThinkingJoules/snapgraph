@@ -277,6 +277,7 @@ function setupGBalias(gbasechainpath){
 
 //CONFIG FUNCTIONS
 const newBaseConfig = (config) =>{
+    config = config || {}
     let alias = config.alias || 'New Base'
     let sortval = config.sortval || 0
     let vis = config.vis || true
@@ -338,7 +339,7 @@ function mergeConfigState(gundata, gunsoul){
     let configpath = configPathFromSoul(gunsoul)
     setMergeValue(configpath,data,gb)
 }
-function handleConfigChange(configObj, path){
+function handleConfigChange(configObj, path, backLinkCol){
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let cpath = configPathFromChainPath(path)
@@ -357,8 +358,18 @@ function handleConfigChange(configObj, path){
         let configCheck = checkConfig(validConfig, configObj)
         let checkAlias = (configObj.alias) ? checkUniqueAlias(cpath, configObj.alias) : true
         let checkSortval = (configObj.sortval) ? checkUniqueSortval(cpath, configObj.sortval) : true
-        let changeType = (configObj.GBtype) ? checkUniqueSortval(path, configObj.sortval) : true
-        if(typeof changeType === 'function'){return changeType()}
+        if(configObj.GBtype){
+            let linkstuff = {}
+            for (const key in configObj) {//split config obj for normal configs vs type/link configs
+                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple'){
+                    linkstuff[key] = configObj[key]
+                    delete configObj[key]
+                }else{
+
+                }
+            }
+            changeColumnType(path, linkstuff, backLinkCol)
+        }
         if(configCheck && checkAlias && checkSortval){
             history.old = oldConfigVals(cpath, configObj)
             history.new = configObj
@@ -799,9 +810,9 @@ function newRow(alias, data){
     }
     //edit.call(this, data)
 }
-function config(configObj){
+function config(configObj, backLinkCol){
     let path = this._path
-    handleConfigChange(configObj, this._path)
+    handleConfigChange(configObj, this._path, backLinkCol)
 }
 function edit (editObj){
     let path = this._path
@@ -1723,11 +1734,11 @@ function xformRowObjToArr(rowObj, orderedHeader){
 //WIP___________________________________________________
 
 //LINK STUFF
-function changeColumnType(path, newType, linksTo, backLinkCol){
+function changeColumnType(path, configObj, backLinkCol){
     let [base, tval, pval] = path.split('/')
+    let newType = configObj.GBtype
     if(pval[0] !== 'p'){
-        let err = () => {return console.log('ERROR: Can only change GBtype of columns')}
-        return err
+        return console.log('ERROR: Can only change GBtype of columns')
     }
     let cpath = configPathFromChainPath(path)
     let configCheck = newColumnConfig()
@@ -1782,54 +1793,52 @@ function changeColumnType(path, newType, linksTo, backLinkCol){
         })
     }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
         //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
-        if(linksTo && GB.byAlias[args.base].props[linksTo]){//check linksTo is valid table
-            if(backLinkCol && !GB.byAlias[args.base].props[linksTo].props[backLinkCol]){//if backLinkCol specified, validate it exists
+        let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
+        let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
+        if(configObj.linksTo && getValue([linkBase,'props',linkTval, 'props', linkPval], gb)){//check linksTo is valid table
+            if(backLinkCol && !getValue([backLBase,'props',backLTval, 'props', backLPval], gb)){//if backLinkCol specified, validate it exists
                 return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linksTo + '] Not Found')
             }
-            let linkConfig = {base: args.base, t: linksTo, p: backLinkCol}
-            gun.linkColumn(gun.get(JSON.stringify(linkConfig))) 
+            linkColumn(path, configObj, backLinkCol) 
         }else{
-            return console.log('ERROR: 2nd argument linksTo either is not defined or is not valid')
+            return console.log('ERROR: config({linksTo: '+configObj.linksTo+' } is either not defined or invalid')
         }            
     }else{
-        return console.log('ERROR: gbase, getTable, or getColumn not specified')
+        return console.log('ERROR: Cannot understand what GBtype')
     }
     
 }
-function linkColumn(gbaseGetRow){
-    //gbaseGetRow = gun.gbase(GBUUID).getTable('TableName').getColumn('prev link column').linkColumn(gun.gbase(GBUUID).getTable('Other Table').getColumn('next link column')) <--Should return with .get as JSON args obj
-    let gun = this
-    let gunRoot = this.back(-1)
-    let args = JSON.parse(gun['_']['get'])
-    let targetLink = JSON.parse(gbaseGetRow['_']['get'])
-    let targetBackLink
+function linkColumn(path, configObj, backLinkCol){
+    let [base, tval, pval] = path.split('/')
+    let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
+    let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
+    
+    let targetLink = configObj.linksTo
+    let targetBackLink = backLinkCol
     let targetTable = targetLink.t
     let targetBase = targetLink.base
-    let targetTval
-    let targetPval
+    let linkTval
+    let linkPval
     let targetColSoul
-    let colParam = GB.byAlias[args.base].props[args.t].props[args.p]
-    let tval = GB.byAlias[args.base].props[args.t].alias
-    let pval = colParam.alias
-    let colSoul = args.base + '/' + tval + '/' + pval
+    let colSoul = base + '/' + tval + '/' + pval
     if(targetLink.p){
         targetBackLink = targetLink.p
     }else{
         targetBackLink = false
     }
     let linkConfig = GB.byAlias[targetBase].props[targetTable]
-    targetTval = linkConfig.alias
+    linkTval = linkConfig.alias
     if(targetBackLink){
-        targetPval = linkConfig.props[targetBackLink]
-        targetColSoul = targetBase + '/' + targetTval + '/' + targetPval
+        linkPval = linkConfig.props[targetBackLink]
+        targetColSoul = targetBase + '/' + linkTval + '/' + linkPval
     }
     let prevConfig = {base: args.base, t: args.t, p: args.p,tval,pval,colSoul}
-    let nextConfig = {targetBase,targetTable,targetBackLink,targetTval,targetPval,targetColSoul}
+    let nextConfig = {targetBase,targetTable,targetBackLink,targetTval: linkTval,targetPval: linkPval,targetColSoul}
 
-    let currentData = gunGet(gunRoot, colSoul)
+    let currentData = gunGet(gun, colSoul)
     currentData.then(gundata => {
         if(!gundata){
-            handleNewLinkColumn(gunRoot, prevConfig, nextConfig)
+            handleNewLinkColumn(gun, prevConfig, nextConfig)
             return console.log('No data to convert, config updated')
         }
         let data = Gun.obj.copy(gundata)
@@ -1869,7 +1878,7 @@ function linkColumn(gbaseGetRow){
         console.log(nextObj)
         prevConfig.data = putObj
         nextConfig.data = nextObj
-        handleNewLinkColumn(gunRoot, prevConfig, nextConfig)
+        handleNewLinkColumn(gun, prevConfig, nextConfig)
 
 
         // gun.config().edit({GBtype: 'prev'})
