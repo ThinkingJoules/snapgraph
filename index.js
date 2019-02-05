@@ -1748,17 +1748,28 @@ function changeColumnType(path, configObj, backLinkCol){
     let check = checkConfig(configCheck, {GBtype: newType})
     if(!check && newType !== 'link'){return console.log('Error: Invalid column type', newType)}
     let colParam = getValue(cpath,gb)
+    if(colParam.GBtype === newType){
+        return console.log('GBtype is already this type')
+    }
     let colSoul = base + '/' + tval + '/r/' + pval
+    let colData = getValue([base,tval,pval], cache)
+    console.log(colData)
+    if(!colData){
+        loadColDataToCache(base,tval,pval)
+        setTimeout(changeColumnType, 100, path, configObj, backLinkCol)
+        return
+    }
     if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
-        let currentData = gunGet(gun, colSoul)
-        currentData.then(gundata => {
-            let data = Gun.obj.copy(gundata)
-            if(!gundata){
-                let call = {_path: path, config}
-                call.config({GBtype: newType})
-                return console.log('No data to convert, config updated')
-            }
-            delete data['_']
+        // let currentData = gunGet(gun, colSoul)
+        // currentData.then(gundata => {
+        //     let data = Gun.obj.copy(gundata)
+        //     if(!gundata){
+        //         let call = {_path: path, config}
+        //         call.config({GBtype: newType})
+        //         return console.log('No data to convert, config updated')
+        //     }
+        //     delete data['_']
+            let data = colData
             //forin keys and attempt to change values over
             //maybe just abort the conversion and alert user which cell(s) needs attention
             let putObj = {}
@@ -1768,7 +1779,7 @@ function changeColumnType(path, configObj, backLinkCol){
                 }
             }else if(newType === 'number'){
                 for (const key in data) {
-                    let HID = gb[base].props[tval].HID[key]
+                    let HID = getValue([base, 'props', tval, 'rows', key], gb)
                     const value = data[key];
                     let num = value*1
                     if(String(num) === 'NaN'){
@@ -1779,7 +1790,7 @@ function changeColumnType(path, configObj, backLinkCol){
                 }
             }else if(newType === 'boolean'){
                 for (const key in data) {
-                    let HID = GB.byGB[args.base].props[tval].HID[key]
+                    let HID = getValue([base, 'props', tval, 'rows', key], gb)
                     const value = String(data[key])
                     if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
                         putObj[key] = false
@@ -1790,10 +1801,9 @@ function changeColumnType(path, configObj, backLinkCol){
                     }
                 }
             }
-            let call = {_path: path, config}
-            call.config({GBtype: newType})
+            gun.get(colSoul + '/config').get('GBtype').put(newType)
             gun.get(colSoul).put(putObj)
-        })
+      //  })
     }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
         //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
         let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
@@ -1823,9 +1833,7 @@ function linkColumn(path, configObj, backLinkCol){
     let targetColSoul
     let colSoul = base + '/' + tval + '/r/' + pval
     
-    if(targetBackLink){
-        targetColSoul = linkBase + '/' + linkTval + '/' + linkPval
-    }
+   
     let prevConfig = {base: args.base, t: args.t, p: args.p,tval,pval,colSoul}
     let nextConfig = {targetBase: linkBase,targetTable,targetBackLink,targetTval: linkTval,targetPval: linkPval,targetColSoul}
 
@@ -1839,6 +1847,7 @@ function linkColumn(path, configObj, backLinkCol){
         delete data['_']
         let putObj = {}
         let nextObj = {}
+        let linkHIDs = getValue([linkBase, 'props',linkTval,'rows'], gb)
         for (const GBID in data) {//for values, create array from string
             const linkStr = String(data[GBID]);
             let linkGBID
@@ -1847,9 +1856,8 @@ function linkColumn(path, configObj, backLinkCol){
                 let linkArr = linkStr.split(', ')
                 for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
                     const HID = linkArr[i];
-                    linkGBID = GB.byAlias[args.base].props[targetTable].HID[HID]
-                    if(GB.byAlias[args.base].props[targetTable].HID[HID]){
-                        linkGBID = GB.byAlias[args.base].props[targetTable].HID[HID]
+                    linkGBID = findRowID(linkHIDs,HID)
+                    if(linkGBID){
                         if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
                         if(!putObj[GBID]){putObj[GBID] = {}}
                         putObj[GBID][linkGBID] = true
@@ -1875,22 +1883,45 @@ function linkColumn(path, configObj, backLinkCol){
         nextConfig.data = nextObj
         handleNewLinkColumn(gun, prevConfig, nextConfig)
 
-
-        // gun.config().edit({GBtype: 'prev'})
-        // gunRoot.get(colSoul).put(putObj)
-        // if(backLinkCol){
-        //     gunRoot.gbase(args.base).getTable(linksTo).getColumn(backLinkCol).config().edit({GBtype: 'next'})
-        //     let backTalias = GB.byAlias[args.base].props[linksTo].alias
-        //     let backPalias = GB.byAlias[args.base].props[linksTo].props[backLinkCol].alias
-        //     let colSoul = args.base + '/' + backTalias + '/' + backPalias
-        //     for (const key in nextObj) {
-        //         const value = nextObj[key];
-        //         gunRoot.get(colSoul).get(key).put(value)
-        //     }
-        // }else{//create new next col on linksTo sheet
-        //     let params = {linksTo: "" }
-        //     gunRoot.gbase(args.base).getTable(linksTo).addColumn(args.t + "'s", 'next', nextObj, params)
-        // }
+        if(backLinkCol){//all data
+            gunRoot.gbase(next.targetBase)
+                .getTable(next.targetTable)
+                .getColumn(next.targetBackLink)
+                .config()
+                .edit({GBtype: 'next', linksTo: prev.colSoul})//next col config update
+            if (next.data !== undefined) {
+                gunRoot.get(next.targetColSoul).put(next.data)
+            }
+            gunRoot.gbase(prev.base)
+                .getTable(prev.t)
+                .getColumn(prev.p)
+                .config()
+                .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
+            if (prev.data !== undefined) {
+                gunRoot.get(prev.colSoul).put(prev.data)
+            }
+        }else{//create new next col on linksTo sheet
+            let params = {GBtype: 'next', linksTo: prev.colSoul}
+            if(next.data === undefined){
+                next.data = false
+            }
+            let newCol = 
+            gunRoot.gbase(next.targetBase)
+                .getTable(next.targetTable)
+                .addColumn(prev.t + "'s", 'next', next.data, params).get(newCol = this)
+            let newColArgs = JSON.parse(newCol['_']['back']['get'])
+            if(newColArgs.pval[0] !== 'p'){return console.log('did not return a new pval for new next col')}
+            next.targetColSoul = next.targetBase + '/' + next.targetTval + '/' + newColArgs.pval
+            gunRoot.gbase(prev.base)
+                .getTable(prev.t)
+                .getColumn(prev.p)
+                .config()
+                .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
+            
+            if (prev.data !== undefined) {
+                gunRoot.get(prev.colSoul).put(prev.data)
+            }
+        }
     })
 }
 function handleNewLinkColumn(gunRoot, prev, next){
