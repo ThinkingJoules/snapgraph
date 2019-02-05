@@ -5,55 +5,70 @@ Used to make an 'Airtable' like app.
 
 The table names, column names, row id's are all aliased inside of GBase to allow renaming of columns but not having to deal with keeping track of the data.
 
-The row ID will be the value in the lefthand most column. It has to be unique but can be shortened or made sequentially or concatenated from other columns on the table (derived). The row ID will also be called Human ID or HID within these docs (and codebase).
+The row ID will be the value in the lefthand most column. It has to be unique but can be shortened or made sequentially or concatenated from other columns on the table (derived).
 
 This has a few API's that make it easier to use in react to build dynamic tables and pages, but this module is mostly focused around building a simple table creation and query API and can be used with any front end you would like.
-// WIP
-____________________________________________
+
 
 # Example Usage
 
 ## Load Config to React State
 ```
+import Gun from 'gun/gun';
+import {gbase, loadGBaseConfig, buildRoutes } from 'gundb-gbase'
+
 class App extends Component {
   constructor() {
   super();
     let opt = {}
     opt.peers = ["http://localhost:8080/gun"]
-    opt.localStorage = false
     this.gun = Gun(opt);
+    this.gun.gbase(this.gun) //loads gun instance into GBase
     window.gun = this.gun;
-    
+    window.gbase = gbase; //gbase chain api
     this.state = {
-      config: {}
+      routes: []
     }
   }
   componentDidMount(){
     let self = this
-    gun.loadGBase(self) //will load in to this.state.config
+    loadGBaseConfig(self, self.state.currentBase);
   }
-  render() {
-    return (
+
+  componentDidUpdate(prevProps, prevState) {
+    let self = this
+    buildRoutes(self, self.state.currentBase);
+  }
   ```
-  gun.loadGBase() will return the config object on every change to the config.
 ## Creating a new Base
 ```
-gun.newBase('Base Name', 'First Table Name', 'Key Column Name on First Table')
+gbase.newBase('Base Name', 'First Table Name', 'Key Column Name on First Table', baseID)
 ```
 There is an optional 4th argument which will be the Base ID. This should be sufficiently unique as a collision on the graph would merge Bases. If nothing is passed in a `'B' + Random 12 digit alpha numeric` will be generated. The return value from the above command will be the Base ID string.
 
-## .gbase() chain
-This is slightly different than the gun.chain api, but the general point is the same. Everything following `gun.gbase(BaseID)` will use the gbase API and not the gun api. There are a couple exceptions where .on(CB) is still used to subscribe to data.
+## gbase chain
+This is slightly different than the gun.chain api, but the general point is the same. The chain commands change as you traverse the api, for example:
+```
+//using gbase identifiers
+gbase['B123456abcdef']['t0']['B123456abcdef/t0/r123abc'].subscribe(data => console.log(data))
+//logs:  {B123456abcdef/t0/r123abc:{p0: 'Human Row Name, p1: 'some string', p2: true, p3: 3}}
+
+//using the aliases the user specified
+gbase['Cool Database']['Awesome Table']['DataPoint 123'].subscribe(data => console.log(data))
+//logs:  {B123456abcdef/t0/r123abc:{p0: 'Human Row Name, p1: 'some string', p2: true, p3: 3}}
+
+
+```
 ## Changing configurations
 ### Change Base/Table/Column Name
-.config() will flag the current chain commands to alter the config data and not edit the actual user data.
+.config(Obj) will change the configuration settings of the current chain head.
 ```
-gun.gbase(BaseID).config().edit({alias: 'New Name'}) //Base Name
-gun.gbase(BaseID).getTable('Current Table Name').config().edit({alias: 'New Table Name'}) //Table Name
-gun.gbase(BaseID).getTable('Current Table Name').getColumn('Current Column Name').config().edit({alias: 'New Column Name'}) //Table Name
+gbase[BaseID].config({alias: 'New Name'})//Base Name
+gbase[BaseID][tval].config({alias: 'New Table Name'})//Table Name
+gbase[BaseID][tval][pval].config({alias: 'New Column Name'})//Table Name
 ```
 ### Other Config Options
-.edit object can contain the following keys to change:
+.config(Object) can contain the following keys to change:
 ```
 baseParams & tableParams = {alias: 'string', sortval: 0, vis: true, archived: false, deleted: false}
 
@@ -62,38 +77,85 @@ columnParams = {alias: 'string', sortval: 0, vis: true, archived: false, deleted
 ## Adding Tables/Columns/Rows
 The same chaining concepts apply from above:
 ```
-gun.gbase(BaseID).addTable('New Table Name', 'Key Column Name')
-gun.gbase(BaseID).getTable('Table Name').addColumn('New Column Name')
+gbase[BaseID].newTable('New Table Name', 'Key Column Name')
+gbase[BaseID]['Table Name'].newColumn('New Column Name')
 
-//addRow needs a .edit({}) at a minimum to actually write the row to DB
-gun.gbase(BaseID).getTable('Table Name').addRow('Human ID').edit({})//Human ID must be unique, but can be human readeable as it is aliased within GBase
+
+gbase[BaseID]['Table Name'].newRow('DataPoint 123', {p1: 'some string', p2: true, p3: 3}})//Human ID (first arg) must be unique, but can be human readeable as it is aliased within GBase. 2nd Arg is optional to create the row, but is the for all other rows in table.
 ```
 ## Importing Data
 Currently have an API for .tsv files, not .csv
 ```
-let file = rawTSVfile.toString()
-let output = gun.tsvParse(file)
-gun.gbase(BaseID).importTable(output, 'Table Name')
+gbase[baseID].importNewTable(tsvFileAsText, 'Name of Table);
 //creates a new table with alias: 'Table Name'
 ```
-importTable will merge data with existing table or create a new table if not found (confirm prompts in the browser to determine what to do). There is an optional 3rd argument that if entered should be the current table name you want to import the data to, and the second argument will rename the specified table to be that value.
+importNewTable will create a new table.
+importData will import data to an existing table:
+```
+gbase[baseID]['Table'].importData(tsvFileAsText, ovrwrt, append)
+```
+ovrwrt & append are booleans. If you only want to update matching rows (matches by first column, and header names) then ovrwrt = true and append = false. Outcomes for other value combinations are left for the reader to ponder.
 
 ## React Specific API's
-buildTable will load all the columns in to their own state objects
-buildRow will 'compose' the row from all the columns in state (does not query gun)
+### Building tables
+tableToState, plays will with 'react-virtualized'
 ```
-componentDidMount(){
-    let self = this
-    gun.gbase(BaseID).getTable('Table Name').buildTable(self) //will load each column in to this.state[ColumnName]
-  }
-  componentDidMount(){
-    let self = this
-    gun.gbase(BaseID).getTable('Table Name').getRow('Humand ID').buildRow(self) //will load row object in to this.state['Human ID']
-  }
+//dynamicMultiGrid.jsx
 
+import { tableToState } from 'gundb-gbase'
 
+componentDidMount() {
+    let self = this;
+    let GB = this.props.config;
+    let baseID = this.props.base;
+    let alias = this.props.match.params.alias;
+    let tval = GB.byAlias[baseID].props[alias].alias;
+
+    tableToState(baseID, tval, self);
+    //2D array of [row][column] in this.state.vTable
+
+  }
+componentDidUpdate(prevProps, prevState) {
+    let self = this;
+    let GB = this.props.config;
+    let baseID = this.props.base;
+    let alias = this.props.match.params.alias;
+    let tval = GB.byAlias[baseID].props[alias].alias;
+    
+    tableToState(baseID, tval, self);
+    //2D array of [row][column] in this.state.vTable
+}
 ```
+### Row Detail
+```
+//rowDetail.jsx
 
+import {rowToState} from 'gundb-gbase'
+
+componentDidMount() {
+    let self = this;
+    let GB = this.props.config;
+    let baseID = this.props.base;
+    let alias = this.props.match.params.alias;
+    let tval = GB.byAlias[baseID].props[alias].alias;
+
+    tableToState(baseID, tval, self);
+    //2D array of [row][column] in this.state.vTable
+
+  }
+componentDidUpdate(prevProps, prevState) {
+    const self = this;
+    let GB = this.props.config;
+    let baseID = this.props.base;
+    let curTable = this.props.match.params.alias;
+    let curHID = this.props.match.params.hid;
+    let rowID = GB.byAlias[baseID].props[curTable].rows[curHID]
+
+    rowToState(rowID, self)
+}
+```
+// WIP VVVVVVVVV
+____________________________________________
 
 ## **Key Concepts**
 There are 2 types of properties in a node object (according to this module).

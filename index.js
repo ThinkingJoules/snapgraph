@@ -356,7 +356,10 @@ function handleConfigChange(configObj, path){
     if(cpath[cpath.length-2] === 'props'){//base,table,col config change
         let configCheck = checkConfig(validConfig, configObj)
         let checkAlias = (configObj.alias) ? checkUniqueAlias(cpath, configObj.alias) : true
-        if(configCheck && checkAlias){
+        let checkSortval = (configObj.sortval) ? checkUniqueSortval(cpath, configObj.sortval) : true
+        let changeType = (configObj.GBtype) ? checkUniqueSortval(path, configObj.sortval) : true
+        if(typeof changeType === 'function'){return changeType()}
+        if(configCheck && checkAlias && checkSortval){
             history.old = oldConfigVals(cpath, configObj)
             history.new = configObj
             gun.get(csoul+'/history').get(tstamp).put(JSON.stringify(history))
@@ -669,7 +672,7 @@ function checkUniqueAlias(pathArr, alias){
     let configPath = pathArr.slice()
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
-    if(configPath.length === 0){
+    if(configPath.length === 1){
         return true //base alias, those are not unique
     }
     if(things !== undefined){
@@ -687,6 +690,29 @@ function checkUniqueAlias(pathArr, alias){
                     return false
                 }
             }
+        }
+        return true
+    }else{
+        return false
+    }
+}
+function checkUniqueSortval(pathArr, sortval){
+    let configPath = pathArr.slice()
+    let endPath = configPath.pop()//go up one level
+    let things = getValue(configPath, gb)
+    if(configPath.length === 1){
+        return true //base alias, those are not unique
+    }
+    if(things !== undefined){
+        if(endPath[0] !== 'r'){//base/table/col
+            for (const gbval in things) {
+                const configObj = things[gbval];
+                if (configObj && configObj.sortval && configObj.sortval === sortval) {
+                    return false
+                }
+            }
+        }else{//row
+            //no sort on row
         }
         return true
     }else{
@@ -731,7 +757,7 @@ function newBase(alias, tname, pname, baseID){
     gun.get(baseID + '/t0/r/p0/config').put(newColumnConfig({alias: pname}))   
     gun.get(baseID + '/t0/r/p').put({p0: true})
     gun.get(baseID + '/t').put({t0: true})
- 
+    return baseID
 }
 function newTable(tname, pname){
     let path = this._path
@@ -884,14 +910,14 @@ function subscribe(callBack, colArr, onlyVisible, notArchived, udSubID){
     let tstring = base +'/' + tval + '/'
     //with filtered column list, generate configs from given args
     if(level === 'row'){//row path
-        rowid = pathArg[2]
+        rowid = pathArgs[2]
         if(colArr !== undefined){
             objKey = tstring + rowid + '/' + colsString + '-' + subID
         }else{
             objKey = tstring + rowid + '/' + 'ALL-' + subID
         }
     }else if(level === 'column'){//column path
-        pval = pathArg[2]
+        pval = pathArgs[2]
         objKey = tstring + 'r/' + pval + '-' + subID
     }else{//table path
         rowid = false
@@ -1502,10 +1528,8 @@ function handleSubUpdate(subID, buffer){
             }
         }
     }
-    console.log(out)
     if(Object.keys(out).length > 0){
         gsubs[base][subID] = out //should fire user CB from .watch
-        console.log(gsubs[base][subID])
     }
 }
 function handleNewData(soul, data){
@@ -1536,40 +1560,19 @@ function loadGBaseConfig(thisReact){
 
 }
 function tableToState(base, tval, thisReact){
-    
+    let oldData = getValue([base,tval,'last'], vTable)
+    if(thisReact.state && thisReact.state.vTable && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.vTable)){
+        thisReact.setState({vTable: oldData})
+        return
+    }
     let _path = base + '/' + tval
     let subID = base + '+' + tval
     let call = {_path, subscribe}
     call.subscribe(function(data){
-        let columns = getValue([base, 'props', tval, 'props'], gb)
-        let rows = getValue([base, 'props', tval, 'rows'], gb)
-        let colnumber = Object.keys(columns) && Object.keys(columns).length || false
-        let talias = getValue([base, 'props', tval, 'alias'], gb)
-        if(thisReact.state && thisReact.state.colsCached && thisReact.state.colsCached !== colnumber){return}
-        if(!vTable[base]){vTable[base] = {}; vTable[base][tval]={}}
-        if(!vTable[base][tval]){vTable[base][tval]={}}
-        if(thisReact.state && thisReact.state.vTable && vTable[base][tval].last && JSON.stringify(vTable[base][tval].last) == JSON.stringify(thisReact.state.vTable)){
-            return
-        }
-        
+        let rows = getValue([base, 'props', tval, 'rows'], gb)     
         if(!rows){return}
-        //if(!GB.byGB[base].props[tval].HID){return}
-        let headerAlias = {}
-        let headerOrder = {}
-        let headers = []
-        for (const pval in columns) {
-            const alias = columns[pval].alias;
-            const sortval = columns[pval].sortval;
-            headerAlias[pval] = alias
-            headerOrder[sortval] = pval
-        }
-        let headerSort = Object.keys(headerOrder).sort(function(a, b){return a - b});
-        for (let i = 0; i < headerSort.length; i++) {
-            const sortVal = headerSort[i];
-            headers.push(headerOrder[sortVal])
-            
-        }
-        let newTable = [headers]
+        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let newTable = [headerValues]
         for (const rowid in data) {// put data in
             const rowObj = data[rowid];
             setMergeValue([base,tval,rowid],rowObj,vTable)
@@ -1588,23 +1591,59 @@ function tableToState(base, tval, thisReact){
             rowsbyalias[rowAlias] = rowID
         }
         for (let i = 0; i < sortedRows.length; i++) {
-            let rowArr = []
             const rowAlias = sortedRows[i];
             const rowID = rowsbyalias[rowAlias]
             const rowObj = tableData[rowID]
-            for (let j = 0; j < headers.length; j++) {
-                const pval = headers[j];
-                if(rowObj[pval]){
-                    rowArr.push(rowObj[pval])
-                }else{
-                    rowArr.push('')
-                }
-                
-            }
+            let rowArr = xformRowObjToArr(rowObj, headers)
             newTable.push(rowArr)
         }
-        vTable[base][tval].last = JSON.stringify(newTable)
-        thisReact.setState({vTable: newTable})
+        if(thisReact.state && JSON.stringify(vTable[base][tval].last) !== JSON.stringify(newTable)){
+            vTable[base][tval].last = newTable
+            thisReact.setState({vTable: newTable})
+        }
+        
+    }, undefined, true, true, subID)
+}
+function rowToState(rowID, thisReact){
+    let oldData = getValue([base,tval,rowID], vTable)
+    if(oldData !== undefined){
+        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let oldRow = [headerValues]
+        let rowArr = xformRowObjToArr(oldData, headers)
+        oldRow.push(rowArr)
+        if(thisReact.state && thisReact.state.rowObj && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.rowObj)){
+            thisReact.setState({vRow: newRow})
+            for (const pval in oldData) {
+                const value = oldData[pval];
+                thisReact.setState({[pval]: value})
+            }
+            return
+        }
+
+    }
+    let [base, tval, rval] = rowID.split('/')
+    let _path = rowID
+    let subID = base + '+' + tval + '+' + rval
+    let call = {_path, subscribe}
+    call.subscribe(function(data){
+        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let newRow = [headerValues]
+        let rowObj
+        for (const rowid in data) {// put data in
+            rowObj = data[rowid];
+            setMergeValue([base,tval,rowid],rowObj,vTable)
+        }
+        let rowArr = xformRowObjToArr(rowObj, headers)
+        newRow.push(rowArr)
+        let rowValue = getValue([base,tval,rowID], vTable)
+        if(!thisReact.state.vRow || thisReact.state.vRow && rowValue && JSON.stringify(rowValue) !== JSON.stringify(thisReact.state.vRow)){
+            thisReact.setState({vRow: newRow})
+            for (const pval in rowValue) {
+                const value = rowValue[pval];
+                thisReact.setState({[pval]: value})
+            }
+        }
+        
     }, undefined, true, true, subID)
 }
 function buildRoutes(thisReact, baseID){
@@ -1644,37 +1683,38 @@ function buildRoutes(thisReact, baseID){
         thisReact.setState({GBroutes: result})
     }
 }
-function buildRows(thisReact){//no longer needed
-    console.log(thisReact)
-    let rows= []
-    if(thisReact.props){
-        let HIDalias = Object.keys(thisReact.props.config.HID)
-        for (let i = 0; i < HIDalias.length; i++) {
-            let obj = {}
-            const HID = HIDalias[i];
-            if(thisReact.props.config.HID[HID]){
-                let GBkey = thisReact.props.config.HID[HID]
-                for (let i = 0; i < thisReact.props.columns.length; i++) {
-                    const pval = thisReact.props.columns[i];
-                    if(pval === 'p0'){
-                        obj[pval] = HID
-                    }else{   
-                        if(thisReact.props.columnData[pval] && thisReact.props.columnData[pval][GBkey] ) {
-                            obj[pval] = thisReact.props.columnData[pval][GBkey]
-                        }
-                        else {
-                            obj[pval] = ''
-                        }
-                    }
-                }
-            }
-            rows.push(obj)
-        }
-        
-        if(JSON.stringify(thisReact.state.GBrows) !== JSON.stringify(rows)){
-            thisReact.setState({GBrows: rows})
+function generateHeaderRow(base, tval){
+    let columns = getValue([base, 'props', tval, 'props'], gb)
+    let headerAlias = {}
+    let headerOrder = {}
+    let headers = []
+    let headerValues = []
+    for (const pval in columns) {
+        const alias = columns[pval].alias;
+        const sortval = columns[pval].sortval;
+        headerAlias[pval] = alias
+        headerOrder[sortval] = pval
+    }
+    let headerSort = Object.keys(headerOrder).sort(function(a, b){return a - b});
+    for (let i = 0; i < headerSort.length; i++) {
+        const sortVal = headerSort[i];
+        headers.push(headerOrder[sortVal])
+        headerValues.push(headerAlias[headerOrder[sortVal]])
+    }
+    return [headers,headerValues]
+
+}
+function xformRowObjToArr(rowObj, orderedHeader){
+    let rowArr = []
+    for (let j = 0; j < orderedHeader.length; j++) {
+        const pval = orderedHeader[j];
+        if(rowObj[pval]){
+            rowArr.push(rowObj[pval])
+        }else{
+            rowArr.push('')
         }
     }
+    return rowArr
 }
 
 
@@ -1683,87 +1723,76 @@ function buildRows(thisReact){//no longer needed
 //WIP___________________________________________________
 
 //LINK STUFF
-function changeColumnType(newType, linksTo, backLinkCol){
-    let gun = this
-    let gunRoot = this.back(-1)
-    let args = JSON.parse(gun['_']['get'])
-    let check = checkGBtype(undefined, newType)
-    if(args.BYGB){//convert t and p args to byALias
-        if(args.base && args.t && !args.p){
-            args.t = GB.byGB[args.base].props[args.t].alias //tname
-        }
-        if(args.base && args.t && args.p){
-            args.p = GB.byGB[args.base].props[args.t].props[args.p].alias//pname
-            args.t = GB.byGB[args.base].props[args.t].alias //tname
-        }
+function changeColumnType(path, newType, linksTo, backLinkCol){
+    let [base, tval, pval] = path.split('/')
+    if(pval[0] !== 'p'){
+        let err = () => {return console.log('ERROR: Can only change GBtype of columns')}
+        return err
     }
+    let cpath = configPathFromChainPath(path)
+    let configCheck = newColumnConfig()
+    let check = checkConfig(configCheck, {GBtype: newType})
     if(!check && newType !== 'link'){return console.log('Error: Invalid column type', newType)}
-    console.log(args.base, args.t, args.p)
-    if(args.base && args.t && args.p){
-        let colParam = GB.byAlias[args.base].props[args.t].props[args.p]
-        let talias = GB.byAlias[args.base].props[args.t].alias
-        let palias = colParam.alias
-        let colSoul = args.base + '/' + talias + '/' + palias
-        if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
-            let currentData = gunGet(gunRoot, colSoul)
-            currentData.then(gundata => {
-                let data = Gun.obj.copy(gundata)
-                if(!gundata){
-                    gun.config().edit({GBtype: newType})
-                    return console.log('No data to convert, config updated')
+    let colParam = getValue(cpath,gb)
+    let colSoul = base + '/' + tval + '/r/' + pval
+    if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
+        let currentData = gunGet(gun, colSoul)
+        currentData.then(gundata => {
+            let data = Gun.obj.copy(gundata)
+            if(!gundata){
+                let call = {_path: path, config}
+                call.config({GBtype: newType})
+                return console.log('No data to convert, config updated')
+            }
+            delete data['_']
+            //forin keys and attempt to change values over
+            //maybe just abort the conversion and alert user which cell(s) needs attention
+            let putObj = {}
+            if(newType === 'string'){
+                for (const key in data) {
+                    putObj[key] = String(data[key])
                 }
-                delete data['_']
-                //forin keys and attempt to change values over
-                //maybe just abort the conversion and alert user which cell(s) needs attention
-                let putObj = {}
-                if(newType === 'string'){
-                    for (const key in data) {
-                        putObj[key] = String(data[key])
-                    }
-                }else if(newType === 'number'){
-                    for (const key in data) {
-                        let HID = GB.byGB[args.base].props[talias].HID[key]
-                        const value = data[key];
-                        let num = value*1
-                        if(String(num) === 'NaN'){
-                            return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
-                        }else{
-                            putObj[key] = num
-                        }
-                    }
-                }else if(newType === 'boolean'){
-                    for (const key in data) {
-                        let HID = GB.byGB[args.base].props[talias].HID[key]
-                        const value = String(data[key])
-                        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
-                            putObj[key] = false
-                        }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
-                            putObj[key] = true
-                        }else{
-                            return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
-                        }
+            }else if(newType === 'number'){
+                for (const key in data) {
+                    let HID = gb[base].props[tval].HID[key]
+                    const value = data[key];
+                    let num = value*1
+                    if(String(num) === 'NaN'){
+                        return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
+                    }else{
+                        putObj[key] = num
                     }
                 }
-                gun.config().edit({GBtype: newType})
-                gunRoot.get(colSoul).put(putObj)
-            })
-        }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
-            //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
-            if(linksTo && GB.byAlias[args.base].props[linksTo]){//check linksTo is valid table
-                if(backLinkCol && !GB.byAlias[args.base].props[linksTo].props[backLinkCol]){//if backLinkCol specified, validate it exists
-                    return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linksTo + '] Not Found')
+            }else if(newType === 'boolean'){
+                for (const key in data) {
+                    let HID = GB.byGB[args.base].props[tval].HID[key]
+                    const value = String(data[key])
+                    if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
+                        putObj[key] = false
+                    }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
+                        putObj[key] = true
+                    }else{
+                        return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
+                    }
                 }
-                let linkConfig = {base: args.base, t: linksTo, p: backLinkCol}
-                gun.linkColumn(gunRoot.get(JSON.stringify(linkConfig))) 
-            }else{
-                return console.log('ERROR: 2nd argument linksTo either is not defined or is not valid')
-            }            
+            }
+            let call = {_path: path, config}
+            call.config({GBtype: newType})
+            gun.get(colSoul).put(putObj)
+        })
+    }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
+        //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
+        if(linksTo && GB.byAlias[args.base].props[linksTo]){//check linksTo is valid table
+            if(backLinkCol && !GB.byAlias[args.base].props[linksTo].props[backLinkCol]){//if backLinkCol specified, validate it exists
+                return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linksTo + '] Not Found')
+            }
+            let linkConfig = {base: args.base, t: linksTo, p: backLinkCol}
+            gun.linkColumn(gun.get(JSON.stringify(linkConfig))) 
         }else{
-            return console.log('ERROR: gbase, getTable, or getColumn not specified')
-        }
-
+            return console.log('ERROR: 2nd argument linksTo either is not defined or is not valid')
+        }            
     }else{
-        return console.log('ERROR: Invalid parameters')
+        return console.log('ERROR: gbase, getTable, or getColumn not specified')
     }
     
 }
@@ -2234,9 +2263,9 @@ function treeReduceRight(startNodeID, method, acc, max){
 
 module.exports = {
     buildRoutes,
-    buildRows,
     getRow,
     tableToState,
+    rowToState,
     loadGBaseConfig,
     gbase,
     gb
