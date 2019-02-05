@@ -375,6 +375,8 @@ function handleConfigChange(configObj, path, backLinkCol){
             history.new = configObj
             gun.get(csoul+'/history').get(tstamp).put(JSON.stringify(history))
             gun.get(csoul).put(configObj)
+        }else{
+            return console.log('ERROR: Invalid, config key, conflicting alias, or conflicting sortval')
         }
     }else{//handle HID change
         //expects path argument of base/tval/rowid
@@ -391,6 +393,7 @@ function handleConfigChange(configObj, path, backLinkCol){
             return console.log('ERROR: New row alias is not unique')
         }
     }
+    return true
 }
 function oldConfigVals(pathArr, configObj){
     let oldObj = {}
@@ -690,14 +693,14 @@ function checkUniqueAlias(pathArr, alias){
         if(endPath[0] !== 'r'){//base/table/col
             for (const gbval in things) {
                 const configObj = things[gbval];
-                if (configObj && configObj.alias && configObj.alias === alias) {
+                if (configObj && configObj.alias && configObj.alias === alias && gbval !== endPath) {
                     return false
                 }
             }
         }else{//row
             for (const gbval in things) {
                 const rowAlias = things[gbval];
-                if (rowAlias && rowAlias === alias) {
+                if (rowAlias && rowAlias === alias && gbval !== endPath) {
                     return false
                 }
             }
@@ -718,7 +721,7 @@ function checkUniqueSortval(pathArr, sortval){
         if(endPath[0] !== 'r'){//base/table/col
             for (const gbval in things) {
                 const configObj = things[gbval];
-                if (configObj && configObj.sortval && configObj.sortval === sortval) {
+                if (configObj && configObj.sortval && configObj.sortval === sortval && gbval !== endPath) {
                     return false
                 }
             }
@@ -1844,6 +1847,7 @@ function linkColumn(path, configObj, backLinkCol){
                 let linkArr = linkStr.split(', ')
                 for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
                     const HID = linkArr[i];
+                    linkGBID = GB.byAlias[args.base].props[targetTable].HID[HID]
                     if(GB.byAlias[args.base].props[targetTable].HID[HID]){
                         linkGBID = GB.byAlias[args.base].props[targetTable].HID[HID]
                         if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
