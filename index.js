@@ -310,28 +310,28 @@ const newColumnConfig = (config) =>{
     let linkMultiple = config.linkMultiple || true
     return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple}
 }
-const validGBtypes = {string: true, number: true, boolean: true, null: true, prev: true, next: true, function: true, tag: true}
+const validGBtypes = {string: true, number: true, boolean: true, null: true, prev: true, next: true, function: true, tag: true, link: true} //link is not really valid, but is always handled
 const checkConfig = (validObj, testObj) =>{//use for new configs, or update to configs
     //whichConfig = base, table, column, ..row?
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}
+    let output
     for (const key in testObj) {
         if (validObj[key] !== undefined) {//key is valid
             const tTypeof = typeof testObj[key];
             const vTypeof = typeof validObj[key]
             if(vTypeof === null && !nullValids[tTypeof]){//wildcard check
-                return false
+                throw new Error('typeof value must be one of:', nullValids)
             }else if(vTypeof !== tTypeof){
-                return false
+                throw new Error(vTypeof+ ' !== '+ tTypeof)
             }
-            if(key === 'GBtype' && validGBtypes[testObj[key]] === undefined){//type check the column data type
-                return false
+            if(key === 'GBtype' && validGBtypes[testObj[key]] === undefined ){//type check the column data type
+                throw new Error('GBtype does not match one of:', Object.keys(validGBtypes))
             }
             return true
         }else{
-            return false
+            throw new Error(key + ' does not match valid keys of:', Object.keys(validObj))
         }
-    }
-    
+    }    
 }
 function mergeConfigState(gundata, gunsoul){
     let data = Gun.obj.copy(gundata)
@@ -355,9 +355,13 @@ function handleConfigChange(configObj, path, backLinkCol){
         validConfig = newBaseConfig()
     }
     if(cpath[cpath.length-2] === 'props' || cpath.length === 1){//base,table,col config change
-        let configCheck = checkConfig(validConfig, configObj)
-        let checkAlias = (configObj.alias) ? checkUniqueAlias(cpath, configObj.alias) : true
-        let checkSortval = (configObj.sortval) ? checkUniqueSortval(cpath, configObj.sortval) : true
+        try{
+            checkConfig(validConfig, configObj)
+            checkUniqueAlias(cpath, configObj.alias)
+            checkUniqueSortval(cpath, configObj.sortval)
+        }catch (e){
+            return console.log(e)
+        }
         if(configObj.GBtype){
             let linkstuff = {}
             for (const key in configObj) {//split config obj for normal configs vs type/link configs
@@ -370,13 +374,11 @@ function handleConfigChange(configObj, path, backLinkCol){
             }
             changeColumnType(path, linkstuff, backLinkCol)
         }
-        if(configCheck && checkAlias && checkSortval){
+        if(Object.keys(configObj).length !== 0){
             history.old = oldConfigVals(cpath, configObj)
             history.new = configObj
             gun.get(csoul+'/history').get(tstamp).put(JSON.stringify(history))
             gun.get(csoul).put(configObj)
-        }else{
-            return console.log('ERROR: Invalid, config key, conflicting alias, or conflicting sortval')
         }
     }else{//handle HID change
         //expects path argument of base/tval/rowid
@@ -394,6 +396,81 @@ function handleConfigChange(configObj, path, backLinkCol){
         }
     }
     return true
+}
+function changeColumnType(path, configObj, backLinkCol){
+    let [base, tval, pval] = path.split('/')
+    let newType = configObj.GBtype
+    if(pval[0] !== 'p'){
+        return console.log('ERROR: Can only change GBtype of columns')
+    }
+    let cpath = configPathFromChainPath(path)
+    let configCheck = newColumnConfig()
+    let check = checkConfig(configCheck, {GBtype: newType})
+    if(!check && newType !== 'link'){return console.log('Error: Invalid column type', newType)}
+    let colParam = getValue(cpath,gb)
+    if(colParam.GBtype === newType){
+        return console.log('GBtype is already this type')
+    }
+    let colSoul = base + '/' + tval + '/r/' + pval
+    
+    if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
+        let data = getValue([base,tval,pval], cache)
+        console.log(data)
+        if(!data){
+            loadColDataToCache(base,tval,pval)
+            setTimeout(changeColumnType, 100, path, configObj, backLinkCol)
+            return
+        }
+        //forin keys and attempt to change values over
+        //maybe just abort the conversion and alert user which cell(s) needs attention
+        let putObj = {}
+        if(newType === 'string'){
+            for (const key in data) {
+                putObj[key] = String(data[key])
+            }
+        }else if(newType === 'number'){
+            for (const key in data) {
+                let HID = getValue([base, 'props', tval, 'rows', key], gb)
+                const value = data[key];
+                let num = value*1
+                if(String(num) === 'NaN'){
+                    return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
+                }else{
+                    putObj[key] = num
+                }
+            }
+        }else if(newType === 'boolean'){
+            for (const key in data) {
+                let HID = getValue([base, 'props', tval, 'rows', key], gb)
+                const value = String(data[key])
+                if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
+                    putObj[key] = false
+                }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
+                    putObj[key] = true
+                }else{
+                    return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
+                }
+            }
+        }
+        gun.get(colSoul + '/config').get('GBtype').put(newType)
+        gun.get(colSoul).put(putObj)
+      //  })
+    }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
+        //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
+        let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
+        let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
+        if(configObj.linksTo && getValue([linkBase,'props',linkTval, 'props', linkPval], gb)){//check linksTo is valid table
+            if(backLinkCol && !getValue([backLBase,'props',backLTval, 'props', backLPval], gb)){//if backLinkCol specified, validate it exists
+                return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linkRowTo + '] Not Found')
+            }
+            handleLinkColumn(path, configObj, backLinkCol) 
+        }else{
+            return console.log('ERROR: config({linksTo: '+configObj.linksTo+' } is either not defined or invalid')
+        }            
+    }else{
+        return console.log('ERROR: Cannot understand what GBtype')
+    }
+    
 }
 function oldConfigVals(pathArr, configObj){
     let oldObj = {}
@@ -513,6 +590,11 @@ function configSoulFromChainPath(thisPath){//should redo with regex
 
 }
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
+    let first = name[0]
+    let rest = name.slice(1)
+    if(first === 'p' && !isNaN(rest *1)){//if name is a pval just return the name
+        return name
+    }
     for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
             const alias = obj[key].alias;
@@ -694,20 +776,20 @@ function checkUniqueAlias(pathArr, alias){
             for (const gbval in things) {
                 const configObj = things[gbval];
                 if (configObj && configObj.alias && configObj.alias === alias && gbval !== endPath) {
-                    return false
+                    throw new Error('Matching Alias found at:', gbval)
                 }
             }
         }else{//row
             for (const gbval in things) {
                 const rowAlias = things[gbval];
                 if (rowAlias && rowAlias === alias && gbval !== endPath) {
-                    return false
+                    throw new Error('Matching Alias found at:', gbval)
                 }
             }
         }
         return true
     }else{
-        return false
+        throw new Error('Cannot find config data at path:', configPath)
     }
 }
 function checkUniqueSortval(pathArr, sortval){
@@ -722,7 +804,7 @@ function checkUniqueSortval(pathArr, sortval){
             for (const gbval in things) {
                 const configObj = things[gbval];
                 if (configObj && configObj.sortval && configObj.sortval === sortval && gbval !== endPath) {
-                    return false
+                    throw new Error('Matching sortval found at:', gbval)
                 }
             }
         }else{//row
@@ -730,7 +812,7 @@ function checkUniqueSortval(pathArr, sortval){
         }
         return true
     }else{
-        return false
+        throw new Error('Cannot find config data at path:', configPath)
     }
 }
 function findNextID(path){
@@ -776,7 +858,7 @@ function newBase(alias, tname, pname, baseID){
 function newTable(tname, pname){
     let path = this._path
     let nextT = findNextID(path)
-    let tconfig = newTableConfig({alias: tname})
+    let tconfig = newTableConfig({alias: tname, sortval: nextSortval(path)})
     let pconfig = newColumnConfig({alias: pname})
     gun.get(path + '/' + nextT + '/config').put(tconfig)
     gun.get(path + '/' + nextT + '/r/p0/config').put(pconfig)
@@ -794,6 +876,7 @@ function newColumn(pname, type){
     }else{
         return console.log('ERROR: invalid type give: '+ type)
     }
+    return nextP
 }
 function newRow(alias, data){
     if(alias === undefined || typeof alias === 'object'){
@@ -813,9 +896,33 @@ function newRow(alias, data){
     }
     //edit.call(this, data)
 }
+function linkColumnTo(linkTableOrBackLinkCol){
+    let path = this._path
+    if(path.split('/')[2]==='p0'){return console.log("ERROR: Cannot use the first column to link another table")}
+    let cpath = configPathFromChainPath(path)
+    let colType = getValue(cpath, gb).GBtype
+    let configObj = {}
+    if(!colType){return console.log("ERROR: Cannot find the type of this column")}
+    if(colType === 'prev' || colType === 'next'){
+        return console.log('ERROR: Column is already a link column, to add more links, use "linkRowTo()"')
+    }else{
+        configObj.GBtype = 'link'
+    }
+    if(typeof linkTableOrBackLinkCol === 'object'){
+        linkTableOrBackLinkCol = linkTableOrBackLinkCol._path || undefined
+    }
+    if(linkTableOrBackLinkCol === undefined){return console.log('ERROR: Must pass in a gbase[baseID][tval] or the column with the recipricol links')}
+    configObj.linksTo = linkTableOrBackLinkCol
+    let linkPath = linkTableOrBackLinkCol.split('/')
+    if(linkPath.length === 2 || linkPath.length === 3 && linkPath[2] === 'p0'){//table or table key column
+        handleConfigChange(configObj, path, undefined)
+    }else{// it is assumed to be the actual backlinkcolumn
+        handleConfigChange(configObj, path, linkTableOrBackLinkCol)
+    }
+}
 function config(configObj, backLinkCol){
     let path = this._path
-    handleConfigChange(configObj, this._path, backLinkCol)
+    handleConfigChange(configObj, path, backLinkCol)
 }
 function edit (editObj){
     let path = this._path
@@ -983,8 +1090,14 @@ function retrieve(colArr){
     return getRow(path, columns, 0)
 
 }
-function linksTo(gbaseGetRow){
+function linkRowTo(rowLinkCol, gbaseGetRow){
     //gbaseGetRow = gbase[base][tval][rowID]
+    let path = this._path
+    let colsPath = path.split('/')
+    colsPath.pop()
+    colsPath.push('props')
+    let cols = getValue(colsPath,gb)
+    let pval = findRowID(cols,rowLinkCol)
 
     if(args.BYGB){//convert t and p args to what other API's expect
         if(args.base && args.t && !args.p){
@@ -1009,12 +1122,112 @@ function tableChainOpt(_path){
     return {_path, config, newRow, newColumn, importData, subscribe}
 }
 function columnChainOpt(_path){
-    return {_path, config, subscribe}
+    return {_path, config, subscribe, linkColumnTo}
 }
 function rowChainOpt(_path){
     return {_path, edit, retrieve, subscribe}
 }
 
+//LINK STUFF
+
+function handleLinkColumn(path, configObj, backLinkCol){
+    let [base, tval, pval] = path.split('/')
+    let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
+    let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
+    
+    let data = getValue([base,tval,pval], cache)
+    if(!data){
+        loadColDataToCache(base,tval,pval)
+        setTimeout(handleLinkColumn, 100, path, configObj, backLinkCol)
+        return
+    }
+    let targetLink = configObj.linksTo
+    let targetTable = targetLink.t
+
+    let colSoul = base + '/' + tval + '/r/' + pval
+    let nextColSoul = (backLinkCol) ? backLBase + '/' + backLTval + '/r/' + backLPval : false
+   
+    let prevConfig = {path,colSoul}
+    let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, colSoul: nextColSoul}
+    
+
+    if(Object.keys(data).length === 0){
+        handleNewLinkColumn(prevConfig, nextConfig)
+        return console.log('No data to convert, config updated')
+    }
+    let putObj = {}
+    let nextObj = {}
+    let linkHIDs = getValue([linkBase, 'props',linkTval,'rows'], gb)
+    for (const GBID in data) {//for values, create array from string
+        const linkStr = String(data[GBID]);
+        let linkGBID
+        if(linkStr){
+            putObj[GBID] = {}
+            let linkArr = linkStr.split(', ')
+            for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
+                const HID = linkArr[i];
+                linkGBID = findRowID(linkHIDs,HID)
+                if(linkGBID){
+                    if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
+                    if(!putObj[GBID]){putObj[GBID] = {}}
+                    putObj[GBID][linkGBID] = true
+                    nextObj[linkGBID][GBID] = true
+                }else{
+                    if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
+                        return console.log('LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable)
+                    }
+                    if(!putObj[GBID]){putObj[GBID] = {}}
+                }
+                
+            }
+            putObj[GBID] = JSON.stringify(putObj[GBID])
+        }
+    }
+    for (const key in nextObj) {
+        let value = nextObj[key];
+        nextObj[key] = JSON.stringify(value)
+    }
+    console.log(putObj)
+    console.log(nextObj)
+    prevConfig.data = putObj
+    nextConfig.data = nextObj
+    handleNewLinkColumn(prevConfig, nextConfig)
+}
+function handleNewLinkColumn(prev, next){
+    // let prevConfig = {path,colSoul, data: prevPutObj}
+    // let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, data: nextPutObj}
+    if(next.colSoul){//all data
+        gun.get(next.colSoul + '/config').put({GBtype: 'next', linksTo: prev.path})
+        if (next.data !== undefined) {
+            gun.get(next.colSoul).put(next.data)
+        }
+        gun.get(prev.colSoul + '/config').put({GBtype: 'prev', linksTo: next.nextLinkCol})
+        if (prev.data !== undefined) {
+            gun.get(prev.colSoul).put(prev.data)
+        }
+    }else{//create new next col on linksTo sheet
+        let nextPathArgs = next.path.split('/')
+        nextPathArgs.pop()
+        let nextTPath = nextPathArgs.join('/')
+        let call = {_path: nextTPath, newColumn}
+        let nextP = call.newColumn(prev.t + "'s")
+        let params = {GBtype: 'next', linksTo: prev.colSoul}
+        if(next.data === undefined){
+            next.data = false
+        }
+        if(nextP[0] !== 'p'){return console.log('did not return a new pval for new next col')}
+        nextColSoul = nextPathArgs[0] + '/' + nextPathArgs[1] + '/r/' + nextP
+        let nextPath = nextPathArgs[0] + '/' + nextPathArgs[1] + '/' + nextP
+        gun.get(nextColSoul + '/config').put({GBtype: 'next', linksTo: prev.path})
+        if (next.data !== undefined) {
+            gun.get(nextColSoul).put(next.data)
+        }
+        gun.get(prev.colSoul + '/config').put({GBtype: 'prev', linksTo: nextPath})
+        if (prev.data !== undefined) {
+            gun.get(prev.colSoul).put(prev.data)
+        }
+    }
+}
 
 //IMPORT STUFF
 function tsvJSONgb(tsv){
@@ -1225,7 +1438,7 @@ function loadColDataToCache(base, tval, pval){
             delete data['_']
             setMergeValue(path,data,cache)
             handleNewData(colSoul, data)
-            console.log('gun.on()',colSoul, data)
+            console.log('gun.on()',colSoul)
             if(pval === 'p0'){
                 mergeConfigState(data,colSoul)
                 rebuildGBchain(id)
@@ -1611,8 +1824,8 @@ function tableToState(base, tval, thisReact){
             let rowArr = xformRowObjToArr(rowObj, headers)
             newTable.push(rowArr)
         }
-        if(thisReact.state && JSON.stringify(vTable[base][tval].last) !== JSON.stringify(newTable)){
-            vTable[base][tval].last = newTable
+        if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable)){
+            setValue([base, tval, 'last'], newTable, vTable)
             thisReact.setState({vTable: newTable})
         }
         
@@ -1736,238 +1949,7 @@ function xformRowObjToArr(rowObj, orderedHeader){
 
 //WIP___________________________________________________
 
-//LINK STUFF
-function changeColumnType(path, configObj, backLinkCol){
-    let [base, tval, pval] = path.split('/')
-    let newType = configObj.GBtype
-    if(pval[0] !== 'p'){
-        return console.log('ERROR: Can only change GBtype of columns')
-    }
-    let cpath = configPathFromChainPath(path)
-    let configCheck = newColumnConfig()
-    let check = checkConfig(configCheck, {GBtype: newType})
-    if(!check && newType !== 'link'){return console.log('Error: Invalid column type', newType)}
-    let colParam = getValue(cpath,gb)
-    if(colParam.GBtype === newType){
-        return console.log('GBtype is already this type')
-    }
-    let colSoul = base + '/' + tval + '/r/' + pval
-    let colData = getValue([base,tval,pval], cache)
-    console.log(colData)
-    if(!colData){
-        loadColDataToCache(base,tval,pval)
-        setTimeout(changeColumnType, 100, path, configObj, backLinkCol)
-        return
-    }
-    if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
-        // let currentData = gunGet(gun, colSoul)
-        // currentData.then(gundata => {
-        //     let data = Gun.obj.copy(gundata)
-        //     if(!gundata){
-        //         let call = {_path: path, config}
-        //         call.config({GBtype: newType})
-        //         return console.log('No data to convert, config updated')
-        //     }
-        //     delete data['_']
-            let data = colData
-            //forin keys and attempt to change values over
-            //maybe just abort the conversion and alert user which cell(s) needs attention
-            let putObj = {}
-            if(newType === 'string'){
-                for (const key in data) {
-                    putObj[key] = String(data[key])
-                }
-            }else if(newType === 'number'){
-                for (const key in data) {
-                    let HID = getValue([base, 'props', tval, 'rows', key], gb)
-                    const value = data[key];
-                    let num = value*1
-                    if(String(num) === 'NaN'){
-                        return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
-                    }else{
-                        putObj[key] = num
-                    }
-                }
-            }else if(newType === 'boolean'){
-                for (const key in data) {
-                    let HID = getValue([base, 'props', tval, 'rows', key], gb)
-                    const value = String(data[key])
-                    if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
-                        putObj[key] = false
-                    }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
-                        putObj[key] = true
-                    }else{
-                        return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
-                    }
-                }
-            }
-            gun.get(colSoul + '/config').get('GBtype').put(newType)
-            gun.get(colSoul).put(putObj)
-      //  })
-    }else if (newType === 'link' || newType === 'prev' || newType === 'next'){//parse values for linking
-        //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
-        let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
-        let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
-        if(configObj.linksTo && getValue([linkBase,'props',linkTval, 'props', linkPval], gb)){//check linksTo is valid table
-            if(backLinkCol && !getValue([backLBase,'props',backLTval, 'props', backLPval], gb)){//if backLinkCol specified, validate it exists
-                return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linksTo + '] Not Found')
-            }
-            linkColumn(path, configObj, backLinkCol) 
-        }else{
-            return console.log('ERROR: config({linksTo: '+configObj.linksTo+' } is either not defined or invalid')
-        }            
-    }else{
-        return console.log('ERROR: Cannot understand what GBtype')
-    }
-    
-}
-function linkColumn(path, configObj, backLinkCol){
-    let [base, tval, pval] = path.split('/')
-    let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
-    let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
-    
-    let targetLink = configObj.linksTo
-    let targetBackLink = backLinkCol
-    let targetTable = targetLink.t
 
-    let targetColSoul
-    let colSoul = base + '/' + tval + '/r/' + pval
-    
-   
-    let prevConfig = {base: args.base, t: args.t, p: args.p,tval,pval,colSoul}
-    let nextConfig = {targetBase: linkBase,targetTable,targetBackLink,targetTval: linkTval,targetPval: linkPval,targetColSoul}
-
-    let currentData = gunGet(gun, colSoul)
-    currentData.then(gundata => {
-        if(!gundata){
-            handleNewLinkColumn(gun, prevConfig, nextConfig)
-            return console.log('No data to convert, config updated')
-        }
-        let data = Gun.obj.copy(gundata)
-        delete data['_']
-        let putObj = {}
-        let nextObj = {}
-        let linkHIDs = getValue([linkBase, 'props',linkTval,'rows'], gb)
-        for (const GBID in data) {//for values, create array from string
-            const linkStr = String(data[GBID]);
-            let linkGBID
-            if(linkStr){
-                putObj[GBID] = {}
-                let linkArr = linkStr.split(', ')
-                for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
-                    const HID = linkArr[i];
-                    linkGBID = findRowID(linkHIDs,HID)
-                    if(linkGBID){
-                        if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
-                        if(!putObj[GBID]){putObj[GBID] = {}}
-                        putObj[GBID][linkGBID] = true
-                        nextObj[linkGBID][GBID] = true
-                    }else{
-                        if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
-                            return console.log('LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable)
-                        }
-                        if(!putObj[GBID]){putObj[GBID] = {}}
-                    }
-                    
-                }
-                putObj[GBID] = JSON.stringify(putObj[GBID])
-            }
-        }
-        for (const key in nextObj) {
-            let value = nextObj[key];
-            nextObj[key] = JSON.stringify(value)
-        }
-        console.log(putObj)
-        console.log(nextObj)
-        prevConfig.data = putObj
-        nextConfig.data = nextObj
-        handleNewLinkColumn(gun, prevConfig, nextConfig)
-
-        if(backLinkCol){//all data
-            gunRoot.gbase(next.targetBase)
-                .getTable(next.targetTable)
-                .getColumn(next.targetBackLink)
-                .config()
-                .edit({GBtype: 'next', linksTo: prev.colSoul})//next col config update
-            if (next.data !== undefined) {
-                gunRoot.get(next.targetColSoul).put(next.data)
-            }
-            gunRoot.gbase(prev.base)
-                .getTable(prev.t)
-                .getColumn(prev.p)
-                .config()
-                .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
-            if (prev.data !== undefined) {
-                gunRoot.get(prev.colSoul).put(prev.data)
-            }
-        }else{//create new next col on linksTo sheet
-            let params = {GBtype: 'next', linksTo: prev.colSoul}
-            if(next.data === undefined){
-                next.data = false
-            }
-            let newCol = 
-            gunRoot.gbase(next.targetBase)
-                .getTable(next.targetTable)
-                .addColumn(prev.t + "'s", 'next', next.data, params).get(newCol = this)
-            let newColArgs = JSON.parse(newCol['_']['back']['get'])
-            if(newColArgs.pval[0] !== 'p'){return console.log('did not return a new pval for new next col')}
-            next.targetColSoul = next.targetBase + '/' + next.targetTval + '/' + newColArgs.pval
-            gunRoot.gbase(prev.base)
-                .getTable(prev.t)
-                .getColumn(prev.p)
-                .config()
-                .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
-            
-            if (prev.data !== undefined) {
-                gunRoot.get(prev.colSoul).put(prev.data)
-            }
-        }
-    })
-}
-function handleNewLinkColumn(gunRoot, prev, next){
-    // prev = {...args,tval,pval,colSoul} could also have {data: prevColObj}
-    // next = {targetBase,targetTable,targetBackLink,targetTval,targetPval,targetColSoul} could also have {data: nextColObj}
-    if(next.targetBackLink){//all data
-        gunRoot.gbase(next.targetBase)
-            .getTable(next.targetTable)
-            .getColumn(next.targetBackLink)
-            .config()
-            .edit({GBtype: 'next', linksTo: prev.colSoul})//next col config update
-        if (next.data !== undefined) {
-            gunRoot.get(next.targetColSoul).put(next.data)
-        }
-        gunRoot.gbase(prev.base)
-            .getTable(prev.t)
-            .getColumn(prev.p)
-            .config()
-            .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
-        if (prev.data !== undefined) {
-            gunRoot.get(prev.colSoul).put(prev.data)
-        }
-    }else{//create new next col on linksTo sheet
-        let params = {GBtype: 'next', linksTo: prev.colSoul}
-        if(next.data === undefined){
-            next.data = false
-        }
-        let newCol = 
-        gunRoot.gbase(next.targetBase)
-            .getTable(next.targetTable)
-            .addColumn(prev.t + "'s", 'next', next.data, params).get(newCol = this)
-        let newColArgs = JSON.parse(newCol['_']['back']['get'])
-        if(newColArgs.pval[0] !== 'p'){return console.log('did not return a new pval for new next col')}
-        next.targetColSoul = next.targetBase + '/' + next.targetTval + '/' + newColArgs.pval
-        gunRoot.gbase(prev.base)
-            .getTable(prev.t)
-            .getColumn(prev.p)
-            .config()
-            .edit({GBtype: 'prev', linksTo: next.targetColSoul})//next col config update
-        
-        if (prev.data !== undefined) {
-            gunRoot.get(prev.colSoul).put(prev.data)
-        }
-    }
-
-}
 
 
 
