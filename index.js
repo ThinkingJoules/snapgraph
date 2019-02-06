@@ -616,6 +616,11 @@ const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     }
     return false
 }
+const findRowAlias = (rowID) =>{//obj is .rows, input human name, returns rowID
+    let [base, tval] = rowID.split('/')
+    let obj = getValue([base, 'props',tval,'rows'],gb)
+    return obj[rowID]
+}
 const gbForUI = (gb) =>{
     let output = {}
     for (const bid in gb) {
@@ -678,6 +683,17 @@ const gbByAlias = (gb) =>{
 
     }
     return output
+}
+function linkColPvals(base,tval){
+    let obj = getValue([base,'props',tval,'props'], gb)
+    let result = {}
+    for (const key in obj) {
+        if (obj[key].linksTo && obj[key].GBtype === 'prev' || obj[key].GBtype === 'next') {
+            const link = obj[key].linksTo
+            result[key] = link
+        }
+    }
+    return result
 }
 function setValue(propertyPath, value, obj){
     let properties = Array.isArray(propertyPath) ? propertyPath : propertyPath.split("/")
@@ -1792,10 +1808,14 @@ function tableToState(base, tval, thisReact){
         thisReact.setState({vTable: oldData})
         return
     }
+
+
     let _path = base + '/' + tval
     let subID = base + '+' + tval
     let call = {_path, subscribe}
     call.subscribe(function(data){
+        let flaggedCols = linkColIdxs(base,tval)
+        let links = linkColPvals(base,tval)
         let rows = getValue([base, 'props', tval, 'rows'], gb)     
         if(!rows){return}
         let [headers, headerValues] = generateHeaderRow(base, tval)
@@ -1821,22 +1841,24 @@ function tableToState(base, tval, thisReact){
             const rowAlias = sortedRows[i];
             const rowID = rowsbyalias[rowAlias]
             const rowObj = tableData[rowID]
-            let rowArr = xformRowObjToArr(rowObj, headers)
+            let rowArr = xformRowObjToArr(rowObj, headers, links)
             newTable.push(rowArr)
         }
-        if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable)){
+        if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable) || !self.state.linkColumns || JSON.stringify(self.state.linkColumns) !== JSON.stringify(flaggedCols)){
             setValue([base, tval, 'last'], newTable, vTable)
-            thisReact.setState({vTable: newTable})
+            thisReact.setState({vTable: newTable,linkColumns: flaggedCols})
         }
         
     }, undefined, true, true, subID)
 }
 function rowToState(rowID, thisReact){
+    let [base, tval, rval] = rowID.split('/')
     let oldData = getValue([base,tval,rowID], vTable)
     if(oldData !== undefined){
+        let links = linkColPvals(base,tval)
         let [headers, headerValues] = generateHeaderRow(base, tval)
         let oldRow = [headerValues]
-        let rowArr = xformRowObjToArr(oldData, headers)
+        let rowArr = xformRowObjToArr(oldData, headers,links)
         oldRow.push(rowArr)
         if(thisReact.state && thisReact.state.rowObj && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.rowObj)){
             thisReact.setState({vRow: newRow})
@@ -1848,11 +1870,11 @@ function rowToState(rowID, thisReact){
         }
 
     }
-    let [base, tval, rval] = rowID.split('/')
     let _path = rowID
     let subID = base + '+' + tval + '+' + rval
     let call = {_path, subscribe}
     call.subscribe(function(data){
+        let links = linkColPvals(base,tval)
         let [headers, headerValues] = generateHeaderRow(base, tval)
         let newRow = [headerValues]
         let rowObj
@@ -1860,14 +1882,33 @@ function rowToState(rowID, thisReact){
             rowObj = data[rowid];
             setMergeValue([base,tval,rowid],rowObj,vTable)
         }
-        let rowArr = xformRowObjToArr(rowObj, headers)
+        let rowArr = xformRowObjToArr(rowObj, headers, links)
         newRow.push(rowArr)
         let rowValue = getValue([base,tval,rowID], vTable)
         if(!thisReact.state.vRow || thisReact.state.vRow && rowValue && JSON.stringify(rowValue) !== JSON.stringify(thisReact.state.vRow)){
             thisReact.setState({vRow: newRow})
             for (const pval in rowValue) {
-                const value = rowValue[pval];
-                thisReact.setState({[pval]: value})
+                if(links[pval]){//value is link
+                    let cellValue = []
+                    let linksObj
+                    try{
+                        linksObj = JSON.parse(rowObj[pval])
+                    }catch (err){
+                        rowArr.push(rowObj[pval])
+                    }
+                    for (const linkRowID in linksObj) {
+                        const value = linksObj[linkRowID];
+                        if (value) {
+                            cellValue.push(findRowAlias(linkRowID))
+                        }
+                    }
+                    thisReact.setState({[pval]: cellValue})
+    
+                }else{
+                    const value = rowValue[pval];
+                    thisReact.setState({[pval]: value})
+                }
+                
             }
         }
         
@@ -1931,18 +1972,51 @@ function generateHeaderRow(base, tval){
     return [headers,headerValues]
 
 }
-function xformRowObjToArr(rowObj, orderedHeader){
+function xformRowObjToArr(rowObj, orderedHeader, linkColPvals){
     let rowArr = []
     for (let j = 0; j < orderedHeader.length; j++) {
         const pval = orderedHeader[j];
+        let linksObj
         if(rowObj[pval]){
-            rowArr.push(rowObj[pval])
+            if(linkColPvals[pval]){//value is link
+                let cellValue = []
+                try{
+                    linksObj = JSON.parse(rowObj[pval])
+                }catch (err){
+                    rowArr.push(rowObj[pval])
+                }
+                for (const linkRowID in linksObj) {
+                    const value = linksObj[linkRowID];
+                    if (value) {
+                        cellValue.push(findRowAlias(linkRowID))
+                    }
+                }
+                rowArr.push(cellValue)
+
+            }else{//value is data
+                rowArr.push(rowObj[pval])
+            }
         }else{
             rowArr.push('')
         }
     }
     return rowArr
 }
+function linkColIdxs(base, tval){
+    let headers = generateHeaderRow(base,tval)[0]
+    let links = linkColPvals(base,tval)
+    console.log(links)
+    let flaggedCols = []
+    for (let i = 0; i < headers.length; i++) {
+        const pval = headers[i];
+        console.log(pval)
+        if(links[pval]){
+            flaggedCols.push(i)
+        }
+    }
+    return flaggedCols
+}
+
 
 
 
