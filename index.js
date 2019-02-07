@@ -1129,7 +1129,7 @@ function linkRowTo(rowLinkCol, gbaseGetRow){
 
 //STATIC CHAIN OPTS
 function gbaseChainOpt(){
-    return {newBase, showgb, showcache, showgsub, showgunsub}
+    return {newBase, showgb, showcache, showgsub, showgunsub, solve}
 }
 function baseChainOpt(_path){
     return {_path, config, newTable, importNewTable}
@@ -1143,6 +1143,186 @@ function columnChainOpt(_path){
 function rowChainOpt(_path){
     return {_path, edit, retrieve, subscribe}
 }
+
+//FUNCTION STUFF
+function solve(eq){
+    let ms = new MathSolver()
+    //parse string for comparators/ifs/links, etc
+    let pf = ms.infixToPostfix(eq)
+    let value = ms.solvePostfix(pf)
+    return value
+}
+function MathSolver() {
+
+    this.infixToPostfix = function(infix) {
+        var outputQueue = "";
+        var operatorStack = [];
+        var operators = {
+            "^": {
+                precedence: 4,
+                associativity: "Right"
+            },
+            "/": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "*": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "+": {
+                precedence: 2,
+                associativity: "Left"
+            },
+            "-": {
+                precedence: 2,
+                associativity: "Left"
+            }
+        }
+        infix = infix.replace(/\s+/g, "");
+        infix = clean(infix.split(/([\+\-\*\/\^\(\)])/))
+        for(var i = 0; i < infix.length; i++) {
+            var token = infix[i];
+            if(isNumeric(token)) {
+                outputQueue += token + " ";
+            } else if("^*/+-".indexOf(token) !== -1) {
+                var o1 = token;
+                var o2 = operatorStack[operatorStack.length - 1];
+                while("^*/+-".indexOf(o2) !== -1 && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
+                    outputQueue += operatorStack.pop() + " ";
+                    o2 = operatorStack[operatorStack.length - 1];
+                }
+                operatorStack.push(o1);
+            } else if(token === "(") {
+                operatorStack.push(token);
+            } else if(token === ")") {
+                while(operatorStack[operatorStack.length - 1] !== "(") {
+                    outputQueue += operatorStack.pop() + " ";
+                }
+                operatorStack.pop();
+            }
+        }
+        while(operatorStack.length > 0) {
+            outputQueue += operatorStack.pop() + " ";
+        }
+        return outputQueue;
+    }
+    this.solvePostfix = function postfixCalculator(expression) {
+        if (typeof expression !== 'string') {
+          if (expression instanceof String) {
+            expression = expression.toString();
+          } else {
+            return null;
+          }
+        }
+    
+        var result;
+        var tokens = expression.split(/\s+/);
+        var stack = [];
+        var first;
+        var second;
+        var containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(expression);
+    
+        if (containsInvalidChars) {
+          return null;
+        }
+        for (var i = 0; i < tokens.length; i++) {
+            var token = tokens[i];
+            if (token === '*') {
+                second = stack.pop();
+                first = stack.pop();
+        
+                if (typeof first === 'undefined') {
+                first = 1;
+                }
+        
+                if (typeof second === 'undefined') {
+                second = 1;
+                }
+        
+                stack.push(first * second);
+            } else if (token === '/') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first / second);
+            } else if (token === '+') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first + second);
+            } else if (token === '-') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first - second);
+            } else {
+                if (isNumeric(token)) {
+                stack.push(Number(token));
+                }
+            }
+        }
+    
+        result = stack.pop();
+    
+        return result;
+      }
+}
+function isNumeric(value){
+    return !isNaN(parseFloat(value)) && isFinite(value);
+}
+function clean(arr){
+    for(var i = 0; i < arr.length; i++) {
+        if(arr[i] === "") {
+            arr.splice(i, 1);
+        }
+    }
+    return arr;
+}
+function parseLinks(fnString){
+    let lpat = /\{([a-z0-9/]+)\}/gi
+    let out = []
+    let match
+    while (match = lpat.exec(fnString)) {
+        out.push(match)
+    }
+    return out
+}
+function getCell(rowID,colStr){
+    let out = {}
+    let [base,tval,pval] = colStr.split('/')
+    let value = getValue([base,tval,pval,rowID], cache)
+    if(value === undefined){
+        let rpath = [base,tval,rowID].join('/')
+        loadRowPropToCache(rpath, pval)
+    }
+    return value
+}
+function replaceLinks(rowID, fnString){
+    let linksArr = parseLinks(fnString)
+    let linkValObj = {}
+    for (let i=0; i < linksArr.length; i++){
+      let id = linksArr[i][1]
+      let match = linksArr[i][0]
+      let data = getCell(rowID, id)
+      linkValObj[id] = {}
+      linkValObj[id].data = data
+      linkValObj[id].replace = match
+    }
+    for (const id in linkValObj){
+      let value = linkValObj[id]
+      let rep = value.replace
+      let val = value.data
+      if(val === undefined){//if something wasn't in cache, look again
+          setTimeout(replaceLinks,100,rowID,fnString)
+          return
+      }
+      let find = new RegExp(rep, 'g')
+      originalStr = originalStr.replace(find, val)
+    }
+    return originalStr
+  }
+
+
+
+
 
 //LINK STUFF
 
@@ -1804,8 +1984,9 @@ function loadGBaseConfig(thisReact){
 }
 function tableToState(base, tval, thisReact){
     let oldData = getValue([base,tval,'last'], vTable)
+    let flaggedCols = linkColIdxs(base,tval)
     if(thisReact.state && thisReact.state.vTable && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.vTable)){
-        thisReact.setState({vTable: oldData})
+        thisReact.setState({vTable: oldData, linkColumns: flaggedCols})
         return
     }
 
