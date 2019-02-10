@@ -426,29 +426,26 @@ function changeColumnType(path, configObj, backLinkCol){
         let putObj = {}
         if(newType === 'string'){
             for (const key in data) {
-                putObj[key] = String(data[key])
+                putObj[key] = convertValueToType(data[key], 'string')
             }
         }else if(newType === 'number'){
             for (const key in data) {
                 let HID = getValue([base, 'props', tval, 'rows', key], gb)
                 const value = data[key];
-                let num = value*1
-                if(String(num) === 'NaN'){
-                    return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to a number. Fix and try again')
-                }else{
-                    putObj[key] = num
+                try{
+                    putObj[key] = convertValueToType(value, 'number', HID) 
+                }catch (e){
+                    return console.log(e)
                 }
             }
         }else if(newType === 'boolean'){
             for (const key in data) {
                 let HID = getValue([base, 'props', tval, 'rows', key], gb)
-                const value = String(data[key])
-                if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
-                    putObj[key] = false
-                }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
-                    putObj[key] = true
-                }else{
-                    return console.log('ERROR: Conversion aborted. Cannot convert '+ value + ' for '+ HID + ' to boolean. enter true or false or 0 for false or 1 for true')
+                const value = data[key]
+                try{
+                    putObj[key] = convertValueToType(value, 'boolean', HID) 
+                }catch (e){
+                    return console.log(e)
                 }
             }
         }
@@ -857,6 +854,47 @@ function nextSortval(path){
     nextSort += 10
     return nextSort
 }
+function convertValueToType(value, newType, rowAlias){
+    let out
+    if(newType === 'string'){
+        out = String(value)
+    }else if(newType === 'number'){
+        let num = value*1
+        if(isNaN(num)){
+            throw new Error('Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to a number. Fix and try again')
+        }else{
+            out = num
+        }
+    }else if(newType === 'boolean'){
+        value = String(value)
+        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
+            out = false
+        }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
+            out = true
+        }else{
+            throw new Error('Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to boolean. enter true or false or 0 for false or 1 for true')
+        }
+    }else{
+        throw new Error('Can only attempt to conver value to "string", "number", or "boolean" using this function')
+    }
+    return out
+}
+function isLinkMulti(colStr){
+    let cpath = configPathFromChainPath(colStr)
+    let config = getValue(cpath,gb) || {}
+    if(config.linkMultiple && (config.GBtype === 'prev' || config.GBtype === 'prev')){
+        return true
+    }
+    return false
+}
+function getColumnType(colStr){
+    let cpath = configPathFromChainPath(colStr)
+    let config = getValue(cpath,gb) || {}
+    if(config.GBtype !== undefined){
+        return config.GBtype
+    }
+    return false
+}
 
 //GBASE CHAIN COMMANDS
 function newBase(alias, tname, pname, baseID){
@@ -1145,12 +1183,39 @@ function rowChainOpt(_path){
 }
 
 //FUNCTION STUFF
-function solve(eq){
-    let ms = new MathSolver()
-    //parse string for comparators/ifs/links, etc
-    let pf = ms.infixToPostfix(eq)
-    let value = ms.solvePostfix(pf)
-    return value
+function solve(rowID, eq){
+    let linksResolved
+    let logicResolved
+    let output
+    try{//substitue links with the value they represent
+        linksResolved = getLinks(rowID, eq)
+        if(!linksResolved){
+            setTimeout(solve,1000,rowID, eq)
+            return
+        }
+    }catch(e){
+        return console.log(e)
+    }
+    try{//parse string for comparators/ifs/etc
+        logicResolved = evaluateAllFN(eq)
+    }catch(e){
+        return console.log(e)
+    }
+    let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(logicResolved);
+    if(!containsInvalidChars){
+        let solver = new MathSolver()
+        try{
+            output = solver.solve(logicResolved)
+        }catch(e){
+            return console.log(e)
+        }
+        console.log(output)
+        return output
+    }else{
+        let cleaned = stripDoubleQuotes(logicResolved)
+        return cleaned
+    }
+    
 }
 function MathSolver() {
 
@@ -1263,7 +1328,200 @@ function MathSolver() {
         result = stack.pop();
     
         return result;
-      }
+    }
+    this.infixToPostfixCompare = function(infix) {
+        infix = this.swapOperators(infix)
+        var outputQueue = "";
+        var operatorStack = [];
+        var operators = {
+            "^": {
+                precedence: 4,
+                associativity: "Right"
+            },
+            "/": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "*": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "+": {
+                precedence: 2,
+                associativity: "Left"
+            },
+            "G": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "L": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "E": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "N": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "P": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "M": {
+                precedence: 1,
+                associativity: "Left"
+            }
+        }
+        infix = infix.replace(/\s+/g, "");
+        infix = clean(infix.split(/([\+\-\*\/\^\(\)GLENPM])/))
+        for(var i = 0; i < infix.length; i++) {
+            var token = infix[i];
+            if(isNumeric(token)) {
+                outputQueue += token + " ";
+            } else if("^*/+-GLENPM".indexOf(token) !== -1) {
+                var o1 = token;
+                var o2 = operatorStack[operatorStack.length - 1];
+                while("^*/+-GLENPM".indexOf(o2) !== -1 && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
+                    outputQueue += operatorStack.pop() + " ";
+                    o2 = operatorStack[operatorStack.length - 1];
+                }
+                operatorStack.push(o1);
+            } else if(token === "(") {
+                operatorStack.push(token);
+            } else if(token === ")") {
+                while(operatorStack[operatorStack.length - 1] !== "(") {
+                    outputQueue += operatorStack.pop() + " ";
+                }
+                operatorStack.pop();
+            }
+        }
+        while(operatorStack.length > 0) {
+            outputQueue += operatorStack.pop() + " ";
+        }
+        return outputQueue;
+    }
+    this.swapOperators = function(infix){
+        infix = infix.replace(/<=/g, 'M')
+        infix = infix.replace(/>=/g, 'P')
+        infix = infix.replace(/!=/g, 'P')
+        infix = infix.replace(/>/g, 'G')
+        infix = infix.replace(/</g, 'L')
+        infix = infix.replace(/=/g, 'E')
+        return infix
+    }
+    this.evaluatePostfix = function (expression) {
+        if (typeof expression !== 'string') {
+          if (expression instanceof String) {
+            expression = expression.toString();
+          } else {
+            return null;
+          }
+        }
+    
+        var result;
+        var tokens = expression.split(/\s+/);
+        var stack = [];
+        var first;
+        var second;
+        var containsInvalidChars = /[^()+\-*/0-9.\sGLENPM]/g.test(expression);
+        if (containsInvalidChars) {
+          return null;
+        }
+        for (var i = 0; i < tokens.length; i++) {
+            var token = tokens[i];
+            if("GLENPM".indexOf(token) !== -1){//should always be only one, at end of stack
+                second = stack.pop()
+                first = stack.pop()
+                if(token === 'G'){
+                    if(first > second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'L'){
+                    if(first < second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'E'){
+                    if(first === second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'N'){
+                    if(first !== second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'P'){
+                    if(first >= second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'M'){
+                    if(first <= second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+            }
+            if (token === '*') {
+                second = stack.pop();
+                first = stack.pop();
+        
+                if (typeof first === 'undefined') {
+                first = 1;
+                }
+        
+                if (typeof second === 'undefined') {
+                second = 1;
+                }
+        
+                stack.push(first * second);
+            } else if (token === '/') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first / second);
+            } else if (token === '+') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first + second);
+            } else if (token === '-') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first - second);
+            } else {
+                if (isNumeric(token)) {
+                stack.push(Number(token));
+                }
+            }
+        }
+    
+        result = stack.pop();
+    
+        return result;
+    }
+    this.solveAndCompare = function(infix){
+        let pf = this.infixToPostfixCompare(infix)
+        return this.evaluatePostfix(pf)
+    }
+    this.solve = function(infix){
+        let pf = this.infixToPostfix(infix)
+        return this.solvePostfix(pf)
+    }
 }
 function isNumeric(value){
     return !isNaN(parseFloat(value)) && isFinite(value);
@@ -1276,50 +1534,373 @@ function clean(arr){
     }
     return arr;
 }
-function parseLinks(fnString){
-    let lpat = /\{([a-z0-9/]+)\}/gi
-    let out = []
-    let match
-    while (match = lpat.exec(fnString)) {
-        out.push(match)
+function regexEscape(str) {
+    return str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+}
+function regexVar(reg,literal,flags){
+    //reg: regex with any fixed literals escaped, NO /   /  ~ represents where the literal goes in
+    //literal: non escaped exact match characters
+    //flags: 'g' or 'gi' , etc..
+    let fullr = reg.replace('~', regexEscape(literal))
+    let r = new RegExp(fullr,flags)
+    return r
+}
+//FUNCTION POST LINK PARSING, PRE-SOLVE PARSING
+function evaluateAllFN(linkSubedFNstring){
+    let r = /[A-Z]+(?=\(.+?\))/g
+    let match = r.exec(linkSubedFNstring)
+    let resolvedArgs = []
+    if(!match){//no functions in this string
+        return linkSubedFNstring
     }
+    if(!gfn[match[0]]){
+        throw new Error('Invalid Function: '+ match[0])
+    }
+    let find = findFN(linkSubedFNstring, match.index)
+    let argsArr = findFNArgs(find)
+    for (let i=0; i<argsArr.length; i++){
+        let val = argsArr[i]
+        let more = r.exec(val)
+        if(more){//arg contains a FN
+            resolvedArgs.push(evaluateAllFN(val))
+        }else{
+            resolvedArgs.push(val)
+        }
+    }
+    let result = gfn[match[0]](resolvedArgs)
+    linkSubedFNstring = linkSubedFNstring.replace(find,result)
+    linkSubedFNstring = evaluateAllFN(linkSubedFNstring)
+    return linkSubedFNstring
+}
+
+//FUNCTION UTILS
+function findFN(str,startIdx){
+    let left = []
+    let right = []
+    let endIdx
+    for (let i=startIdx; i<str.length; i++){
+      let tok = str[i]
+      if(tok === '('){
+        left.push(tok)
+      }else if(tok === ')'){
+        right.push(tok)
+      }
+      if(left.length && left.length === right.length){
+        endIdx = i + 1
+        break
+      }
+    }
+    return str.slice(startIdx, endIdx)
+}
+function findFNArgs(str){
+    let left = []
+    let right = []
+    let leftPar
+    let rightPar
+    let comIdx = []
+    for (let i=0; i<str.length; i++){
+        let tok = str[i]
+        if(tok === '('){
+        left.push(tok)
+            if(left.length === 1){
+                leftPar = i
+            }
+        }else if(tok === ')'){
+            right.push(tok)
+            if(left.length === right.length){
+                rightPar = i
+            }
+        }
+        if(left.length && left.length === right.length + 1 && tok ===','){
+        comIdx.push(i)
+        }
+    }
+    let args = []
+    let next
+    for (let i = 0; i < comIdx.length; i++) {
+        const com = comIdx[i];
+        if(i === 0){
+            args.push(str.slice(leftPar+1,com))
+            next = com + 1
+        }else{
+            args.push(str.slice(next,com))
+            next = com + 1
+        }
+
+    }
+    args.push(str.slice(next,rightPar))
+    return args
+}
+function findTruth(ifFirstArg){
+    let r = /IF\(/
+    let match = r.exec(ifFirstArg)
+    if(match !== null){
+        throw new Error('Cannot have an IF statement as the first argument in an IF Statement')
+    }
+    let containsInvalidChars = /[^()+\-*/0-9.\s<>=!]/g.test(ifFirstArg)
+    if(containsInvalidChars){
+        let output = parseTruthStr(ifFirstArg, 'string')
+        return output
+    }else{
+        let addedParens = parseTruthStr(ifFirstArg, 'number')
+        let solver = new MathSolver()
+        let output = solver.solveAndCompare(addedParens)
+        return output
+    }
+}
+function parseTruthStr(TFstr, compType){
+    //check to ensure there is only one logical operator
+    let operators = ['!=','<=','>=','=','<','>']
+    let found = {}
+    let str = TFstr.replace(/\s/g,"")
+    //console.log(str)
+    for (let i = 0; i < operators.length; i++) {
+       const op = operators[i];
+        let r
+        if(op === '='){
+            r = str.lastIndexOf('=')
+            if(r !== -1){
+                if(str[r-1] !== '<' && str[r-1] !== '>' && str[r-1] !=='!'){
+                    found['='] = r
+                }
+            }
+        }else if(op === '>'){
+            r = str.lastIndexOf('>')
+            if(r !== -1){
+                if(str[r+1] !== '='){
+                    found['>'] = r
+                }
+            }
+        }else if(op === '<'){
+            r = str.lastIndexOf('<')
+            if(r !== -1){
+                if(str[r+1] !== '='){
+                    found['<'] = r
+                }
+            }
+            }else{
+                r = new RegExp(op,'g')
+                let match = r.exec(TFstr)
+                if(match){
+                    found[op] = match.index
+                }
+            }
+    }
+    let tok = Object.keys(found)
+    if(tok.length !== 1){
+       throw new Error('Too many comparisons in comparison block: '+ TFstr)
+    }
+    if(compType === 'string'){
+        let first = str.slice(0,found[tok[0]]-1)
+        let second = str.slice(found[tok[0]]+ tok[0].length-1, str.length)
+        console.log(first, second)
+        if(tok[0] === "="){
+            if(first == second){
+                return true
+            }else{
+                return false
+            }
+        }else if(tok[0] === '!='){
+            if(first !== second){
+                return true
+            }else{
+                return false
+            }
+        }else{
+            throw new Error('String Comparators can only be "=" or "!="; '+ tok[0] +' is not valid.')
+        }
+    }else{//number
+        str = str.slice(0,found[tok[0]])+')'+tok[0]+'('+str.slice(found[tok[0]]+ tok[0].length, str.length)
+        str = '(' + str
+        str += ')'
+    
+    return str
+   }
+
+}
+function stripDoubleQuotes(str){
+    str = str.replace(/'/g,"")
+    return str
+}
+//FUNCTION LINK PARSING
+function initialParseLinks(fnString, rowID){
+    let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
+    let out = {}
+    let match
+    while (match = allLinkPattern.exec(fnString)) {
+        let replace = match[0]
+        let path = match[1]
+        let links = path.split('.')
+        let linkMulti = isLinkMulti(links[0])
+        let valueType = getColumnType(links[0])
+        let summation = false
+        console.log(linkMulti)
+        if(linkMulti){
+            let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
+            let wholeReplace = regexVar("[A-Z]+\\(~\\)", replace, 'g')//this will find the summation name ONLY for .linked link
+            try{
+                summation = fnPattern.exec(fnString)[0]
+                replace = wholeReplace.exec(fnString)[0]
+            }catch(e){
+                throw new Error('Cannot find summation function on link multiple field:', links[0])
+            }
+        }
+        out[path] = {replace,summation,links,linkMulti,value:false, currentRow: rowID, valueType}
+    } 
     return out
 }
 function getCell(rowID,colStr){
-    let out = {}
     let [base,tval,pval] = colStr.split('/')
     let value = getValue([base,tval,pval,rowID], cache)
     if(value === undefined){
-        let rpath = [base,tval,rowID].join('/')
-        loadRowPropToCache(rpath, pval)
+        loadRowPropToCache(rowID, pval)
+        return undefined
     }
     return value
 }
-function replaceLinks(rowID, fnString){
-    let linksArr = parseLinks(fnString)
-    let linkValObj = {}
-    for (let i=0; i < linksArr.length; i++){
-      let id = linksArr[i][1]
-      let match = linksArr[i][0]
-      let data = getCell(rowID, id)
-      linkValObj[id] = {}
-      linkValObj[id].data = data
-      linkValObj[id].replace = match
-    }
-    for (const id in linkValObj){
-      let value = linkValObj[id]
-      let rep = value.replace
-      let val = value.data
-      if(val === undefined){//if something wasn't in cache, look again
-          setTimeout(replaceLinks,100,rowID,fnString)
-          return
-      }
-      let find = new RegExp(rep, 'g')
-      originalStr = originalStr.replace(find, val)
-    }
-    return originalStr
-  }
 
+function getLinks(rowID, fnString, linksObj){
+    if(linksObj === undefined){
+        try{
+            linksObj = initialParseLinks(fnString, rowID)
+        }catch(e){
+            throw new Error(e)
+        }
+    }
+    let done = 0
+    let links = Object.keys(linksObj)
+    let dataMissing = false
+    let outputStr
+    for (const path in linksObj) {
+        const pathInfo = linksObj[path];
+        if(!pathInfo.done){//still has a link to find, gather all links that getCell returned false (means it sent request for data).
+            if(!pathInfo.linkMulti && pathInfo.links.length === 1){//getCell should be a value
+                pathInfo.data = getCell(pathInfo.currentRow, pathInfo.links[0])
+                pathInfo.valueType = getColumnType(links[0])
+            }else if(!pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj
+                let request = getCell(pathInfo.currentRow, pathInfo.links[0])
+                if(request){
+                    try{
+                        request = JSON.parse(request)
+                    }catch (e){
+                        return console.log('Could not parse request:', request)
+                    }
+                    let links = 0
+                    for (const link in request) {
+                        const value = request[link];
+                        if (value) {//is true
+                            links ++
+                        }
+                    }
+                    if(links === 1){//single link like it should be
+                        console.log(pathInfo)
+                        pathInfo.links.shift() //remove the successfully retrieved link
+                        pathInfo.currentRow = Object.keys(request)[0]
+                        pathInfo.data = getCell(pathInfo.currentRow,pathInfo.links[0])
+                        pathInfo.valueType = getColumnType(pathInfo.links[0])
+                    }
+                }else{//getting data do nothing??
+                    pathInfo.data = false
+                }
+            }else if(pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj with one or more keys
+                let request = getCell(pathInfo.currentRow, pathInfo.links[0])
+                pathInfo.valueType = getColumnType(pathInfo.links[0])
+                if(request){
+                    try{
+                        request = JSON.parse(request)
+                    }catch (e){
+                        return console.log('Could not parse request:', request)
+                    }
+                    pathInfo.data = []
+                    for (const link in request) {
+                        const value = request[link];
+                        if (value) {//is true
+                            pathInfo.links.shift() //remove the successfully retrieved link
+                            pathInfo.currentRow = Object.keys(request)[0]
+                            let linkData = getCell(pathInfo.currentRow,pathInfo.links[0])
+                            pathInfo.data.push(linkData)
+                        }
+                    }
+                }else{//getting data do nothing??
+                    pathInfo.data = false
+                }
+            }else{
+                
+            }
+        }else{
+            done++
+        }
+        
+    }
+    if(done !== links.length){//we don't have all data
+        for (const path in linksObj) {// go back through and see if we can do final value calcs
+            const pathInfo = linksObj[path];
+            if(!pathInfo.done){//still has a link it attempted to find, check value
+                if(!pathInfo.linkMulti && pathInfo.links.length === 1){
+                    if(pathInfo.data !== undefined){// data is present
+                        if(typeof pathInfo.data === pathInfo.valueType){
+                            pathInfo.value = pathInfo.data
+                            pathInfo.done = true
+                        }else{
+                            try{
+                                pathInfo.value = convertValueToType(pathInfo.data, pathInfo.valueType, pathInfo.links[0])
+                            }catch (e){
+                                return console.log(e)
+                            }
+                        }
+                    }else{
+                        dataMissing = true
+                    }
+                }else if(pathInfo.linkMulti && pathInfo.links.length === 1){//getCell should be stringified link Obj with one or more keys
+                    let missing = 0
+                    pathInfo.value = []
+                    for (let i = 0; i < pathInfo.data.length; i++) {
+                        const value = pathInfo.data[i];
+                        if(value !== undefined){// data is present
+                            if(typeof value === pathInfo.valueType){
+                                pathInfo.value.push(value)
+                                pathInfo.done = true
+                            }else{
+                                try{
+                                    pathInfo.value.push(convertValueToType(pathInfo.data, pathInfo.valueType, pathInfo.links[0]))
+                                }catch (e){
+                                    return console.log(e)
+                                }
+                            }
+                        }else{
+                            missing++
+                            dataMissing = true
+                        }
+                        
+                    }
+                    if(!missing){
+                        pathInfo.done = true
+                    }
+                }else{
+                   dataMissing = true
+                }
+            }
+        }
+    }
+    if(dataMissing){
+        console.log(linksObj)
+        setTimeout(getLinks,500,rowID,fnString, linksObj)
+        return false
+    }
+    for (const path in linksObj){
+        let pathInfo = linksObj[path]
+        let rep = pathInfo.replace
+        let val = pathInfo.value
+        let summer = pathInfo.summation
+        if(summer && gfn[summer] !== undefined){
+            val = gfn[summer](val)
+        }
+        let find = new RegExp(rep, 'g')
+        fnString = fnString.replace(find,val)
+    }
+    return fnString
+}
+const gfn = {SUM,IF};
 
 
 
@@ -1668,7 +2249,7 @@ function loadRowPropToCache(path, pval){
     let tval = pArgs[1]
     let colSoul = base + '/' + tval + '/r/' + pval
     let cpath = [base, tval, pval, path]
-    console.log(cpath, path, cache)
+    console.log(cpath)
     console.log(getValue(cpath,cache))
     if(!getValue(cpath,cache)){//create subscription
         gun.get(colSoul).get(path, function(msg,eve){//check for existence only
@@ -1775,7 +2356,7 @@ function requestInitialData(path, colArr, reqType){
             const pval = colArr[i];
             let colPath = [base,tval, pval, path]
             let data = getValue(colPath, cache)
-            console.log(colPath, data)
+            //console.log(colPath, data)
             if(data === undefined){//add gun sub to cache
                 loadRowPropToCache(path, pval)
             }else{
@@ -1822,7 +2403,7 @@ function requestInitialData(path, colArr, reqType){
 }
 
 
-//EVENT HANDLING
+//EVENT HANDLING AND BUFFER
 function watchObj(){
 }
 Object.defineProperty(watchObj.prototype, "watch", {
@@ -2200,7 +2781,29 @@ function linkColIdxs(base, tval){
 
 
 
-
+//GBase FN wrappers
+function SUM(args){
+    let result = 0;
+    for (let i = 0; i < args.length; i++) {
+        let value = parseInt(args[i]);
+        if(isNaN(value)){
+            throw new Error('Value is not a number: '+ args[i])
+        }
+        result += value
+    }
+    return result;
+}
+function IF(args){
+    let clean = evaluateAllFN(args[0])
+    let torf = findTruth(clean)
+    if(torf){
+        let out = evaluateAllFN(args[1])
+        return out
+    }else{
+        let out = evaluateAllFN(args[2])
+        return out
+    }
+}
 
 //WIP___________________________________________________
 
