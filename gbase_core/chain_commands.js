@@ -76,7 +76,13 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
     }
 }
 const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol) =>{
-    handleConfigChange(configObj, path, backLinkCol)
+    try{
+        handleConfigChange(configObj, path, backLinkCol)
+        return true
+    }catch(e){
+        console.log(e)
+        return false
+    }
 }
 const makeedit = (gun,gb) => (path) => (editObj)=>{//MOVE NEW ROW TO THE NEWROW API
     let newRow = (this._newRow) ? true : false

@@ -10,8 +10,7 @@ let bufferState = false
 let vTable = {}
 let reactConfigCB
 if(!gun){}
-const gfn = require('../function_lib/functions');
-const solve = gfn.solve
+
 const {
     cachePathFromChainPath,
     cachePathFromSoul,
@@ -55,7 +54,8 @@ const {makehandleConfigChange,
     makehandleLinkColumn,
     makehandleNewLinkColumn,
     makehandleImportColCreation,
-    makehandleTableImportPuts
+    makehandleTableImportPuts,
+    makehandleFNColumn
 }= require('./configs')
 let handleConfigChange
 let changeColumnType
@@ -64,6 +64,8 @@ const oldConfigVals = makeoldConfigVals(gb)
 let handleNewLinkColumn 
 let handleImportColCreation
 let handleTableImportPuts
+let handleFNColumn
+
 
 const {makenewBase,
     makenewTable,
@@ -86,8 +88,8 @@ let newBase
 let newTable
 let newColumn
 const newRow = makenewRow(checkUniqueAlias)
-const linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
-const config = makeconfig(handleConfigChange)
+let linkColumnTo
+let config
 let edit
 const subscribe = makesubscribe(gb,gsubs,requestInitialData)
 const retrieve = makeretrieve(gb)
@@ -97,6 +99,19 @@ const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubs)
 const showgunsub = makeshowgunsub(gunSubs)
+
+const {makesolve,
+    makeinitialParseLinks,
+    makegetCell,
+    makegetLinks
+} = require('../function_lib/function_utils');
+const initialParseLinks = makeinitialParseLinks(isLinkMulti,getColumnType)
+const getCell = makegetCell(gunSubs,cache,loadRowPropToCache)
+const getLinks = makegetLinks(initialParseLinks,getCell,getColumnType)
+const solve = makesolve(getLinks)
+
+
+
 
 
 
@@ -121,8 +136,6 @@ const gunToGbase = gunInstance =>{
     gun = gunInstance
     //DI after gunInstance is received from outside
     handleRowEditUndo = makehandleRowEditUndo(gun, gb)
-    handleConfigChange = makehandleConfigChange(gun)
-    changeColumnType = makechangeColumnType(gun,gb,cache)
     handleNewLinkColumn = makehandleNewLinkColumn(gun)
     handleImportColCreation = makehandleImportColCreation(gun,gb)
     handleTableImportPuts = makehandleTableImportPuts(gun)
@@ -132,6 +145,11 @@ const gunToGbase = gunInstance =>{
     edit = makeedit(gun,gb)
     importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain)
     handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
+    handleFNColumn = makehandleFNColumn(gunSubs,cache,loadColDataToCache,initialParseLinks,solve)
+    changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn)
+    handleConfigChange = makehandleConfigChange(gun,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals)
+    linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
+    config = makeconfig(handleConfigChange)
 
 }
 
@@ -428,8 +446,8 @@ function loadRowPropToCache(path, pval){
     let tval = pArgs[1]
     let colSoul = base + '/' + tval + '/r/' + pval
     let cpath = [base, tval, pval, path]
-    console.log(cpath)
-    console.log(getValue(cpath,cache))
+    //console.log(cpath)
+    //console.log(getValue(cpath,cache))
     if(!getValue(cpath,cache)){//create subscription
         gun.get(colSoul).get(path, function(msg,eve){//check for existence only
             eve.off()

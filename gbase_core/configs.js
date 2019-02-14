@@ -58,7 +58,7 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
     }    
 }
 
-const makehandleConfigChange = (gun, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo) => (configObj, path, backLinkCol)=>{
+const makehandleConfigChange = (gun, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo, oldConfigVals) => (configObj, path, backLinkCol)=>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let cpath = configPathFromChainPath(path)
@@ -76,22 +76,20 @@ const makehandleConfigChange = (gun, checkUniqueAlias, checkUniqueSortval, chang
     if(cpath[cpath.length-2] === 'props' || cpath.length === 1){//base,table,col config change
         try{
             checkConfig(validConfig, configObj)
-            checkUniqueAlias(cpath, configObj.alias)
-            checkUniqueSortval(cpath, configObj.sortval)
+            checkUniqueAlias(cpath, configObj.alias)//will pass if alias is not present
+            checkUniqueSortval(cpath, configObj.sortval)//same as alias
         }catch (e){
             return console.log(e)
         }
         if(configObj.GBtype){
-            let linkstuff = {}
+            let typeStuff = {}
             for (const key in configObj) {//split config obj for normal configs vs type/link configs
-                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple'){
-                    linkstuff[key] = configObj[key]
+                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple' || key === "function" || key === "fn"){
+                    typeStuff[key] = configObj[key]
                     delete configObj[key]
-                }else{
-
                 }
             }
-            changeColumnType(path, linkstuff, backLinkCol)
+            changeColumnType(path, typeStuff, backLinkCol)
         }
         if(Object.keys(configObj).length !== 0){
             history.old = oldConfigVals(cpath, configObj)
@@ -116,7 +114,7 @@ const makehandleConfigChange = (gun, checkUniqueAlias, checkUniqueSortval, chang
     }
     return true
 }
-const makechangeColumnType = (gun,gb,cache,loadColDataToCache,changeColumnType) =>(path, configObj, backLinkCol)=>{
+const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn) =>function thisfn(path, configObj, backLinkCol){
     let [base, tval, pval] = path.split('/')
     let newType = configObj.GBtype
     if(pval[0] !== 'p'){
@@ -137,7 +135,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,changeColumnType) 
         console.log(data)
         if(!data){
             loadColDataToCache(base,tval,pval)
-            setTimeout(changeColumnType, 100, path, configObj, backLinkCol)
+            setTimeout(thisfn, 100, path, configObj, backLinkCol)
             return
         }
         //forin keys and attempt to change values over
@@ -183,8 +181,14 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,changeColumnType) 
         }else{
             return console.log('ERROR: config({linksTo: '+configObj.linksTo+' } is either not defined or invalid')
         }            
+    }else if (newType === 'function'){//parse equation and store
+        let fn = configObj.fn
+        if(!fn){return console.log('ERROR: Must specify a function')}
+        //check equation for valididty? balanced () and only one comparison per comma block?
+        basicFNvalidity(fn)
+        handleFNColumn(path, configObj, backLinkCol)          
     }else{
-        return console.log('ERROR: Cannot understand what GBtype')
+        throw new Error('Cannot understand what GBtype is specified')
     }
     
 }
@@ -196,6 +200,83 @@ const makeoldConfigVals = gb =>(pathArr, configObj)=>{
     }
     return oldObj
 }
+//FN STUFF
+function basicFNvalidity(fnString){
+    let args = fnString.split(',')
+    let lpar = 0
+    let rpar = 0
+    for (let i = 0; i < fnString.length; i++) {
+        const char = fnString[i];
+        if(char === '('){
+            lpar++
+        }else if(char === ')'){
+            rpar++
+        }
+    }
+    if(lpar !== rpar){
+        throw new Error('Check Equation, the parenthesis are unbalanced.')
+    }
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        let toks = 0
+        for (let j = 0; j < arg.length; j++) {
+            const argchar = arg[j];
+            if("!<>".indexOf(argchar) !== -1){
+                toks++
+                if(arg[j+1] === '='){//skip next char
+                    j++
+                }
+            }else if(argchar === '='){
+                toks++
+            }
+        }
+        if(toks > 1){
+            throw new Error('Check your arguments, this one has more than one logical comparison in it: '+ args[i])
+        }
+    }
+    return true
+}
+const makehandleFNColumn = (gunSubs,cache,loadColDataToCache, initialParseLinks, solve) => function thisfn(path,configObj){
+    //parse equation for all links
+    let [base,tval,pval] = path.split('/')
+    loadColDataToCache(base,tval,pval)
+    let fn = configObj.fn
+    let linksObj = initialParseLinks(fn) //should return an object, with .links as array of link columns
+    let usedIn = {}
+    let result = {}
+    let inMemory = true
+    for (const match in linksObj) {
+        const links = linksObj[match].links;
+        for (let i = 0; i < links.length; i++) {
+            const link = links[i];
+            usedIn[link] = path
+            let [base,tval,pval] = link.split('/')
+            let soul = [base,tval,'r',pval].join('/')
+            if(!gunSubs[soul]){
+                console.log(gunSubs)
+                inMemory = false
+                loadColDataToCache(base,tval,pval)
+            }
+        }
+    }
+    let data = getValue([base,tval,pval], cache)
+    if(!inMemory){
+        console.log(data)
+        setTimeout(thisfn,1000,path,configObj)
+        return
+    }
+    for (const rowid in data) {
+        result[rowid] = solve(rowid, fn)
+    }
+    console.log(result)
+    //need to update the 'used_in' config for each of linked columns
+    //perform the equation for each row
+    //put result & used_in into gun
+
+
+}
+
+
 //LINK STUFF
 
 const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =>function thisfn(path, configObj, backLinkCol){
@@ -390,6 +471,7 @@ module.exports = {
     makehandleLinkColumn,
     makehandleNewLinkColumn,
     makehandleImportColCreation,
-    makehandleTableImportPuts
+    makehandleTableImportPuts,
+    makehandleFNColumn
 
 }
