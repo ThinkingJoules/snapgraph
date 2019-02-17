@@ -12,34 +12,16 @@ This has a few API's that make it easier to use in react to build dynamic tables
 
 # Example Usage
 
-## Load Config to React State
+## Loading gun instance in to gbase
 ```
 import Gun from 'gun/gun';
-import {gbase, loadGBaseConfig, buildRoutes } from 'gundb-gbase'
+import {gbase} from 'gundb-gbase'
 
-class App extends Component {
-  constructor() {
-  super();
-    let opt = {}
-    opt.peers = ["http://localhost:8080/gun"]
-    this.gun = Gun(opt);
-    this.gun.gbase(this.gun) //loads gun instance into GBase
-    window.gun = this.gun;
-    window.gbase = gbase; //gbase chain api
-    this.state = {
-      routes: []
-    }
-  }
-  componentDidMount(){
-    let self = this
-    loadGBaseConfig(self, self.state.currentBase);
-  }
-
-  componentDidUpdate(prevProps, prevState) {
-    let self = this
-    buildRoutes(self, self.state.currentBase);
-  }
-  ```
+let opt = {}
+opt.peers = ["http://localhost:8080/gun"]
+let gun = Gun(opt);
+gun.gbase(gun) //loads gun instance into GBase
+```
 ## Creating a new Base
 ```
 gbase.newBase('Base Name', 'First Table Name', 'Key Column Name on First Table', baseID)
@@ -96,9 +78,98 @@ gbase[baseID]['Table'].importData(tsvFileAsText, ovrwrt, append)
 ```
 ovrwrt & append are booleans. If you only want to update matching rows (matches by first column, and header names) then ovrwrt = true and append = false. Outcomes for other value combinations are left for the reader to ponder.
 
-## React Specific API's
+## Linking Columns and Rows
+### Column Config and initial conversion
+GBase will try to find and match plain text comma serperated column values with the row alias on the linking sheet specified. If you also convert a link column to string, it will find all row alias names, and store those as comma seperated string. (splits and joins using ', ')
+```
+//change column to links, no back link column specified (gbase will create a new column on 'Other Table')
+gbase[BaseID]['Table Name']['Column Name'].linkColumnTo(gbase[BaseID]['Other Table'])
+
+//back link column specified (gbase will overwrite all data in 'Back Links' column)
+gbase[BaseID]['Table Name']['Column Name'].linkColumnTo(gbase[BaseID]['Other Table']['Back Links'])
+
+//You can also link columns through the config API, but it is not recommended.
+
+```
+To change it to string simply:
+```
+gbase[BaseID]['Table Name']['Column Name'].config({GBtype: 'string'})
+//This will automatically change the other back reference column to a string as well
+```
+### Linking Rows to other entries
+You must already have the column converted to a link in order to link rows.
+```
+gbase[BaseID]['Table Name']['Specific Row'].linkRowTo('Column', gbase[BaseID]['Other Table']['Some Row'])
+
+//first argument in LinkRowTo is expecting either a column name (if you used human names in your gbase chain calls, also accepts 'p' value) or the 'p' value for the column that is a link column for what you are trying to link.
+```
+Unlinking rows is basically the same call:
+```
+gbase[BaseID]['Table Name']['Specific Row'].unlinkRow('Column', gbase[BaseID]['Other Table']['Some Row'])
+```
+Note: If the column is specifed in the config as `{linkMultiple: false}` then `.linkRowTo()` will throw an error if you attempt to link more than one entry to that column at a time.
+
+## Functions and derived data
+GBase supports functions that can pull data from one layer down and do math and put the result in the specified column.
+```
+let baseID = b123
+let userFN = 'SUM({b123/t3/p2},{b123/t3/p4}) * {b123/t3/p6.b123/t5/p1}'
+gbase[BaseID][t3][p5].config({GBtype: 'function', fn: userFN})
+
+let b123/t3/r8 = {p0: 'Row 8', p2: 2, p4: 2 p6:[b123/t5/r13]}
+let b123/t5/r13 = {p0: 'Row 13', p1:3}
+
+userFN would resolve to:
+SUM(2,2) * 3
+4 * 3
+= 12
+*note how functions are resolved before normal order of operations.
+```
+All references must be wrapped in curly braces. The references must be in the format: '{' + baseID + '/' + tValue + '/' + pValue + '}'
+If you are referencing a value on another table, seperate the '/' seperated address with a '.' so: {ref1.ref2} reference 1 must be a link column on your current table, ref2 must be a column that will resolve to a value (or another function column, it cannot be another link).
+
+If your referenced column is a `{linkMultiple: true}` column, you MUST wrap the curly braces in a summary function. Current valid functions are: SUM, MAX, MIN, AVG, AND, OR, COUNT, COUNTALL, JOIN
+JOIN is the only function that takes one argument before the reference, the seperator. Like:
+```
+'JOIN("-",{b123/t3/p6.b123/t5/p1})'
+```
+Functions are completed in this order:  
+* {} references are resolved to values
+* FN() are resolved next, if there is nested functions, each argument will be resolved before the outer FN computes
+* Remaining math is completed (this is skipped if result contains invalid math characters)
+
+
+# React Specific API's
+## Load Config to React State
+```
+import Gun from 'gun/gun';
+import {gbase, loadGBaseConfig, buildRoutes } from 'gundb-gbase'
+
+class App extends Component {
+  constructor() {
+  super();
+    let opt = {}
+    opt.peers = ["http://localhost:8080/gun"]
+    this.gun = Gun(opt);
+    this.gun.gbase(this.gun) //loads gun instance into GBase
+    window.gun = this.gun;
+    window.gbase = gbase; //gbase chain api
+    this.state = {
+      routes: []
+    }
+  }
+  componentDidMount(){
+    let self = this
+    loadGBaseConfig(self, self.state.currentBase);//fires setState on config changes
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    let self = this
+    buildRoutes(self, self.state.currentBase);
+  }
+  ```
 ### Building tables
-tableToState, plays will with 'react-virtualized'
+tableToState, plays well with 'react-virtualized'
 ```
 //dynamicMultiGrid.jsx
 

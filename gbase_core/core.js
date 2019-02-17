@@ -55,7 +55,8 @@ const {makehandleConfigChange,
     makehandleNewLinkColumn,
     makehandleImportColCreation,
     makehandleTableImportPuts,
-    makehandleFNColumn
+    makehandleFNColumn,
+    makehandleUnlinkColumn
 }= require('./configs')
 let handleConfigChange
 let changeColumnType
@@ -65,6 +66,7 @@ let handleNewLinkColumn
 let handleImportColCreation
 let handleTableImportPuts
 let handleFNColumn
+let handleUnlinkColumn
 
 
 const {makenewBase,
@@ -76,13 +78,14 @@ const {makenewBase,
     makeedit,
     makesubscribe,
     makeretrieve,
-    linkRowTo,
+    makelinkRowTo,
     makeimportData,
     makeimportNewTable,
     makeshowgb,
     makeshowcache,
     makeshowgsub,
-    makeshowgunsub
+    makeshowgunsub,
+    makeunlinkRow
 } = require('./chain_commands')
 let newBase
 let newTable
@@ -93,6 +96,8 @@ let config
 let edit
 const subscribe = makesubscribe(gb,gsubs,requestInitialData)
 const retrieve = makeretrieve(gb)
+let linkRowTo
+let unlinkRow
 const importData = makeimportData(gb,handleImportColCreation,handleTableImportPuts)
 let importNewTable
 const showgb = makeshowgb(gb)
@@ -136,20 +141,27 @@ const gunToGbase = gunInstance =>{
     gun = gunInstance
     //DI after gunInstance is received from outside
     handleRowEditUndo = makehandleRowEditUndo(gun, gb)
-    handleNewLinkColumn = makehandleNewLinkColumn(gun)
+    handleNewLinkColumn = makehandleNewLinkColumn(gun,gunSubs,newColumn,loadColDataToCache)
     handleImportColCreation = makehandleImportColCreation(gun,gb)
     handleTableImportPuts = makehandleTableImportPuts(gun)
     newBase = makenewBase(gun)
     newTable = makenewTable(gun,findNextID,nextSortval)
     newColumn = makenewColumn(gun,findNextID,nextSortval)
-    edit = makeedit(gun,gb)
+    edit = makeedit(gun,gb,validateData,handleRowEditUndo)
     importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain)
     handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
-    handleFNColumn = makehandleFNColumn(gunSubs,cache,loadColDataToCache,initialParseLinks,solve)
-    changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn)
-    handleConfigChange = makehandleConfigChange(gun,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals)
+    handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,initialParseLinks,solve)
+    handleUnlinkColumn = makehandleUnlinkColumn(gb,changeColumnType)
+    changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn, handleUnlinkColumn)
+    handleConfigChange = makehandleConfigChange(gun,gb,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
+    linkRowTo = makelinkRowTo(gun,gb,getCell)
+    unlinkRow = makeunlinkRow(gun,gb)
     config = makeconfig(handleConfigChange)
+
+
+
+    gbase.newBase = newBase
 
 }
 
@@ -263,6 +275,9 @@ function handleGunSubConfig(subSoul){
                 gunSubs[subSoul] = true
                 let data = Gun.obj.copy(gundata)
                 delete data['_']
+                if(data.usedIn){
+                    data.usedIn = JSON.parse(data.usedIn)
+                }
                 let configpath = configPathFromSoul(subSoul)
                 setMergeValue(configpath,data,gb)
                 rebuildGBchain(id)
@@ -296,14 +311,13 @@ function buildTablePath(baseID, tval){
     if(tableConfig.rows){
         for (const gbid in tableConfig.rows) {
                 const alias = tableConfig.rows[gbid];
-                let rowpath = buildRowPath(gbid)
-                rowgb[gbid] = rowpath
-                rowa[alias] = rowpath
+                rowgb[gbid] = buildRowPath(gbid,false,false)
+                rowa[alias] = buildRowPath(gbid,true,false)
         }
     }
     setupGBalias(path)
     res[0] = Object.assign({}, colgb, rowgb, tableChainOpt(path))
-    res[1] = Object.assign({}, cola, rowa, tableChainOpt(path), {_byAlias: true})
+    res[1] = Object.assign({}, cola, rowa, tableChainOpt(path))
     return res
 }
 function buildColumnPath(baseID, tval, pval){
@@ -314,10 +328,10 @@ function buildColumnPath(baseID, tval, pval){
     return res
 
 }
-function buildRowPath(rowID){
+function buildRowPath(rowID,byAlias,newRow){
     let res
     const path = rowID
-    res = rowChainOpt(path)
+    res = rowChainOpt(path,byAlias,newRow)
     setupGBalias(path)
     return res
 
@@ -383,58 +397,106 @@ function tableChainOpt(_path){
 function columnChainOpt(_path){
     return {_path, config: config(_path), subscribe: subscribe(_path), linkColumnTo: linkColumnTo(_path)}
 }
-function rowChainOpt(_path){
-    return {_path, edit: edit(_path), retrieve: retrieve(_path), subscribe: subscribe(_path)}
+function rowChainOpt(_path,byAlias){
+    return {_path, edit: edit(_path,byAlias), retrieve: retrieve(_path), subscribe: subscribe(_path), linkRowTo: linkRowTo(_path,byAlias), unlinkRow: unlinkRow(_path,byAlias)}
 }
 
 //CACHE
 function loadColDataToCache(base, tval, pval){
     //gun.gbase(baseID).loadColDataToCache('t0','p0', this)
     let colSoul = base + '/' + tval + '/r/' + pval
+    let p0soul = [base,tval,'r','p0'].join('/')
     let path = [base, tval, pval]
-    if(!getValue(path,cache)){//create subscription
-        gun.get(colSoul, function(msg,eve){//check for existence only
-            eve.off()
+    let rows = getValue([base,tval,'p0'], cache)
+    let inc = 0
+    let isLink = getColumnType([base,tval,pval].join('/'))
+    if(!gunSubs[colSoul]){//create subscription
+        if((isLink === 'prev' || isLink === 'next') && rows !== undefined){//get links for all rows for given pval, put in cache
+            for (const row in rows) {
+                let rowLinks = row +'/links/'+pval
+                if(!gunSubs[rowLinks]){//may already be subd from rowprops
+                    let rpath = path.slice()
+                    rpath.push(row)
+                    gun.get(rowLinks, function(msg,eve){//check for existence only
+                        eve.off()
+                        if(msg.put === undefined){
+                            setMergeValue(rpath,[],cache)
+                        }
+                    })
+                    gun.get(rowLinks).on(function(gundata,id){//gundata should be whole node, not just changes
+                        let data = Gun.obj.copy(gundata)
+                        delete data['_']
+                        let links = []
+                        for (const key in data) {
+                            const torf = data[key];
+                            if (torf) {//if current link
+                            links.push(key) 
+                            }
+                        }
+                        setValue(rpath,links,cache)
+                        handleNewData(colSoul, {[row]:links})
+                    })
+                }
+            }
             gunSubs[colSoul] = true
-            if(msg.put === undefined){
-                setMergeValue(path, {},cache)
+        }else{
+            gun.get(colSoul, function(msg,eve){//check for existence only
+                eve.off()
+                if(msg.put === undefined){
+                    if(!gunSubs[colSoul] && gunSubs[p0soul] && rows !== undefined){//first on() call, not p0 col, and p0 col is subd and in cache
+                        let nulls = {}
+                        for (const key in rows) {
+                            nulls[key] = null
+                        }
+                        setMergeValue(path,nulls,cache)
+                    }
+                    if(pval === 'p0'){
+                        let configpath = configPathFromSoul(colSoul)
+                        setMergeValue(configpath,{},gb)
+                        rebuildGBchain(colSoul)
+                    }
+                }
+            })
+            gun.get(colSoul).on(function(gundata,id){
+                let data = Gun.obj.copy(gundata)
+                delete data['_']
+                if(!inc && gunSubs[p0soul] && rows !== undefined){//first on() call, not p0 col, and p0 col is subd and in cache
+                    let nulls = {}
+                    for (const key in rows) {
+                        nulls[key] = null
+                    }
+                    let fullList = Object.assign(nulls,data)
+                    console.log(fullList)
+                    setMergeValue(path,fullList,cache)
+                    handleNewData(colSoul, data)
+                }
+                setMergeValue(path,data,cache)
+                handleNewData(colSoul, data)
+                console.log('gun.on()',colSoul)
                 if(pval === 'p0'){
                     let configpath = configPathFromSoul(colSoul)
-                    setMergeValue(configpath,{},gb)
-                    rebuildGBchain(colSoul)
+                    setMergeValue(configpath,data,gb)
+                    rebuildGBchain(id)
+                }
+                for (const key in data) {//remove stale cached rows
+                    let rowpath = [base, tval, 'rows', key]
+                    if (getValue(rowpath,cache) !== undefined) {
+                        delete cache[base][tval].rows[key] 
+                    }
+                }
+                inc++
+            }, {change: true})
+            //.off() row prop subs
+            for (const on in gunSubs) {//unsubscribe any rowprop subs
+                let call = on.split('+')
+                let soul = call[0].split('/')
+                if(call.length === 2 && soul[2] && soul[2] === pval){//had a sub prop call
+                    gun.get(call[0]).get(call[1]).off()
+                    gunSubs[on] = false
                 }
             }
-        })
-        gun.get(colSoul).on(function(gundata,id){
             gunSubs[colSoul] = true
-            let data = Gun.obj.copy(gundata)
-            delete data['_']
-            setMergeValue(path,data,cache)
-            handleNewData(colSoul, data)
-            console.log('gun.on()',colSoul)
-            if(pval === 'p0'){
-                let configpath = configPathFromSoul(colSoul)
-                setMergeValue(configpath,data,gb)
-                rebuildGBchain(id)
-            }
-            for (const key in data) {
-                let rowpath = [base, tval, 'rows', key]
-                if (getValue(rowpath,cache) !== undefined) {
-                    delete cache[base][tval].rows[key] 
-                }
-            }
-            
-        }, {change: true})
-        //.off() row prop subs
-        for (const on in gunSubs) {
-            let call = on.split('+')
-            let soul = call[0].split('/')
-            if(call.length === 2 && soul[2] && soul[2] === pval){//had a sub prop call
-                gun.get(call[0]).get(call[1]).off()
-                gunSubs[on] = false
-            }
-        }
-        
+        } 
     }else{//do nothing, gun is already subscribed and cache is updating
 
     }
@@ -448,18 +510,39 @@ function loadRowPropToCache(path, pval){
     let cpath = [base, tval, pval, path]
     //console.log(cpath)
     //console.log(getValue(cpath,cache))
-    if(!getValue(cpath,cache)){//create subscription
+    let isLink = getColumnType([base,tval,pval].join('/'))
+    let rowLinks = path +'/links/'+pval
+    let subname = colSoul + '+' + path
+    if(!gunSubs[rowLinks] && (isLink === 'prev' || isLink === 'next')){//may already be subd from rowprops
+        gun.get(rowLinks, function(msg,eve){//check for existence only
+            eve.off()
+            if(msg.put === undefined){
+                setMergeValue(cpath,[],cache)
+            }
+        })
+        gun.get(rowlinks).on(function(gundata,id){//gundata should be whole node, not just changes
+            let data = Gun.obj.copy(gundata)
+            delete data['_']
+            let links = []
+            for (const key in data) {
+                const torf = data[key];
+                if (torf) {//if current link
+                links.push(key) 
+                }
+            }
+            setValue(cpath,links,cache)
+            handleNewData(colSoul, {[row]:links})
+        })
+        gunSubs[rowLinks] = true
+    }else if(!gunSubs[subname]){
         gun.get(colSoul).get(path, function(msg,eve){//check for existence only
             eve.off()
-            let subname = colSoul + '+' + path
-            gunSubs[subname]
             if(msg.put === undefined){
-                setMergeValue(cpath, "",cache)
+                setMergeValue(cpath, null, cache)
             }
         })
         gun.get(colSoul).get(path).on(function(gundata,id){
             let subname = colSoul + '+' + path
-            gunSubs[subname]
             let data = Gun.obj.copy(gundata)
             let dataObj = {[path]: data}
             handleNewData(colSoul, dataObj)
@@ -469,9 +552,8 @@ function loadRowPropToCache(path, pval){
                 delete cache[base][tval].rows[path] 
             }
             
-        })
-        
-        
+        }) 
+        gunSubs[subname] = true
     }else{//do nothing, gun is already subscribed and cache is updating
 
     }
@@ -480,22 +562,22 @@ function getRow(path, colArr, inc){
     //path should be base/tval/rowid
     //colArr should be array of pvals requested
     console.log('getting row: '+ path)
-    let pArgs = path.split('/')
+    let [base,tval,rowid] = path.split('/')
     let cpath = cachePathFromChainPath(path)
     let fullObj = false
     let cacheValue = getValue(cpath,cache)
     let colsCached = 0
     let partialObj = {}
     if(!colArr){
-        colArr = Object.keys(getValue([pArgs[0], 'props', pArgs[1], 'props'],gb))
+        colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
         fullObj = true
     }
     console.log('getting row: '+ path + ' with properties:', colArr)
     for (let i = 0; i < colArr.length; i++) {//setup subs if needed
         const pval = colArr[i];
-        let colPath = [pArgs[0],pArgs[1], pval, path]
+        let colPath = [base, tval, pval, path]
         let data = getValue(colPath, cache)
-        console.log(colPath, data)
+        //console.log(colPath, data)
         if(data === undefined){//add gun sub to cache
             loadRowPropToCache(path, pval)
         }else{
@@ -503,12 +585,12 @@ function getRow(path, colArr, inc){
         }
     }
     if(colsCached !== colArr.length && inc <10){//recur and don't return, waiting for cache to load, 10 tries
-        console.log(colsCached, colArr.length)
+        //console.log(colsCached, colArr.length)
         inc++
         if(fullObj){
-            setTimeout(getRow,50, path)
+            setTimeout(getRow,50, path, false, inc)
         }else{
-            setTimeout(getRow,50, path, colArr)
+            setTimeout(getRow,50, path, colArr, inc)
         }
     }else if(colsCached === colArr.length){
         if(cacheValue !== undefined && fullObj){

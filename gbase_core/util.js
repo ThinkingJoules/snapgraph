@@ -133,6 +133,23 @@ const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     }
     return false
 }
+const allUsedIn = gb =>{//could move this to a getter on the gb object?
+    let out = {}
+    for (const base in gb) {
+        out[base] = {}
+        const tables = gb[base].props;
+        for (const t in tables) {
+            const tconfig = tables[t];
+            for (const p in tconfig.props) {
+                let thispath = [base,t,p].join('/')
+                const usedIn = t.props[p].usedIn;//should be an array of paths
+                out[base][thispath] = usedIn
+            }
+        }
+    }
+    return out
+}
+
 const makefindRowAlias = gb => (rowID) =>{//obj is .rows, input human name, returns rowID
     let [base, tval] = rowID.split('/')
     let obj = getValue([base, 'props',tval,'rows'],gb)
@@ -236,7 +253,10 @@ function setMergeValue(propertyPath, value, obj){
         // This is the last property - the one where to set the value
     } else {
       // We set the value to the last property
-      if(typeof value === 'object'){
+      if(Array.isArray(value)){
+        if (!obj.hasOwnProperty(properties[0]) || !Array.isArray(obj[properties[0]])) obj[properties[0]] = []
+        obj[properties[0]] = obj[properties[0]].concat(value)
+      }else if(typeof value === 'object'){
         if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "object") obj[properties[0]] = {}
         obj[properties[0]] = Object.assign(obj[properties[0]], value)
       }else{
@@ -374,8 +394,17 @@ const makenextSortval = gb => (path)=>{
     nextSort += 10
     return nextSort
 }
-function convertValueToType(value, newType, rowAlias){
+function convertValueToType(gb, value, newType, rowAlias){
     let out
+    let aliasConvert = []
+    if(Array.isArray(value)){
+        for (let i = 0; i < value.length; i++) {
+            const rowid = value[i];
+            let[base,tval,r] = rowid.split('/')
+            aliasConvert.push(getValue([base,'props',tval,'rows', rowid], gb))
+        }
+        value = aliasConvert.join(', ')
+    }
     if(newType === 'string'){
         out = String(value)
     }else if(newType === 'number'){
@@ -431,6 +460,14 @@ function tsvJSONgb(tsv){
      
     return result; //JavaScript object
     //return JSON.stringify(result); //JSON
+}
+function removeFromArr(item,arr){
+    let position = arr.indexOf(item);
+
+    if(~position){
+        arr.splice(position, 1);
+    }
+    return arr
 }
 
 function watchObj(){
@@ -490,5 +527,7 @@ module.exports = {
     makeisLinkMulti,
     makegetColumnType,
     tsvJSONgb,
-    watchObj
+    watchObj,
+    allUsedIn,
+    removeFromArr
 }

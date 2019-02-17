@@ -42,7 +42,7 @@ const maketableToState = (gb, vTable, subscribe, generateHeaderRow, linkColPvals
             let rowArr = xformRowObjToArr(rowObj, headers, links)
             newTable.push(rowArr)
         }
-        if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable) || !self.state.linkColumns || JSON.stringify(self.state.linkColumns) !== JSON.stringify(flaggedCols)){
+        if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable) || !thisReact.state.linkColumns || JSON.stringify(thisReact.state.linkColumns) !== JSON.stringify(flaggedCols)){
             setValue([base, tval, 'last'], newTable, vTable)
             thisReact.setState({vTable: newTable,linkColumns: flaggedCols})
         }
@@ -174,20 +174,13 @@ const makexformRowObjToArr = findRowAlias => (rowObj, orderedHeader, linkColPval
     let rowArr = []
     for (let j = 0; j < orderedHeader.length; j++) {
         const pval = orderedHeader[j];
-        let linksObj
+        let linksArr
         if(rowObj[pval]){
             if(linkColPvals[pval]){//value is link
                 let cellValue = []
-                try{
-                    linksObj = JSON.parse(rowObj[pval])
-                }catch (err){
-                    rowArr.push(rowObj[pval])
-                }
-                for (const linkRowID in linksObj) {
-                    const value = linksObj[linkRowID];
-                    if (value) {
-                        cellValue.push(findRowAlias(linkRowID))
-                    }
+                for (let i = 0; i < rowObj[pval].length; i++) {
+                    const link = rowObj[pval][i];
+                    cellValue.push(findRowAlias(link))
                 }
                 rowArr.push(cellValue)
 
@@ -203,11 +196,9 @@ const makexformRowObjToArr = findRowAlias => (rowObj, orderedHeader, linkColPval
 const makelinkColIdxs = (generateHeaderRow, linkColPvals) => (base, tval)=>{
     let headers = generateHeaderRow(base,tval)[0]
     let links = linkColPvals(base,tval)
-    console.log(links)
     let flaggedCols = []
     for (let i = 0; i < headers.length; i++) {
         const pval = headers[i];
-        console.log(pval)
         if(links[pval]){
             flaggedCols.push(i)
         }

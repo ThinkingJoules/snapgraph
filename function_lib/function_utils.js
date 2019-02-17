@@ -584,7 +584,7 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
             }catch(e){
                 throw new Error('Cannot find summation function on link multiple field:', links[0])
             }
-            if(gRollup.indexOf(summation) === -1){
+            if(gRollup.includes(summation)){
                 throw new Error('Invalid summation function for link multiple')
             }
         }
@@ -711,7 +711,7 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
                                 pathInfo.value.push(value)
                                 pathInfo.done = true
                             }else{
-                                console.log(value)
+                                //console.log(value)
                                 pathInfo.value.push(convertValueToType(value, pathInfo.valueType, pathInfo.links[0]))
                                 pathInfo.done = true
                             }
