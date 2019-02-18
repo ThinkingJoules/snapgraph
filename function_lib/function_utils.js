@@ -430,10 +430,11 @@ function findFNArgs(str){
     let leftPar
     let rightPar
     let comIdx = []
+    let quote = 0
     for (let i=0; i<str.length; i++){
         let tok = str[i]
         if(tok === '('){
-        left.push(tok)
+            left.push(tok)
             if(left.length === 1){
                 leftPar = i
             }
@@ -442,9 +443,11 @@ function findFNArgs(str){
             if(left.length === right.length){
                 rightPar = i
             }
+        }else if(tok === '"' || tok === "'"){
+            quote ++
         }
-        if(left.length && left.length === right.length + 1 && tok ===','){
-        comIdx.push(i)
+        if(left.length && left.length === right.length + 1 && quote % 2 === 0 && tok ===','){
+            comIdx.push(i)
         }
     }
     let args = []
@@ -461,6 +464,17 @@ function findFNArgs(str){
 
     }
     args.push(str.slice(next,rightPar))
+    for (let i = 0; i < args.length; i++) {
+        let arg = args[i].trim();
+        if ((arg.charAt(0) === '"' && arg.charAt(arg.length-1) === '"') || (arg.charAt(0) === "'" && arg.charAt(arg.length-1) === "'")) {
+            //if double quoted arg
+            args[i] = stripDoubleQuotes(arg)
+        }else{//not double quoted, strip whitespace
+            args[i] = arg.replace(/\s+/g, '')
+        }
+    
+    }
+  
     return args
 }
 function findTruth(ifFirstArg){
