@@ -416,9 +416,11 @@ function convertValueToType(gb, value, newType, rowAlias){
         }
     }else if(newType === 'boolean'){
         value = String(value)
-        if(value == '' || '0' || 'false' || 'null' || 'undefined' || ""){//falsy strings
+        let falsy = ['','0','false','null','undefined',""]
+        let truthy = ['1','true','Infinity']
+        if(falsy.includes(value)){//falsy strings
             out = false
-        }else if (value == '1' || 'true' || 'Infinity'){//truthy strings
+        }else if (truthy.includes(value)){//truthy strings
             out = true
         }else{
             throw new Error('Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to boolean. enter true or false or 0 for false or 1 for true')

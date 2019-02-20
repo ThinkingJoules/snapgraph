@@ -86,7 +86,8 @@ const {makenewBase,
     makeshowcache,
     makeshowgsub,
     makeshowgunsub,
-    makeunlinkRow
+    makeunlinkRow,
+    makeclearColumn
 } = require('./chain_commands')
 let newBase
 let newTable
@@ -99,6 +100,7 @@ const subscribe = makesubscribe(gb,gsubs,requestInitialData)
 const retrieve = makeretrieve(gb)
 let linkRowTo
 let unlinkRow
+let clearColumn
 const importData = makeimportData(gb,handleImportColCreation,handleTableImportPuts)
 let importNewTable
 const showgb = makeshowgb(gb)
@@ -161,7 +163,7 @@ const gunToGbase = gunInstance =>{
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
     config = makeconfig(handleConfigChange)
-
+    clearColumn = makeclearColumn(gun,gb,cache,gunSubs,loadColDataToCache,getColumnType)
 
 
     gbase.newBase = newBase
@@ -398,7 +400,7 @@ function tableChainOpt(_path){
     return {_path, config: config(_path), newRow: newRow(_path), newColumn: newColumn(_path), importData: importData(_path), subscribe: subscribe(_path)}
 }
 function columnChainOpt(_path){
-    return {_path, config: config(_path), subscribe: subscribe(_path), linkColumnTo: linkColumnTo(_path)}
+    return {_path, config: config(_path), subscribe: subscribe(_path), linkColumnTo: linkColumnTo(_path), clearColumn: clearColumn(_path)}
 }
 function rowChainOpt(_path,byAlias){
     return {_path, edit: edit(_path,byAlias), retrieve: retrieve(_path), subscribe: subscribe(_path), linkRowTo: linkRowTo(_path,byAlias), unlinkRow: unlinkRow(_path,byAlias)}

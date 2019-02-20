@@ -1,5 +1,5 @@
 const{newBaseConfig,newTableConfig,newColumnConfig} = require('./configs')
-const{getValue,checkConfig, configPathFromChainPath, findID, findRowID, tsvJSONgb, watchObj} = require('./util')
+const{getValue,checkConfig, configPathFromChainPath, findID, findRowID, tsvJSONgb, watchObj,convertValueToType} = require('./util')
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, tname, pname, baseID) =>{
@@ -434,7 +434,27 @@ const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handle
     handleTableImportPuts(tpath, result)
     rebuildGBchain(tpath)
 }
-
+const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache, getColumnType) => (path) => function clearcol(){
+    let [base,tval,pval] = path.split('/')
+    let csoul = [base,tval,'r',pval].join('/')
+    let data = getValue([base,tval,pval],cache)
+    let type = getColumnType(path)
+    if(!gunSubs[path] && data === undefined){
+        loadColDataToCache(base,tval,pval)
+        setTimeout(clearcol,1000)
+        return
+    }
+    let out = {}
+    for (const rowid in data) {
+        const value = data[rowid];
+        if (value !== null) {//null means there is no data for that rowid in gun currently
+            out[rowid] = convertValueToType(gb,"", type, rowid)
+        }
+    }
+    console.log(csoul, out)
+    gun.get(csoul).put(out)
+    return true
+}
 const makeshowgb = (gb) => () =>{
     console.log(gb)
 }
@@ -465,5 +485,6 @@ module.exports = {
     makeshowcache,
     makeshowgsub,
     makeshowgunsub,
-    makeunlinkRow
+    makeunlinkRow,
+    makeclearColumn
 }
