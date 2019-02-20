@@ -276,7 +276,7 @@ function getValue(propertyPath, obj){
         return obj[properties[0]]
     }
 }
-const makevalidateData = gb =>(editThisPath, putObj)=>{//prunes specials
+const makevalidateData = gb =>(editThisPath, putObj, fromCascade)=>{//prunes specials
     let args = editThisPath.split('/')
     let output = {}
     for (const pval in putObj) {
@@ -286,9 +286,9 @@ const makevalidateData = gb =>(editThisPath, putObj)=>{//prunes specials
             let colname = getValue([args[0],'props', args[1], 'props', pval, 'alias'], gb)
             return console.log('ERROR: Cannot find data type for column: '+ colname+'['+ pval+'].')
         }
-        let specials = {prev: 'string', next: 'string', function: 'string', tag: 'string'}
+        let specials = {prev: 'string', next: 'string', transaction: 'string', tag: 'string'}
         if(specials[GBtype] === undefined){//root data type
-            if(typeof value === GBtype){
+            if(typeof value === GBtype || (fromCascade && GBtype === 'function')){
                 output[pval] = value
             }else{
                 console.log('ERROR: typeof '+ value + 'is not of type '+ GBtype)
@@ -397,7 +397,7 @@ const makenextSortval = gb => (path)=>{
 function convertValueToType(gb, value, newType, rowAlias){
     let out
     let aliasConvert = []
-    if(Array.isArray(value)){
+    if(Array.isArray(value)){//convert links to string
         for (let i = 0; i < value.length; i++) {
             const rowid = value[i];
             let[base,tval,r] = rowid.split('/')
@@ -469,7 +469,32 @@ function removeFromArr(item,arr){
     }
     return arr
 }
-
+function findLinkingCol(gb, fromPath, usedInPath){
+    let [base,tval,pval] = fromPath.split('/')
+    let [ubase,utval,upval] = usedInPath.split('/')
+    let fn = getValue([ubase,'props',utval,'props',upval, 'fn'], gb)
+    let res = []
+    if(tval === utval){//local link, type should be 'function'
+        let {GBtype,usedIn} = getValue([base,'props',tval,'props',upval], gb)
+        res = [upval,{GBtype, fn, usedIn}]
+    }else{
+        let cols = getValue([base,'props',tval,'props'], gb)
+        let res = []
+        for (const p in cols) {
+            const {GBtype,linksTo,linkMultiple} = cols[p];
+            //console.log(GBtype, linksTo)
+            if(['prev','next'].includes(GBtype)){
+                let [tbase,ttval,tpval] = linksTo.split('/')
+                //console.log(ttval, utval)
+                if(ttval === utval){
+                    res.push(p)
+                    res.push({GBtype,linksTo,linkMultiple,fn})
+                    return res
+                }
+            }
+        }
+    }
+}
 function watchObj(){
 }
 Object.defineProperty(watchObj.prototype, "watch", {
@@ -529,5 +554,6 @@ module.exports = {
     tsvJSONgb,
     watchObj,
     allUsedIn,
-    removeFromArr
+    removeFromArr,
+    findLinkingCol
 }

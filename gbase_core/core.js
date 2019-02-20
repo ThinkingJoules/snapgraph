@@ -35,7 +35,8 @@ const {
     convertValueToType,
     makeisLinkMulti,
     makegetColumnType,
-    tsvJSONgb
+    tsvJSONgb,
+    findLinkingCol
 } = require('./util.js')
 const findRowAlias = makefindRowAlias(gb)
 const linkColPvals = makelinkColPvals(gb)
@@ -108,12 +109,14 @@ const showgunsub = makeshowgunsub(gunSubs)
 const {makesolve,
     makeinitialParseLinks,
     makegetCell,
-    makegetLinks
+    makegetLinks,
+    makeverifyLinksAndFNs
 } = require('../function_lib/function_utils');
 const initialParseLinks = makeinitialParseLinks(isLinkMulti,getColumnType)
 const getCell = makegetCell(gunSubs,cache,loadRowPropToCache)
-const getLinks = makegetLinks(initialParseLinks,getCell,getColumnType)
+const getLinks = makegetLinks(gb,initialParseLinks,getCell,getColumnType)
 const solve = makesolve(getLinks)
+const verifyLinksAndFNs = makeverifyLinksAndFNs(isLinkMulti,getColumnType)
 
 
 
@@ -147,13 +150,13 @@ const gunToGbase = gunInstance =>{
     newBase = makenewBase(gun)
     newTable = makenewTable(gun,findNextID,nextSortval)
     newColumn = makenewColumn(gun,findNextID,nextSortval)
-    edit = makeedit(gun,gb,validateData,handleRowEditUndo)
+    edit = makeedit(gun,gb,validateData,handleRowEditUndo,cascade)
     importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain)
     handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
-    handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,initialParseLinks,solve)
+    handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve,verifyLinksAndFNs)
     handleUnlinkColumn = makehandleUnlinkColumn(gb,changeColumnType)
     changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn, handleUnlinkColumn)
-    handleConfigChange = makehandleConfigChange(gun,gb,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals)
+    handleConfigChange = makehandleConfigChange(gun,gb,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals,handleFNColumn)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
@@ -466,7 +469,7 @@ function loadColDataToCache(base, tval, pval){
                         nulls[key] = null
                     }
                     let fullList = Object.assign(nulls,data)
-                    console.log(fullList)
+                    //console.log(fullList)
                     setMergeValue(path,fullList,cache)
                     handleNewData(colSoul, data)
                 }
@@ -520,7 +523,7 @@ function loadRowPropToCache(path, pval){
                 setMergeValue(cpath,[],cache)
             }
         })
-        gun.get(rowlinks).on(function(gundata,id){//gundata should be whole node, not just changes
+        gun.get(rowLinks).on(function(gundata,id){//gundata should be whole node, not just changes
             let data = Gun.obj.copy(gundata)
             delete data['_']
             let links = []
@@ -531,10 +534,10 @@ function loadRowPropToCache(path, pval){
                 }
             }
             setValue(cpath,links,cache)
-            handleNewData(colSoul, {[row]:links})
+            handleNewData(colSoul, {[path]:links})
         })
         gunSubs[rowLinks] = true
-    }else if(!gunSubs[subname]){
+    }else if(!gunSubs[subname] && isLink !== 'prev' && isLink !== 'next'){
         gun.get(colSoul).get(path, function(msg,eve){//check for existence only
             eve.off()
             if(msg.put === undefined){
@@ -682,6 +685,81 @@ function requestInitialData(path, colArr, reqType){
 }
 
 
+//CASCADE
+function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
+    inc = inc || 0
+    console.log('cascading:', rowID, pval, inc)
+    let [base,tval,r] = rowID.split('/')
+    let maxTries = 5
+    let colconfig = getValue([base,'props',tval,'props',pval], gb)
+    let usedIn = colconfig.usedIn
+    let colType = colconfig.GBtype
+    if(colconfig === undefined || colType === 'prev' || colType === 'next' || usedIn.length === 0){return false}
+    if(inc === maxTries){throw new Error('Could not load all dependencies for: '+ rowID)}
+    let linkCol
+    let linkColInfo
+    let links
+    let usedInFN = {}
+    let missingData = false
+    let checkData = {}
+    //get links
+    for (let i = 0; i < usedIn.length; i++) {
+        const path = usedIn[i];
+        [linkCol,linkColInfo] = findLinkingCol(gb,rowID,path)
+        if(linkCol === undefined){throw new Error('Cannot resolve "usedIn" reference')}
+        if(linkColInfo.GBtype === 'function'){
+            checkData[path] = getLinks(rowID,linkColInfo.fn)
+            usedInFN[path] = {rows: rowID, fn: linkColInfo.fn}
+        }else{
+            console.log(rowID, linkCol)
+            let links = getCell(rowID, linkCol)
+            checkData[path] = links
+            usedInFN[path] = {rows: links, fn: linkColInfo.fn}
+        }
+        if(checkData[path] === undefined){
+            missingData = true
+        }
+    }
+    if(missingData){//need getCell to resolve before moving on
+        console.log('first',inc,usedInFN)
+        inc ++
+        setTimeout(cascade,500,rowID,pval,inc)
+        return
+    }
+    for (const upath in usedInFN) {
+        const {rows, fn} = usedInFN[upath];
+        for (let i = 0; i < rows.length; i++) {
+            const rowid = rows[i];
+            let check = getLinks(rowid,fn)
+            if(check === undefined){
+                missingData = true
+            }
+        }
+    }
+    if(missingData){
+        console.log('second',inc,usedInFN)
+        inc ++
+        setTimeout(cascade,500,rowID,pval,inc)
+        return
+    }
+    console.log('have everything')
+    //if this far, all data is in cache for solve to work on first try
+    for (const upath in usedInFN) {
+        const {rows, fn} = usedInFN[upath];
+        let [ubase,utval,upval] = upath.split('/')
+        for (let i = 0; i < rows.length; i++) {
+            const rowid = rows[i];
+            let fnresult = solve(rowid,fn)
+            console.log(rowID, ' >>> result for >>> ' + rowid +': ', fnresult)
+            let call = edit(rowid,false,false,false,true)
+            call({[upval]: fnresult})//edit will call cascade if needed
+        }
+        
+    }
+}
+
+
+
 //EVENT HANDLING AND BUFFER
 
 //sub id format: 
@@ -725,7 +803,7 @@ function parseSubID(subID){
 function handleSubUpdate(subID, buffer){
     let out = {}
     let [type, base, tval, pvals, rowid] = parseSubID(subID)
-    console.log(subID, type)
+    //console.log(subID, type)
     if(type === 'row'){
         let row = getValue([base,tval,rowid], buffer)
         if(row !== undefined && pvals[0] !== 'ALL'){
@@ -745,9 +823,9 @@ function handleSubUpdate(subID, buffer){
         }
     }else if(type === 'table'){
         let table = getValue([base,tval], buffer)
-        console.log(table)
+        //console.log(table)
         if(table !== undefined){
-            console.log(pvals[0])
+            //console.log(pvals[0])
             if(pvals[0] !== 'ALL'){
                 for (const rowid in table) {
                     const row = table[rowid];
@@ -759,11 +837,11 @@ function handleSubUpdate(subID, buffer){
                         }
                     }
                     out = Object.assign(out,rowCopy)
-                    console.log(out)
+                    //console.log(out)
                 }
             }else{
                 out = table
-                console.log('all',out)
+                //console.log('all',out)
             }
             
         }
@@ -828,69 +906,7 @@ function loadGBaseConfig(thisReact){
 
 
 //OLD WRANGLER STUFF
-async function cascade(method, curNode, doSettle){
-    let currentNode = Gun.obj.copy(curNode)
-    if(doSettle == undefined){
-        doSettle = true
-    }
-    let gun = this.back(-1)
-    console.log('cascading: ', method)
-    let type = currentNode['!TYPE']
-    let nodeSoul = type + '/' + currentNode['!ID']
-    let next = Object.keys(GB[type].next)[0]
-    let nextSet = currentNode[next]['#']
-    let prevsForCalc = GB[type].methods[method].fields
-    let prevs = Object.keys(prevsForCalc)
-    let methodFn = GB[type].methods[method].fn
-    let prevNodes = []
 
-    for (let i = 0; i < prevs.length; i++) {
-        const prop = prevs[i];
-        let cur = prevNodes[i];
-        const prevProp = prevsForCalc[prevs[i]]
-        if(currentNode[prop] && typeof currentNode[prop] === 'object'){
-            cur = await gunGetListNodes(gun,currentNode[prop]['#'])
-        }else{
-            cur = currentNode[prop]
-        }
-        if(Array.isArray(cur)){
-            let curRed = cur.reduce(function(acc,node,idx){
-                let num = (Number(node[prevProp])) ? Number(node[prevProp]) : 0
-                acc += num
-                return acc
-            }, 0)
-            currentNode[prop] = curRed
-        }else{
-            currentNode[prop] = cur
-        }
-    }
-    console.log(currentNode)
-    let fnres = methodFn(currentNode)
-    if(!doSettle){
-        let mutate = Object.assign({}, currentNode, fnres)
-        return mutate
-    }else{
-        gun.get(nodeSoul).settle(fnres,{cascade:false})
-        let nextNodes
-        if(currentNode[next] && typeof currentNode[next] === 'object'){
-            nextNodes = await gunGetListNodes(gun,nextSet)
-            if(Array.isArray(nextNodes)){
-                for (let i = 0; i < nextNodes.length; i++) {
-                    const node = Gun.obj.copy(nextNodes[i])
-                    let nextType = node['!TYPE']
-                    let nextID = node['!ID']
-                    let nextSoul = nextType +'/'+nextID
-                    let cascadeProp = (GB[nextType].cascade) ? getKeyByValue(GB[nextType].cascade,method) : false
-                    console.log('Number of next cascades:', nextNodes.length)
-                    let putObj = {}
-                    putObj[cascadeProp] = 0
-                    let opt = {prevData: node}
-                    gun.get(nextSoul).settle(putObj,opt)
-                }
-            }
-        }
-    }
-}
 
 function archive(){
     let gun = this;

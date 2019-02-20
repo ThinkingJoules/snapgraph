@@ -1,7 +1,7 @@
 const gfn = require('./functions')
 const {convertValueToType,getValue} = require('../gbase_core/util')
 //FUNCTION STUFF
-const makesolve = getLinks =>function thisfn(rowID, eq, tries){
+const makesolve = getLinks =>function solve(rowID, eq, tries){
     let linksResolved
     let logicResolved
     let output
@@ -17,33 +17,24 @@ const makesolve = getLinks =>function thisfn(rowID, eq, tries){
             }else{
                 return null
             }
+        }else{
+            console.log(linksResolved)
+            logicResolved = evaluateAllFN(linksResolved)
+            let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(logicResolved);
+            if(!containsInvalidChars){
+                let solver = new MathSolver()
+                output = solver.solve(logicResolved)
+                console.log(output)
+                return output
+            }else{
+                let cleaned = stripDoubleQuotes(logicResolved)
+                console.log(cleaned)
+                return cleaned
+            }
         }
     }catch(e){
         return console.log(e)
-    }
-    //console.log(linksResolved)
-    try{//parse string for comparators/ifs/etc
-        logicResolved = evaluateAllFN(linksResolved)
-    }catch(e){
-        return console.log(e)
-    }
-    //console.log(logicResolved)
-    let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(logicResolved);
-    if(!containsInvalidChars){
-        let solver = new MathSolver()
-        try{
-            output = solver.solve(logicResolved)
-        }catch(e){
-            return console.log(e)
-        }
-        console.log(output)
-        return output
-    }else{
-        let cleaned = stripDoubleQuotes(logicResolved)
-        console.log(cleaned)
-        return cleaned
-    }
-    
+    }    
 }
 function MathSolver() {
 
@@ -396,7 +387,15 @@ function evaluateAllFN(FNstr){
         if(more && match[0] !== 'IFERROR'){//arg contains a FN
             resolvedArgs.push(evaluateAllFN(val))
         }else{
-            resolvedArgs.push(val)
+            let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(val);
+            let output
+            if(!containsInvalidChars){
+                let solver = new MathSolver()
+                output = solver.solve(val)
+                resolvedArgs.push(output)
+            }else{
+                resolvedArgs.push(val)
+            }
         }
     }
     let result = gfn[match[0]](resolvedArgs)
@@ -574,7 +573,74 @@ function stripDoubleQuotes(str){
 
 //FUNCTION LINK PARSING
 let gRollup = ["SUM","MAX","MIN","AVG","AND","OR","COUNT","COUNTALL","JOIN","MULTIPLY"];//valid Rollup FNs
+let nextLinkFNs = ["JOIN", "CONCAT"]
+const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
+    let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
+    let match
+    let nextUsed = false
+    let [b,t,p] = path.split('/')
+    while (match = allLinkPattern.exec(fnString)) {
+        let replace = match[0]
+        let path = match[1]
+        let links = path.split('.')
+        let linkMulti = isLinkMulti(links[0])
+        let valueType = getColumnType(links[0])
+        let summation = false
+        if(valueType === 'next'){nextUsed = true}
+        if(linkMulti){
+            let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
+            try{
+                summation = fnPattern.exec(fnString)[0]                
+            }catch(e){
+                throw new Error('Cannot find summation function on link multiple field:', links[0])
+            }
+            if(valueType === 'next' && summation !== 'JOIN'){
+                throw new Error('"next" Column can only be summarized with a "JOIN()" function')
+            }
+        }else if(valueType === 'next'){
+            let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
+            summation = fnPattern.exec(fnString)[0]
+            if(summation !== null && !nextLinkFNs.includes(summation)){
+                throw new Error('"next" with {linkMultiple: false} can only be used in: '+nextLinkFNs.join(', ')+ ' Functions')
+            }
 
+        }
+    }
+    if(nextUsed || p === 'p0'){//final check; if any of the references were next columns, cannot have any math symbols
+        let leftCurl = 0
+        let rightCurl = 0
+        let lpar = 0
+        let rpar = 0
+        let invalid = ["+","-","*","/","^"]
+        let badFN = false
+        //can only have math symbols inside of functions, since functions are already verified to be CONCAT or JOIN
+        for (let i = 0; i < fnString.length; i++) {
+            const char = fnString[i];
+            if(char === '(') lpar ++
+            if(char === ')') rpar ++
+            if(char === '{') leftCurl ++
+            if(char === '}') rightCurl ++
+
+            if((!leftCurl && !rightCurl) && lpar === rpar){//char before any references
+                if(invalid.includes(char)){
+                    badFN = true
+                    break
+                }
+            }else if(leftCurl === rightCurl && lpar === rpar){
+                if(invalid.includes(char)){
+                    badFN = true
+                    break
+                }
+            }
+        }
+        if(badFN && nextUsed){
+            throw new Error('Cannot do math if a next column is referenced in the equation, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed')
+        }else{
+            throw new Error('Cannot do math in the first column, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed')
+        }
+    }
+    return true
+}
 const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>{
     let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
     let out = {}
@@ -593,12 +659,12 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
             try{
                 summation = fnPattern.exec(fnString)[0]
                 replace = wholeReplace.exec(fnString)[0]
-                summationargs = findFNArgs(summation)
+                summationargs = findFNArgs(replace) // was findFNArgs(summation)
                 
             }catch(e){
                 throw new Error('Cannot find summation function on link multiple field:', links[0])
             }
-            if(gRollup.includes(summation)){
+            if(!gRollup.includes(summation)){
                 throw new Error('Invalid summation function for link multiple')
             }
         }
@@ -606,90 +672,73 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
     } 
     return out
 }
-const makegetCell = (gunSubs,cache,loadRowPropToCache) =>(rowID,colStr)=>{
-    let [base,tval,pval] = colStr.split('/')
+const makegetCell = (gunSubs,cache,loadRowPropToCache) =>(rowID,pval)=>{
+    let [base,tval,r] = rowID.split('/')
     let value = getValue([base,tval,pval,rowID], cache)
     let cellsub = [base,tval,'r',pval].join('/')
     cellsub += '+'+rowID
     let colsub = [base,tval,'r',pval].join('/')
-    if(!gunSubs[colsub] && !gunSubs[cellsub]){
+    if(!gunSubs[colsub] && !gunSubs[cellsub] && value === undefined){
         loadRowPropToCache(rowID, pval)
-        return undefined
-    }else if(!value){
-        return null
+        return
+    }else{
+        return value
     }
-    
-    return value
 }
-const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thisfn(rowID, fnString, linksObj, tries){
+const makegetLinks = (gb,initialParseLinks, getCell, getColumnType) => function getlinks(rowID, fnString, linksObj, tries){
     if(linksObj === undefined){
         linksObj = initialParseLinks(fnString, rowID)
     }
     tries = tries || 0
     let done = 0
     let links = Object.keys(linksObj)
-    let dataMissing = false
+    let dataMissing = []
+    let dataLinks = Object.assign({},linksObj)
     for (const path in linksObj) {
         const pathInfo = linksObj[path];
+        let changes = dataLinks[path]
         if(!pathInfo.done){//still has a link to find, gather all links that getCell returned false (means it sent request for data).
+            let[b,t,pval] = pathInfo.links[0].split('/')
             if(!pathInfo.linkMulti && pathInfo.links.length === 1){//getCell should be a value
-                pathInfo.data = getCell(pathInfo.currentRow, pathInfo.links[0])
-                pathInfo.valueType = getColumnType(links[0])
-            }else if(!pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj
-                let request = getCell(pathInfo.currentRow, pathInfo.links[0])
-                if(request){
-                    try{
-                        request = JSON.parse(request)
-                    }catch (e){
-                        return console.log('Could not parse request:', request)
-                    }
-                    let links = 0
-                    for (const link in request) {
-                        const value = request[link];
-                        if (value) {//is true
-                            links ++
-                        }
-                    }
-                    if(links === 1){//single link like it should be
-                        console.log(pathInfo)
-                        pathInfo.links.shift() //remove the successfully retrieved link
-                        pathInfo.currentRow = Object.keys(request)[0]
-                        pathInfo.data = getCell(pathInfo.currentRow,pathInfo.links[0])
-                        pathInfo.valueType = getColumnType(pathInfo.links[0])
-                    }else{
+                changes.data = getCell(pathInfo.currentRow, pval)
+                changes.valueType = getColumnType(changes.links[0])
+            }else if(!pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be array
+                let request = getCell(pathInfo.currentRow, pval)
+                if(request !== undefined && (request === "" || request === null || request.length === 0)){//null data, no links
+                    changes.data = 0
+                    changes.links.shift() //remove the successfully retrieved link
+                    changes.valueType = getColumnType(changes.links[0])
+                }else if(request !== undefined){
+                    if(request.length === 1){//single link like it should be
+                        changes.links.shift() //remove the successfully retrieved link
+                        changes.currentRow = request[0]
+                        let [b,t,p] = changes.links[0].split('/')
+                        changes.data = getCell(request[0],p)
+                        changes.valueType = getColumnType(changes.links[0])
+                    }else if(request.length > 1){
                         throw new Error('Column is not a link multiple, but there are multiple links')
                     }
-                }else if(request === "" || request === null){//getting data do nothing??
-                    pathInfo.data = request
-                    pathInfo.links.shift() //remove the successfully retrieved link
-                    pathInfo.valueType = getColumnType(pathInfo.links[0])
                 }else{//getting data do nothing??
-                    pathInfo.data = false
+                    changes.data = false
                 }
             }else if(pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj with one or more keys
-                let request = getCell(pathInfo.currentRow, pathInfo.links[0])
-                pathInfo.valueType = getColumnType(pathInfo.links[0])
-                if(request){
-                    try{
-                        request = JSON.parse(request)
-                    }catch (e){
-                        throw new Error('Could not parse request:', request)
+                let request = getCell(pathInfo.currentRow, pval)
+                changes.valueType = getColumnType(pathInfo.links[0])
+                if(request !== undefined && (request === "" || request === null || request.length === 0)){//null data
+                    changes.data.push(0)
+                    changes.links.shift() //remove the successfully retrieved link
+                }else if(request !== undefined){//acutal data
+                    changes.data = []
+                    for (let i = 0; i < request.length; i++) {
+                        const value = request[i];
+                        changes.links.shift() //remove the successfully retrieved link
+                        changes.currentRow = value
+                        let [b,t,p] = changes.links[0].split('/')
+                        let linkData = getCell(pathInfo.currentRow,p)
+                        changes.data.push(linkData)
                     }
-                    pathInfo.data = []
-                    for (const link in request) {
-                        const value = request[link];
-                        if (value) {//is true
-                            pathInfo.links.shift() //remove the successfully retrieved link
-                            pathInfo.currentRow = Object.keys(request)[0]
-                            let linkData = getCell(pathInfo.currentRow,pathInfo.links[0])
-                            pathInfo.data.push(linkData)
-                        }
-                    }
-                }else if(request === "" || request === null){//getting data do nothing??
-                    pathInfo.data.push(request)
-                    pathInfo.links.shift() //remove the successfully retrieved link
                 }else{//getting data do nothing??
-                    pathInfo.data = false
+                    changes.data = false
                 }
             }else{
                 
@@ -700,8 +749,8 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
         
     }
     if(done !== links.length){//we don't have all data
-        for (const path in linksObj) {// go back through and see if we can do final value calcs
-            const pathInfo = linksObj[path];
+        for (const path in dataLinks) {// go back through and see if we can do final value calcs
+            const pathInfo = dataLinks[path];
             if(!pathInfo.done){//still has a link it attempted to find, check value
                 if(!pathInfo.linkMulti && pathInfo.links.length === 1){
                     if(pathInfo.data !== undefined){// data is present
@@ -709,11 +758,12 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
                             pathInfo.value = pathInfo.data
                             pathInfo.done = true
                         }else{
-                            pathInfo.value = convertValueToType(pathInfo.data, pathInfo.valueType, pathInfo.links[0])
+                            console.log(pathInfo)
+                            pathInfo.value = convertValueToType(gb,pathInfo.data, pathInfo.valueType, pathInfo.links[0])
                             pathInfo.done = true
                         }
                     }else{
-                        dataMissing = true
+                        dataMissing.push(pathInfo)
                     }
                 }else if(pathInfo.linkMulti && pathInfo.links.length === 1){//getCell should be stringified link Obj with one or more keys
                     let missing = 0
@@ -726,12 +776,12 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
                                 pathInfo.done = true
                             }else{
                                 //console.log(value)
-                                pathInfo.value.push(convertValueToType(value, pathInfo.valueType, pathInfo.links[0]))
+                                pathInfo.value.push(convertValueToType(gb,value, pathInfo.valueType, pathInfo.links[0]))
                                 pathInfo.done = true
                             }
                         }else{
                             missing++
-                            dataMissing = true
+                            dataMissing.push(pathInfo)
                         }
                         
                     }
@@ -748,12 +798,12 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
                                 pathInfo.value.push(value)
                                 pathInfo.done = true
                             }else{
-                                pathInfo.value.push(convertValueToType(value, pathInfo.valueType, pathInfo.links[0]))
+                                pathInfo.value.push(convertValueToType(gb, value, pathInfo.valueType, pathInfo.links[0]))
                                 pathInfo.done = true
                             }
                         }else{
                             missing++
-                            dataMissing = true
+                            dataMissing.push(pathInfo)
                         }
                         
                     }
@@ -761,23 +811,21 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
                         pathInfo.done = true
                     }
                 }else{
-                   dataMissing = true
+                    dataMissing.push(pathInfo)
                 }
             }
         }
     }
-    if(dataMissing){
+    if(dataMissing.length !== 0){
         tries++
-        console.log(linksObj, tries)
+        //console.log(dataMissing)
         if(tries < 2){
-            setTimeout(thisfn,50,rowID,fnString, linksObj, tries)
+            setTimeout(getlinks,50,rowID,fnString, dataLinks, tries)
             return
-        }else{
-            return null
         }
     }
-    for (const path in linksObj){
-        let pathInfo = linksObj[path]
+    for (const path in dataLinks){
+        let pathInfo = dataLinks[path]
         let rep = pathInfo.replace
         let val = pathInfo.value
         let summer = pathInfo.summation
@@ -793,6 +841,7 @@ const makegetLinks = (initialParseLinks, getCell, getColumnType) => function thi
         let find = new RegExp(rep, 'g')
         fnString = fnString.replace(find,val)
     }
+    //console.log(fnString)
     return fnString
 }
 module.exports = {
@@ -803,5 +852,6 @@ module.exports = {
     makesolve,
     makeinitialParseLinks,
     makegetCell,
-    makegetLinks
+    makegetLinks,
+    makeverifyLinksAndFNs
 }

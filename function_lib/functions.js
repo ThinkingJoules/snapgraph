@@ -165,12 +165,12 @@ function FLOOR(args){
     return out
 }
 function ROUND(args){
-    //args[0]= 'UP' || 'DOWN'
-    //args[1]= Number() <-- Value to round
-    //args[2]= Number() <-- precision, optiona;: default = 2
+    //args[0]=  Number() <-- Value to round
+    //args[1]= Number() <-- precision, optiona;: default = 2
+    //args[2]= 'UP' || 'DOWN'
     //round up and down work the same as Math.round(), instead of Math.floor/ceil rounding w/negatives
-    if(args.length < 2){
-        throw new Error('Must pass at least the first two arguments to ROUND(): value to be rounded, and the number of decimal placess')
+    if(args.length < 1){
+        throw new Error('Must pass at least the first argument to ROUND(): value to be rounded')
     }
     let [val,prec,dir] = args
     let out

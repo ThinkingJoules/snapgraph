@@ -51,6 +51,7 @@ const makenewRow = (checkUniqueAlias, edit) => (path) => (alias, data)=>{//HANDL
     }
 }
 const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLinkCol)=>{
+    let [base,tval,pval] = path.split('/')
     if(path.split('/')[2]==='p0'){return console.log("ERROR: Cannot use the first column to link another table")}
     let cpath = configPathFromChainPath(path)
     let colType = getValue(cpath, gb).GBtype
@@ -67,10 +68,24 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
     if(linkTableOrBackLinkCol === undefined){return console.log('ERROR: Must pass in a gbase[baseID][tval] or the column with the recipricol links')}
     configObj.linksTo = linkTableOrBackLinkCol
     let linkPath = linkTableOrBackLinkCol.split('/')
-    if(linkPath.length === 2 || linkPath.length === 3 && linkPath[2] === 'p0'){//table or table key column
+    let [lb, lt, lp] = linkPath
+    let ltPs = getValue([lb,'props',lt,'props'], gb)
+    if(lt === tval){return console.log('ERROR: Cannot link a table to itself')}
+    //check for already existing 'next' link on lt, can only have one
+    for (const p in ltPs) {
+        let ltpconfig = ltPs[p]
+        const type = ltpconfig.GBtype;
+        if(type === 'next'){
+            return console.log('ERROR: Can only have one "next" link column per table. Column: '+ ltpconfig.alias + ' is already a next column.')
+        }
+    }
+    configObj.linkColumnTo = true
+    if(linkPath.length === 2 || (linkPath.length === 3 && linkPath[2] === 'p0')){//table or table key column
         handleConfigChange(configObj, path, undefined)
-    }else{// it is assumed to be the actual backlinkcolumn
+    }else if (linkPath.length === 3 && linkPath[2][0] === 'p'){// it is assumed to be the actual backlinkcolumn
         handleConfigChange(configObj, path, linkTableOrBackLinkCol)
+    }else{
+        return console.log('ERROR: Cannot determine what table or column you are linking to')
     }
 }
 const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol) =>{
@@ -82,7 +97,7 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol) =>{
         return false
     }
 }
-const makeedit = (gun,gb,validateData,handleRowEditUndo) => (path,byAlias,newRow,newAlias) => (editObj)=>{//MOVE NEW ROW TO THE NEWROW API
+const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
     newRow = (newRow) ? true : false
     let aliasCol = (byAlias) ? true : false
     let args = path.split('/')
@@ -94,45 +109,41 @@ const makeedit = (gun,gb,validateData,handleRowEditUndo) => (path,byAlias,newRow
     ppath.push('props')
     let cols = getValue(ppath, gb)
     let putObj = {}
-    //parse meaning of non config edit
-    if (checkTable !== undefined) {//valid base and table
-        //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
-        if(aliasCol){
-            for (const palias in editObj) {
-                let pval = findID(cols, palias)
-                if (pval) {
-                    putObj[pval] = editObj[palias]; 
-                }else{
-                    return console.log('ERROR: Cannot find column with name [ '+ palias +' ]. Edit aborted')
-                }
-            }
+    //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
+    //if(aliasCol){
+    for (const palias in editObj) {
+        let pval = findID(cols, palias) //will break if column has human name of 'p' + Number()
+        if (pval) {
+            putObj[pval] = editObj[palias]; 
         }else{
-            putObj = editObj
+            return console.log('ERROR: Cannot find column with name [ '+ palias +' ]. Edit aborted')
         }
-        let validatedObj = validateData(path,putObj) //strip prev, next, tags, fn keys, check typeof on rest
-        if(!validatedObj){return}
-        console.log(validatedObj)
-        for (const key in validatedObj) {
-            let colSoul = base + '/' + tval + '/r/' + key
-            const value = validatedObj[key];
-            if(key !== 'p0'){//put non-row name changes
-                gun.get(colSoul).get(path).put(value)
-            }else if(key === 'p0' && !newRow){
-                //check uniqueness
-                let rowpath = configPathFromChainPath(path)
-                let aliasCheck = checkUniqueAlias(rowpath, alias)
-                if(aliasCheck){
-                    gun.get(colSoul).get(path).put(value)
-                }
-            }else if(newRow && newAlias){
-                //new row, uniqueness already checked
-                gun.get(colSoul).get(path).put(newAlias)
-            }         
-        }
-        handleRowEditUndo(path,validatedObj)
-    }else{
-        return console.log('Cannot find base:[ '+ base +' ] and/or table: '+ tval)
     }
+    //}else{
+    //    putObj = editObj
+    //}
+    let validatedObj = validateData(path,putObj,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
+    if(!validatedObj){return}
+    console.log(validatedObj)
+    for (const key in validatedObj) {
+        let colSoul = base + '/' + tval + '/r/' + key
+        const value = validatedObj[key];
+        if(key !== 'p0'){//put non-row name changes
+            gun.get(colSoul).get(path).put(value)
+            setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
+        }else if(key === 'p0' && !newRow){
+            //check uniqueness
+            let rowpath = configPathFromChainPath(path)
+            let aliasCheck = checkUniqueAlias(rowpath, alias)
+            if(aliasCheck){
+                gun.get(colSoul).get(path).put(value)
+            }
+        }else if(newRow && newAlias){
+            //new row, uniqueness already checked
+            gun.get(colSoul).get(path).put(newAlias)
+        }         
+    }
+    handleRowEditUndo(path,validatedObj)
 }
 const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, colArr, onlyVisible, notArchived, udSubID) =>{
     if(typeof callBack !== 'function'){return console.log('ERROR: Must pass a function as a callback')}
@@ -289,7 +300,7 @@ const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function thisfn(p
         prevCol.lm = lcollm
     }
     if(!prevCol.lm){//link single, check for no current links
-        let links = getCell(prevCol.path, prev.colpath)
+        let links = getCell(prevCol.path, pval)
         if(links === undefined){
             setTimeout(thisfn,100,property,gbaseGetRow)
             return false

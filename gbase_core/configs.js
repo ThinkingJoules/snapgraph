@@ -58,7 +58,7 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
     }    
 }
 
-const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo, oldConfigVals) => (configObj, path, backLinkCol)=>{
+const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo, oldConfigVals, handleFNColumn) => (configObj, path, backLinkCol)=>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let cpath = configPathFromChainPath(path)
@@ -85,12 +85,15 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
         if(configObj.GBtype || configObj.linksTo || configObj.fn){//new type change or update to link of fn
             let typeStuff = {}
             for (const key in configObj) {//split config obj for normal configs vs type/link configs
-                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple' || key === "function" || key === "fn"){
+                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple' || key === "function" || key === "fn" || key === 'linkColumnTo'){
                     typeStuff[key] = configObj[key]
                     delete configObj[key]
                 }
             }
             if(typeStuff.GBtype && typeStuff.GBtype !== thisColConfig.GBtype){//change col type
+                if(thisColConfig.GBtype === 'function'){
+                    handleFNColumn(path, {fn: ''})
+                }
                 changeColumnType(path, typeStuff, backLinkCol)
             }else if(typeStuff.fn && thisColConfig.GBtype === 'function'){//update function
                 handleFNColumn(path, typeStuff)
@@ -101,9 +104,8 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
                     handleLinkColumn(path,typeStuff,backLinkCol)
                 }
                 
-                //else> just make the change? Only if there is no data?, convert? delete?
             }else{
-                throw new Error('Must specify GBtype in your config Obj to change a column to that type')
+                throw new Error('GBtype is already type specified')
             }
         }
         if(Object.keys(configObj).length !== 0){
@@ -129,7 +131,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
     }
     return true
 }
-const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn, handleUnlinkColumn) =>function thisfn(path, configObj, backLinkCol){
+const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn, handleUnlinkColumn) =>function changeColtype(path, configObj, backLinkCol){
     let [base, tval, pval] = path.split('/')
     let newType = configObj.GBtype
     if(pval[0] !== 'p'){
@@ -161,7 +163,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
         let csoul = configSoulFromChainPath(path)
         gun.get(csoul).put({linksTo: ""})
         if(changeLinkCol){
-            thisfn(otherLink,{GBtype: 'string'})
+            changeColtype(otherLink,{GBtype: 'string'})
         }
     }
     let colSoul = base + '/' + tval + '/r/' + pval
@@ -170,7 +172,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
         let data = getValue([base,tval,pval], cache)
         if(!data){
             loadColDataToCache(base,tval,pval)
-            setTimeout(thisfn, 100, path, configObj, backLinkCol)
+            setTimeout(changeColtype, 100, path, configObj, backLinkCol)
             return
         }
         //forin keys and attempt to change values over
@@ -271,8 +273,55 @@ function basicFNvalidity(fnString){
     }
     return true
 }
-const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialParseLinks, solve) => function thisfn(path,configObj){
+function checkForCirc(gb, origpath, checkpathArr){//see if add this function will create a circular reference
+    // get an object of all columns and their usedIn
+    //while lookForArr is not empty >> foreach lookForArr Fullcollector.push && whileCollector.push all new links, set lookForArr = whileCollector??
+    //after while loop stops, all usedIn's are traversed.
+    //fullcollector should not include origpath
+    let cols = {}
+    let [base,tval,pval] = origpath.split('/')
+    let cpath = configPathFromChainPath(origpath)
+    let {usedIn} = getValue(cpath,gb)
+    if(usedIn.length === 0){return true}
+    for (const t in gb[base].props) {
+        const ps = gb[base].props[t].props;
+        for (const p in ps) {
+            const pusedIn = ps[p].usedIn;
+            let ppath = [base,t,p].join('/')
+            cols[ppath] = pusedIn
+        }
+    }
+    let lookFor = usedIn
+    let collector = []
+    let safety = 0
+    console.log(cols)
+    while (lookFor.length !== 0 && safety < 500) {//will get stuck if there is already a circular reference
+        safety ++
+        let nextLook = []
+        for (let i = 0; i < lookFor.length; i++) {
+            const link = lookFor[i];
+            if(cols[link]){
+                collector = collector.concat(cols[link])
+                nextLook = nextLook.concat(cols[link])
+            }
+        }
+        lookFor = nextLook
+    }
+    if(safety >= 500){
+        throw new Error('Already existing ciruclar reference detected')
+    }
+    console.log(collector, safety)
+    for (let i = 0; i < checkpathArr.length; i++) {
+        const path = checkpathArr[i];
+        if(collector.includes(path)){
+            return path
+        }
+    }
+    return true
+}
+const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve,verifyLinksAndFNs) => function handlefn(path,configObj){
     //parse equation for all links
+    console.log('HANDLE FN')
     let [base,tval,pval] = path.split('/')
     loadColDataToCache(base,tval,pval)
     let cpath = configPathFromChainPath(path)
@@ -280,8 +329,31 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialPars
     let thisColConfigSoul = configSoulFromChainPath(path)
     let fn = configObj.fn
     let oldfn = thisColConfig.fn
-
+    let checkLinks = verifyLinksAndFNs(path,fn)
     let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
+    let links = []
+    let checkmatch
+    while (checkmatch = allLinkPattern.exec(fn)) {
+        let path = checkmatch[1]
+        links.push(path.split('.'))
+    }
+    let usedInLinks = []
+    for (let i = 0; i < links.length; i++) {
+        const linkArr = links[i];
+        let link
+        if (linkArr.length === 1){
+            link = linkArr[0]
+        }else{
+            link = linkArr[1]
+        }
+        usedInLinks.push(link)
+    }
+    let circCheck = checkForCirc(gb,path,usedInLinks)
+    if(circCheck !== true){
+        throw new Error('Adding this function will create a cirular reference through: '+ circCheck)
+    }
+    if(!checkLinks){return console.log('FN has a problem')}
+
     let oldLinksTo = []
     let newLinksTo = []
     let match
@@ -295,7 +367,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialPars
     }
     let remove = oldLinksTo.filter(val => !newLinksTo.includes(val))
     let add = newLinksTo.filter(val => !oldLinksTo.includes(val))
-
+    console.log(add, remove)
     let usedIn = {}
     let result = {}
     let inMemory = true
@@ -306,7 +378,8 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialPars
         cpath.push('usedIn')
         let newUsedIn = getValue(cpath,gb)
         newUsedIn.push(path)
-        usedIn[csoul] = {usedIn: JSON.stringify(newUsedIn)}
+        let uniq = [ ...new Set(newUsedIn) ]
+        usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
     }
     for (let i = 0; i < remove.length; i++) {
         const link = remove[i];
@@ -314,8 +387,10 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialPars
         let cpath = configPathFromChainPath(link)
         cpath.push('usedIn')
         let newUsedIn = removeFromArr(path,getValue(cpath,gb))
-        usedIn[csoul] = {usedIn: JSON.stringify(newUsedIn)}
+        let uniq = [ ...new Set(newUsedIn) ]
+        usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
     }
+    console.log(usedIn)
     for (let i = 0; i < newLinksTo.length; i++) {
         const link = newLinksTo[i];
         let [base,tval,pval] = link.split('/')
@@ -327,38 +402,45 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, initialPars
     }
     let data = getValue([base,tval,pval], cache)
     if(!inMemory){
-        console.log(data)
-        setTimeout(thisfn,1000,path,configObj)
+        //console.log(data)
+        setTimeout(handlefn,1000,path,configObj)
         return
-    }
-    for (const rowid in data) {
-        result[rowid] = solve(rowid, fn)
-    }
-    console.log(usedIn)
+    }else{
+        for (const rowid in data) {
+            let val = solve(rowid, fn)
+            result[rowid] = val
+        }
+        // console.log(usedIn)
 
-    for (const csoul in usedIn) {//update all usedIn's effected
-        let val = usedIn[csoul]
-        gun.get(csoul).put(val)
-    }
-    if(configObj.GBtype && configObj.GBtype !== thisColConfig.GBtype){//update the config type, this is a changeColType
-        gun.get(thisColConfigSoul).put({GBtype: 'function'})
-    }
-    gun.get(thisColConfigSoul).put({fn: fn})//add fn to config
-    let colSoul = [base,tval,'r',pval].join('/')
-    gun.get(colSoul).put(result)//put the new calc results in to gun
+        for (const csoul in usedIn) {//update all usedIn's effected
+            let val = usedIn[csoul]
+            gun.get(csoul).put(val)
+        }
+        if(configObj.GBtype && configObj.GBtype !== thisColConfig.GBtype){//update the config type, this is a changeColType
+            gun.get(thisColConfigSoul).put({GBtype: 'function'})
+        }
+        gun.get(thisColConfigSoul).put({fn: fn})//add fn to config
+        let colSoul = [base,tval,'r',pval].join('/')
+        console.log(result)
+        gun.get(colSoul).put(result)//put the new calc results in to gun
 
-    //need to check if this col is used in anything else and manually start the cascadesS
-    let triggers = thisColConfig.usedIn
-    // for (let i = 0; i < triggers.length; i++) {
-    //     const triggeredCol = triggers[i];
-    //     cascade(triggeredCol)
-    // }
+        //need to check if this col is used in anything else and manually start the cascadesS
+        let triggers = thisColConfig.usedIn
+        if(triggers.length){
+            let rows = getValue([base,'props',tval,'rows'])
+            console.log(rows, pval)
+            for (const rowid in rows) {
+                cascade(rowid, pval)
+            }
+        }
+    }
 }
 
 
 //LINK STUFF
 
 const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =>function thisfn(path, configObj, backLinkCol){
+    if(configObj.linkColumnTo === undefined){throw new Error('Must use the ".linkColumnTo()" API to make a column a link')}
     let [base, tval, pval] = path.split('/')
     let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
     let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
@@ -373,7 +455,7 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
     if(config.GBtype === 'prev' || config.GBtype === 'next'){//already a link col
         for (const key in data) {
             const value = data[key];
-            if(![undefined, false, null, "",0].includes(value)){
+            if(Array.isArray(value) && value.length !== 0){
                 throw new Error('To change a link column, you must remove all data from column.')
             }
         }
@@ -417,15 +499,8 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
                 }
                 
             }
-            //putObj[GBID] = JSON.stringify(putObj[GBID])
         }
     }
-    // for (const key in nextObj) {
-    //     let value = nextObj[key];
-    //     nextObj[key] = JSON.stringify(value)
-    // }
-    console.log(putObj)
-    console.log(nextObj)
     prevConfig.data = putObj
     nextConfig.data = nextObj
     handleNewLinkColumn(prevConfig, nextConfig)
@@ -521,15 +596,6 @@ const makehandleNewLinkColumn = (gun, gunSubs, newColumn, loadColDataToCache) =>
         }
     }
     
-}
-const makehandleLinkRowTo = (gun,gb) => (linkObj)=>{
-    //linkObj.prevPath = base/tval/rid
-    //linkObj.prevCol = base/tval/pval
-    //linkObj.nextPath = base/tval/rid
-    //linkObj.nextCol = base/tval/pval
-
-
-
 }
 
 //IMPORT STUFF
