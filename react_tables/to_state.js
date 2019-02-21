@@ -234,7 +234,7 @@ const makelinkOptions = gb => (base,tval) =>{
 const makefnOptions = gb => (base,tval,pval) =>{
     let ts = {}
     const {alias, props} = gb[base].props[tval]
-    ts[tval] = {alias,columns: []}
+    let talias = alias
     for (const p in props) {
         let path =[base,tval,p].join('/')
         const {alias, GBtype,linksTo} = props[p]
@@ -249,10 +249,13 @@ const makefnOptions = gb => (base,tval,pval) =>{
                     if(typeof ts[lt] !== 'object'){
                         ts[lt] = {alias: ltps.alias, tval:lt, columns: []}
                     }
-                    ts[lt].columns.push({alias, path:dotPath,pval:lp})  
+                    ts[lt].columns.push({alias, path:dotPath,pval:ltp})  
                 }
             }
         }else if(['function','string','number','boolean'].includes(GBtype)){
+            if(typeof ts[tval] !== 'object'){
+                ts[tval] = {alias: talias, tval:tval, columns: []}
+            }
             ts[tval].columns.push({alias,path,pval:p})
         }
     }
