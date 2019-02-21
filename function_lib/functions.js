@@ -2,6 +2,70 @@ const {evaluateAllFN, findTruth} = require('./function_utils')
 //GBase FN wrappers
 //all FN except IFERROR will recieve args already resolved of functions
 //args will always be an array
+const fnArgHelpText = {
+    IF:         'True or False Expression, Executed if True, Executed if False',
+    IFERROR:    'Executed if no Error, Executed if there is an Error',
+    SWITCH:     'Value to determine which code to run, Match Value 1, Execute this code if value matches Match Value 1, Optional Default if No matches',
+    SUM:        'value 1, value 2, ...value n',
+    MULTIPLY:   'value 1, value 2, ...value n',
+    AVG:        'value 1, value 2, ...value n',
+    MAX:        'value 1, value 2, ...value n',
+    MIN:        'value 1, value 2, ...value n',
+    ABS:        'value',
+    SQRT:       'value',
+    MOD:        'value 1, divisor',
+    CEILING:    'value',
+    FLOOR:      'value',
+    ROUND:      'value, Optional: decimal places Default: 2, Optional: UP or DOWN Default: neither (.5 Rounds up, .49 Rounds Down',
+    INT:        'value, Optional: UP or DOWN Default: UP, Optional: EVEN or ODD Default: neither (next integer)',
+    AND:        'T/F Expression 1, T/F Expression 2, ...T/F Expression n',
+    OR:         'T/F Expression 1, T/F Expression 2, ...T/F Expression n',
+    COUNT:      'value 1, value 2, ...value n',
+    COUNTALL:   'value 1, value 2, ...value n',
+    TRUE:       'NO ARGUMENTS',
+    FALSE:      'NO ARGUMENTS',
+    NOT:        'T/F Expression',
+    T:          'value',
+    CONCAT:     '"Strings ", "to ", "concatenate.",...',
+    JOIN:       '"quoted seperation character", "string 1". "string 2", ..."string n"'
+}
+const fnExamples = {
+    IF:         ['IF(2<3, "A is less than B", "B is greater than or equal to A") => "A is less than B"'],
+    IFERROR:    ['IFERROR(3/0, "Error" => "Error"', 'IFERROR(3/3, "Error" => 1'],
+    SWITCH:     ['SWITCH(1+2, 1, "One is a little odd", 2, "Even Stevens!", 3, "Huh, thats odd...", "I am obtuse") => "Huh, thats odd..."', 'SWITCH(10+2, 1, "One is a little odd", 2, "Even Stevens!", 3, "Huh, thats odd...", "I am obtuse") => "I am obtuse"'],
+    SUM:        ['SUM(1,1,2) => 4', 'SUM(-2,1,1) => 0' ],
+    MULTIPLY:   ['MULTIPLY(3,1,2) => 6', 'MULTIPLY(-2,1,1) => -2' ],
+    AVG:        ['AVG(1,2,3) => 2', 'AVG(12,1,1) => 4' ],
+    MAX:        ['MAX(4,2,3) => 4', 'MAX(3,7,8) => 8' ],
+    MIN:        ['MIN(4,2,3) => 2', 'MIN(3,7,8) => 3' ],
+    ABS:        ['ABS(-2.134) => 2.134', 'ABS(7) => 7'],
+    SQRT:       ['SQRT(4) => 2', 'SQRT(144) => 12'],
+    MOD:        ['MOD(4,2) => 0', 'MOD(10,3) => 1'],
+    CEILING:    ['CEILING(-2.134) => -2', 'CEILING(2.134) => 3'],
+    FLOOR:      ['FLOOR(-2.134) => -3', 'FLOOR(2.134) => 2'],
+    ROUND:      ['ROUND(-2.134) => -2.13', 'ROUND(-2.134,0) => -2','ROUND(-2.134,0,UP) => -3'],
+    INT:        ['INT(-2.134) => -3', 'INT(-2.134,DOWN) => -2','INT(-2.134,UP,EVEN) => -4', 'INT(-2.134,DOWN,EVEN) => -2'],
+    AND:        ['AND(2+2 < 5, 2 = 2, 3 != 2) => TRUE()', 'AND(2+10 < 5, 2 = 2, 3 != 2) => FALSE()'],
+    OR:         ['OR(2+10 < 5, 2 = 3, 3 != 3) => FALSE()', 'OR(2+10 < 5, 2 = 3, 3 != 2) => TRUE()'],
+    COUNT:      ['COUNT("string", "another string") => 2', 'COUNT("string", "") => 1', 'COUNT(0,1,2,3) => 4'],
+    COUNTALL:   ['COUNTALL("string", "another string") => 2', 'COUNTALL("string", "") => 2', 'COUNTALL(0,1,2,3) => 4'],
+    TRUE:       ['TRUE()'],
+    FALSE:      ['FALSE()'],
+    NOT:        ['NOT(2+2 < 5) => FALSE()', 'NOT(8 < 5) => TRUE()'],
+    T:          ['T("String") => "STRING"', 'T(123) => ""'],
+    CONCAT:     ['CONCAT("Strings ", "to ", "concatenate.") => "Strings to concatenate"', 'CONCAT("Quoted", "Spaces ", "are", "Preserved  .") => "QuotedSpaces arePreserved  ."'],
+    JOIN:       ['JOIN(", ", "A", "B", "C") => "A, B, C"', 'JOIN(" ","Quoted", "Spaces ", "are", "Preserved  .") => "Quoted Spaces  are Preserved  ."']
+}
+function fnHelp(fn){
+    let out = []
+    if(fnExamples[fn]){
+        out.push(fnArgHelpText[fn])
+        out.push(fnExamples[fn])
+    }else{
+        return console.log('Cannot find fn requested. Should be one of: ' + Object.keys(fnExamples).join(', '))
+    }
+    return out
+}
 function IF(args){
     if(args.length !== 3){
         throw new Error('Must pass three arguments for IF()')
@@ -376,5 +440,6 @@ module.exports = {
     CONCAT,
     JOIN,
     ROUND,
-    INT
+    INT,
+    fnHelp
 }

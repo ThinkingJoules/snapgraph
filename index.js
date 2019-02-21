@@ -11,6 +11,7 @@ const {
         linkOptions,
         fnOptions
         }=require('./gbase_core/core')
+const { fnHelp }=require('./function_lib/functions')
 
 
 if(typeof window !== "undefined"){
@@ -37,5 +38,6 @@ module.exports = {
     loadGBaseConfig,
     gbase,
     linkOptions,
-    fnOptions
+    fnOptions,
+    fnHelp
 }
