@@ -209,20 +209,22 @@ const makelinkOptions = gb => (base,tval) =>{
     let ts = {}
     for (const t in gb[base].props) {
         if(t !== tval){
-            const ps = gb[base].props[t].props;
+            const {alias, props} = gb[base].props[t];
             let valid = true
             let validCols = []
-            for (const p in ps) {
-                const ptype = ps[p].GBtype;
-                if (ptype === 'next') {
+            for (const p in props) {
+                const {alias, GBtype} = props[p];
+                let colObj = {alias}
+                if (GBtype === 'next') {
                     valid = false
                     break
-                }else if(ptype === 'string'){
-                    validCols.push(p)
+                }else if(GBtype === 'string'){
+                    colObj.pval = p
+                    validCols.push(colObj)
                 }
             }
             if(valid){
-                ts[base+'/'+t] = validCols
+                ts[t] = {alias,cols: validCols}
             }
         }
     }
@@ -230,25 +232,26 @@ const makelinkOptions = gb => (base,tval) =>{
 }
 const makefnOptions = gb => (base,tval,pval) =>{
     let ts = {}
-    const ps = gb[base].props[tval].props;
-    for (const p in ps) {
+    const {alias, props} = gb[base].props[tval]
+    ts[tval] = {alias,cols: []}
+    for (const p in props) {
         let path =[base,tval,p].join('/')
-        const {GBtype,linksTo} = ps[p]
+        const {alias, GBtype,linksTo} = props[p]
         if (['prev','next'].includes(GBtype)){
             let [lb,lt,lp] = linksTo.split('/')
-            let ltps = gb[lb].props[lt].props
-            ts[path] = []
-            for (const ltp in ltps) {
-                const {GBtype} = ltps[ltp];
+            let ltps = gb[lb].props[lt]
+            for (const ltp in ltps.props) {
+                const {alias, GBtype} = ltps.props[ltp];
                 let subPath = [lb,lt,ltp].join('/')
                 if (['function','string','number','boolean'].includes(GBtype)) {
-                    ts[path].push(subPath)  
+                    if(typeof ts[lt] !== 'object'){
+                        ts[lt] = {alias: ltps.alias, cols: []}
+                    }
+                    ts[lt].cols.push({alias, path:subPath,lp})  
                 }
             }
-            valid = false
-            break
         }else if(['function','string','number','boolean'].includes(GBtype)){
-            ts[path] = true
+            ts[tval].cols.push({alias,path,pval})
         }
     }
     return ts
