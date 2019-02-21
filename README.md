@@ -225,6 +225,41 @@ componentDidUpdate(prevProps, prevState) {
     rowToState(rowID, self)
 }
 ```
+### React Helper Functions
+GBase has several helper functions for the ui.
+
+#### Links
+```
+//in your link config component
+import {linkOptions} from 'gundb-gbase'
+
+
+//You only need to know the baseID and the table tVal to determine what other tables/columns you can link to
+
+this.setState({opts: linkOptions(baseID,tval)})
+
+//opts will be:
+{[baseID + '/' + tVal]: [p1,p3]}//array of valid columns that could be backLinkCols
+NOTE: ALL data in the valid pVals listed will be overwritten, this API does not tell you which matches, only which ones COULD be used
+```
+#### Functions
+```
+//in your function config component
+import {fnOptions} from 'gundb-gbase'
+
+
+//You only need to know the baseID and the table tVal to determine what other tables/columns you can link to
+
+this.setState({opts: linkOptions(baseID,tval)})
+
+//opts will be:
+{[baseID + '/' + tVal + '/' + pVal]: true, //true if this is a link on the same table
+[baseID + '/' + tVal + '/' + pVal]: [baseID + '/' + tVal + '/' + pVal] // or it will be the second valid link for the reference in the string fn, so {key.value}
+}
+```
+
+
+
 // WIP VVVVVVVVV
 ____________________________________________
 

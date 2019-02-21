@@ -205,11 +205,61 @@ const makelinkColIdxs = (generateHeaderRow, linkColPvals) => (base, tval)=>{
     }
     return flaggedCols
 }
+const makelinkOptions = gb => (base,tval) =>{
+    let ts = {}
+    for (const t in gb[base].props) {
+        if(t !== tval){
+            const ps = gb[base].props[t].props;
+            let valid = true
+            let validCols = []
+            for (const p in ps) {
+                const ptype = ps[p].GBtype;
+                if (ptype === 'next') {
+                    valid = false
+                    break
+                }else if(ptype === 'string'){
+                    validCols.push(p)
+                }
+            }
+            if(valid){
+                ts[base+'/'+t] = validCols
+            }
+        }
+    }
+    return ts
+}
+const makefnOptions = gb => (base,tval,pval) =>{
+    let ts = {}
+    const ps = gb[base].props[tval].props;
+    for (const p in ps) {
+        let path =[base,tval,p].join('/')
+        const {GBtype,linksTo} = ps[p]
+        if (['prev','next'].includes(GBtype)){
+            let [lb,lt,lp] = linksTo.split('/')
+            let ltps = gb[lb].props[lt].props
+            ts[path] = []
+            for (const ltp in ltps) {
+                const {GBtype} = ltps[ltp];
+                let subPath = [lb,lt,ltp].join('/')
+                if (['function','string','number','boolean'].includes(GBtype)) {
+                    ts[path].push(subPath)  
+                }
+            }
+            valid = false
+            break
+        }else if(['function','string','number','boolean'].includes(GBtype)){
+            ts[path] = true
+        }
+    }
+    return ts
+}
 module.exports = {
     maketableToState,
     makerowToState,
     makebuildRoutes,
     makegenerateHeaderRow,
     makexformRowObjToArr,
-    makelinkColIdxs
+    makelinkColIdxs,
+    makelinkOptions,
+    makefnOptions
 }

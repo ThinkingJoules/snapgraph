@@ -130,7 +130,10 @@ const {maketableToState,
     makebuildRoutes,
     makegenerateHeaderRow,
     makexformRowObjToArr,
-    makelinkColIdxs} = require('../react_tables/to_state')
+    makelinkColIdxs,
+    makelinkOptions,
+    makefnOptions
+} = require('../react_tables/to_state')
 
 const generateHeaderRow = makegenerateHeaderRow(gb)
 const linkColIdxs = makelinkColIdxs(generateHeaderRow,linkColPvals)
@@ -138,7 +141,8 @@ const xformRowObjToArr = makexformRowObjToArr(findRowAlias)
 const tableToState = maketableToState(gb,vTable,subscribe,generateHeaderRow,linkColPvals,linkColIdxs, xformRowObjToArr)
 const rowToState = makerowToState(vTable,subscribe,generateHeaderRow,linkColPvals, xformRowObjToArr)
 const buildRoutes = makebuildRoutes(gb)
-
+const linkOptions = makelinkOptions(gb)
+const fnOptions = makefnOptions(gb)
 
 startGunConfigSubs()
 
@@ -1167,5 +1171,7 @@ module.exports = {
     rowToState,
     loadGBaseConfig,
     gbase,
-    gunToGbase    
+    gunToGbase,
+    linkOptions,
+    fnOptions  
 }

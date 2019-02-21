@@ -8,6 +8,8 @@ const {
         loadGBaseConfig,
         gbase,
         gunToGbase,
+        linkOptions,
+        fnOptions
         }=require('./gbase_core/core')
 
 
@@ -33,5 +35,7 @@ module.exports = {
     tableToState,
     rowToState,
     loadGBaseConfig,
-    gbase
+    gbase,
+    linkOptions,
+    fnOptions
 }
