@@ -239,6 +239,13 @@ import {linkOptions} from 'gundb-gbase'
 this.setState({opts: linkOptions(baseID,tval)})
 
 //opts will be:
+{t0:{
+  alias: 'T Name',
+  tval: t0,
+  columns: [{alias: 'Column Name', pval: p3, path: "B123/t0/p3"}, ...]
+  },....
+}
+
 {[baseID + '/' + tVal]: [p1,p3]}//array of valid columns that could be backLinkCols
 NOTE: ALL data in the valid pVals listed will be overwritten, this API does not tell you which matches, only which ones COULD be used
 ```
@@ -248,15 +255,22 @@ NOTE: ALL data in the valid pVals listed will be overwritten, this API does not 
 import {fnOptions, fnHelp} from 'gundb-gbase'
 
 
-//You only need to know the baseID and the table tVal to determine what other tables/columns you can link to
+//You only need to know the baseID and the table tVal to determine what other tables/columns you can use in your a fn.
 
-this.setState({opts: linkOptions(baseID,tval)})
+this.setState({opts: fnOptions(B123,t0)})
 
 //opts will be:
-{[baseID + '/' + tVal + '/' + pVal]: true, //true if this is a link on the same table
-[baseID + '/' + tVal + '/' + pVal]: [baseID + '/' + tVal + '/' + pVal] // or it will be the second valid link for the reference in the string fn, so {key.value}
+{t0:{//non link column on this table
+  alias: 'T Name',
+  tval: t0,
+  columns: [{alias: 'Column Name', pval: p3, path: "B123/t0/p3"}]
+  },
+  t2:{
+  alias: 'Other Name',
+  tval: t1,
+  columns: [{alias: 'Column Name 2', pval: p4, path: "B123/t0/p7.B123/t1/p4"}]
+  }
 }
-
 
 fnHelp(SUM) => [first element will be describing the aruments for that function, second element is an array of example usages]
 //['value 1, value 2, ...value n', ['SUM(1,1,2) => 4', 'SUM(-2,1,1) => 0' ]]

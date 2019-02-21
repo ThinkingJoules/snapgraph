@@ -214,7 +214,8 @@ const makelinkOptions = gb => (base,tval) =>{
             let validCols = []
             for (const p in props) {
                 const {alias, GBtype} = props[p];
-                let colObj = {alias}
+                let path = [base,t,p].join('/')
+                let colObj = {alias,path}
                 if (GBtype === 'next') {
                     valid = false
                     break
@@ -224,7 +225,7 @@ const makelinkOptions = gb => (base,tval) =>{
                 }
             }
             if(valid){
-                ts[t] = {alias,cols: validCols}
+                ts[t] = {alias,tval:t,columns: validCols}
             }
         }
     }
@@ -233,7 +234,7 @@ const makelinkOptions = gb => (base,tval) =>{
 const makefnOptions = gb => (base,tval,pval) =>{
     let ts = {}
     const {alias, props} = gb[base].props[tval]
-    ts[tval] = {alias,cols: []}
+    ts[tval] = {alias,columns: []}
     for (const p in props) {
         let path =[base,tval,p].join('/')
         const {alias, GBtype,linksTo} = props[p]
@@ -243,15 +244,16 @@ const makefnOptions = gb => (base,tval,pval) =>{
             for (const ltp in ltps.props) {
                 const {alias, GBtype} = ltps.props[ltp];
                 let subPath = [lb,lt,ltp].join('/')
+                let dotPath = [path, subPath].join('.')
                 if (['function','string','number','boolean'].includes(GBtype)) {
                     if(typeof ts[lt] !== 'object'){
-                        ts[lt] = {alias: ltps.alias, cols: []}
+                        ts[lt] = {alias: ltps.alias, tval:lt, columns: []}
                     }
-                    ts[lt].cols.push({alias, path:subPath,lp})  
+                    ts[lt].columns.push({alias, path:dotPath,pval:lp})  
                 }
             }
         }else if(['function','string','number','boolean'].includes(GBtype)){
-            ts[tval].cols.push({alias,path,pval})
+            ts[tval].columns.push({alias,path,pval})
         }
     }
     return ts
