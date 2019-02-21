@@ -284,15 +284,16 @@ const makevalidateData = gb =>(editThisPath, putObj, fromCascade)=>{//prunes spe
         let GBtype = getValue([args[0],'props', args[1], 'props', pval, 'GBtype'], gb)
         if(GBtype === undefined){
             let colname = getValue([args[0],'props', args[1], 'props', pval, 'alias'], gb)
-            return console.log('ERROR: Cannot find data type for column: '+ colname+'['+ pval+'].')
+            let err = 'Cannot find data type for column: '+ colname+'['+ pval+'].'
+            throw new Error(err)
         }
         let specials = {prev: 'string', next: 'string', transaction: 'string', tag: 'string'}
         if(specials[GBtype] === undefined){//root data type
             if(typeof value === GBtype || (fromCascade && GBtype === 'function')){
                 output[pval] = value
             }else{
-                console.log('ERROR: typeof '+ value + 'is not of type '+ GBtype)
-                return false
+                let err = 'typeof '+ value + ' is not of type '+ GBtype
+                throw new Error(err)
             }
         }
     }
@@ -325,24 +326,27 @@ const makecheckUniqueAlias = gb =>(pathArr, alias)=>{
         return true //base alias, those are not unique
     }
     if(things !== undefined){
-        if(endPath[0] !== 'r'){//base/table/col
+        if(endPath[0] === 'p'){//base/table/col
             for (const gbval in things) {
                 const configObj = things[gbval];
                 if (configObj && configObj.alias && configObj.alias === alias && gbval !== endPath) {
-                    throw new Error('Matching Alias found at:', gbval)
+                    let errmsg = 'Matching Alias found at: '+ gbval
+                    throw new Error(errmsg)
                 }
             }
         }else{//row
             for (const gbval in things) {
                 const rowAlias = things[gbval];
                 if (rowAlias && rowAlias === alias && gbval !== endPath) {
-                    throw new Error('Matching Alias found at:', gbval)
+                    let errmsg = 'Matching Alias found at: '+ gbval
+                    throw new Error(errmsg)
                 }
             }
         }
         return true
     }else{
-        throw new Error('Cannot find config data at path:', configPath)
+        let errmsg = 'Cannot find config data at path: ' + configPath
+        throw new Error(errmsg)
     }
 }
 const makecheckUniqueSortval = gb =>(pathArr, sortval)=>{
@@ -357,7 +361,8 @@ const makecheckUniqueSortval = gb =>(pathArr, sortval)=>{
             for (const gbval in things) {
                 const configObj = things[gbval];
                 if (configObj && configObj.sortval && configObj.sortval === sortval && gbval !== endPath) {
-                    throw new Error('Matching sortval found at:', gbval)
+                    let err = 'Matching sortval found at: '+ gbval
+                    throw new Error(err)
                 }
             }
         }else{//row
@@ -365,7 +370,8 @@ const makecheckUniqueSortval = gb =>(pathArr, sortval)=>{
         }
         return true
     }else{
-        throw new Error('Cannot find config data at path:', configPath)
+        let err = 'Cannot find config data at path: '+ configPath
+        throw new Error(err)
     }
 }
 const makefindNextID = gb => (path)=>{
@@ -386,7 +392,7 @@ const makenextSortval = gb => (path)=>{
     let nextSort = 0
     for (const key in curIDs) {
         const sortval = curIDs[key].sortval;
-        console.log(sortval, nextSort)
+        //console.log(sortval, nextSort)
         if(sortval && sortval >= nextSort){
             nextSort = sortval
         }
@@ -410,7 +416,8 @@ function convertValueToType(gb, value, newType, rowAlias){
     }else if(newType === 'number'){
         let num = value*1
         if(isNaN(num)){
-            throw new Error('Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to a number. Fix and try again')
+            let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to a number. Fix and try again'
+            throw new Error(err)
         }else{
             out = num
         }
@@ -423,7 +430,8 @@ function convertValueToType(gb, value, newType, rowAlias){
         }else if (truthy.includes(value)){//truthy strings
             out = true
         }else{
-            throw new Error('Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to boolean. enter true or false or 0 for false or 1 for true')
+            let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to boolean. enter true or false or 0 for false or 1 for true'
+            throw new Error(err)
         }
     }else{
         throw new Error('Can only attempt to conver value to "string", "number", or "boolean" using this function')

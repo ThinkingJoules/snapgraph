@@ -18,7 +18,7 @@ const makesolve = getLinks =>function solve(rowID, eq, tries){
                 return null
             }
         }else{
-            console.log(linksResolved)
+            //console.log(linksResolved)
             logicResolved = evaluateAllFN(linksResolved)
             let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(logicResolved);
             if(!containsInvalidChars){
@@ -377,7 +377,8 @@ function evaluateAllFN(FNstr){
         return FNstr
     }
     if(!gfn[match[0]]){
-        throw new Error('Invalid Function: '+ match[0])
+        let err = 'Invalid Function: '+ match[0]
+        throw new Error(err)
     }
     let find = findFN(FNstr, match.index)
     let argsArr = findFNArgs(find)
@@ -533,7 +534,8 @@ function parseTruthStr(TFstr, compType){
     }
     let tok = Object.keys(found)
     if(tok.length !== 1){
-       throw new Error('Too many comparisons in comparison block: '+ TFstr)
+        let err = 'Too many comparisons in comparison block: '+ TFstr
+        throw new Error(err)
     }
     if(compType === 'string'){
         let first = str.slice(0,found[tok[0]]-1)
@@ -551,7 +553,8 @@ function parseTruthStr(TFstr, compType){
                 return false
             }
         }else{
-            throw new Error('String Comparators can only be "=" or "!="; '+ tok[0] +' is not valid.')
+            let err = 'String Comparators can only be "=" or "!="; '+ tok[0] +' is not valid.'
+            throw new Error(err)
         }
     }else{//number
         str = str.slice(0,found[tok[0]])+')'+tok[0]+'('+str.slice(found[tok[0]]+ tok[0].length, str.length)
@@ -592,7 +595,8 @@ const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
             try{
                 summation = fnPattern.exec(fnString)[0]                
             }catch(e){
-                throw new Error('Cannot find summation function on link multiple field:', links[0])
+                let err = 'Cannot find summation function on link multiple field: '+ links[0]
+                throw new Error(err)
             }
             if(valueType === 'next' && summation !== 'JOIN'){
                 throw new Error('"next" Column can only be summarized with a "JOIN()" function')
@@ -601,7 +605,8 @@ const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
             let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
             summation = fnPattern.exec(fnString)[0]
             if(summation !== null && !nextLinkFNs.includes(summation)){
-                throw new Error('"next" with {linkMultiple: false} can only be used in: '+nextLinkFNs.join(', ')+ ' Functions')
+                let err = '"next" with {linkMultiple: false} can only be used in: '+nextLinkFNs.join(', ')+ ' Functions'
+                throw new Error(err)
             }
 
         }
@@ -634,9 +639,11 @@ const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
             }
         }
         if(badFN && nextUsed){
-            throw new Error('Cannot do math if a next column is referenced in the equation, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed')
+            let err = 'Cannot do math if a next column is referenced in the equation, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed'
+            throw new Error(err)
         }else{
-            throw new Error('Cannot do math in the first column, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed')
+            let err = 'Cannot do math in the first column, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed'
+            throw new Error(err)
         }
     }
     return true
@@ -662,7 +669,8 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
                 summationargs = findFNArgs(replace) // was findFNArgs(summation)
                 
             }catch(e){
-                throw new Error('Cannot find summation function on link multiple field:', links[0])
+                let err = 'Cannot find summation function on link multiple field: '+ links[0]
+                throw new Error(err)
             }
             if(!gRollup.includes(summation)){
                 throw new Error('Invalid summation function for link multiple')
@@ -758,7 +766,7 @@ const makegetLinks = (gb,initialParseLinks, getCell, getColumnType) => function 
                             pathInfo.value = pathInfo.data
                             pathInfo.done = true
                         }else{
-                            console.log(pathInfo)
+                            //console.log(pathInfo)
                             pathInfo.value = convertValueToType(gb,pathInfo.data, pathInfo.valueType, pathInfo.links[0])
                             pathInfo.done = true
                         }

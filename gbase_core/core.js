@@ -92,7 +92,7 @@ const {makenewBase,
 let newBase
 let newTable
 let newColumn
-const newRow = makenewRow(checkUniqueAlias)
+let newRow
 let linkColumnTo
 let config
 let edit
@@ -157,6 +157,7 @@ const gunToGbase = gunInstance =>{
     newTable = makenewTable(gun,findNextID,nextSortval)
     newColumn = makenewColumn(gun,findNextID,nextSortval)
     edit = makeedit(gun,gb,validateData,handleRowEditUndo,cascade)
+    newRow = makenewRow(checkUniqueAlias,edit)
     importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain)
     handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
     handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve,verifyLinksAndFNs)
@@ -570,7 +571,7 @@ function loadRowPropToCache(path, pval){
 function getRow(path, colArr, inc){
     //path should be base/tval/rowid
     //colArr should be array of pvals requested
-    console.log('getting row: '+ path)
+    //console.log('getting row: '+ path)
     let [base,tval,rowid] = path.split('/')
     let cpath = cachePathFromChainPath(path)
     let fullObj = false
@@ -581,7 +582,7 @@ function getRow(path, colArr, inc){
         colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
         fullObj = true
     }
-    console.log('getting row: '+ path + ' with properties:', colArr)
+    //console.log('getting row: '+ path + ' with properties:', colArr)
     for (let i = 0; i < colArr.length; i++) {//setup subs if needed
         const pval = colArr[i];
         let colPath = [base, tval, pval, path]
@@ -614,7 +615,7 @@ function getRow(path, colArr, inc){
             return partialObj
         }
     }else{
-        return console.log('ERROR: Could not retrieve data')
+        throw new Error('Could not retrieve data from cache after 10 tries')
     }
 }
 function requestInitialData(path, colArr, reqType){
@@ -693,74 +694,77 @@ function requestInitialData(path, colArr, reqType){
 
 //CASCADE
 function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
-    inc = inc || 0
-    console.log('cascading:', rowID, pval, inc)
-    let [base,tval,r] = rowID.split('/')
-    let maxTries = 5
-    let colconfig = getValue([base,'props',tval,'props',pval], gb)
-    let usedIn = colconfig.usedIn
-    let colType = colconfig.GBtype
-    if(colconfig === undefined || colType === 'prev' || colType === 'next' || usedIn.length === 0){return false}
-    if(inc === maxTries){throw new Error('Could not load all dependencies for: '+ rowID)}
-    let linkCol
-    let linkColInfo
-    let links
-    let usedInFN = {}
-    let missingData = false
-    let checkData = {}
-    //get links
-    for (let i = 0; i < usedIn.length; i++) {
-        const path = usedIn[i];
-        [linkCol,linkColInfo] = findLinkingCol(gb,rowID,path)
-        if(linkCol === undefined){throw new Error('Cannot resolve "usedIn" reference')}
-        if(linkColInfo.GBtype === 'function'){
-            checkData[path] = getLinks(rowID,linkColInfo.fn)
-            usedInFN[path] = {rows: rowID, fn: linkColInfo.fn}
-        }else{
-            console.log(rowID, linkCol)
-            let links = getCell(rowID, linkCol)
-            checkData[path] = links
-            usedInFN[path] = {rows: links, fn: linkColInfo.fn}
+    try{
+        inc = inc || 0
+        console.log('cascading:', rowID, pval, inc)
+        let [base,tval,r] = rowID.split('/')
+        let maxTries = 5
+        let colconfig = getValue([base,'props',tval,'props',pval], gb)
+        let usedIn = colconfig.usedIn
+        let colType = colconfig.GBtype
+        if(colconfig === undefined || colType === 'prev' || colType === 'next' || usedIn.length === 0){return false}
+        if(inc === maxTries){
+            let err = 'Could not load all dependencies for: '+ rowID
+            throw new Error(err)
         }
-        if(checkData[path] === undefined){
-            missingData = true
-        }
-    }
-    if(missingData){//need getCell to resolve before moving on
-        console.log('first',inc,usedInFN)
-        inc ++
-        setTimeout(cascade,500,rowID,pval,inc)
-        return
-    }
-    for (const upath in usedInFN) {
-        const {rows, fn} = usedInFN[upath];
-        for (let i = 0; i < rows.length; i++) {
-            const rowid = rows[i];
-            let check = getLinks(rowid,fn)
-            if(check === undefined){
+        let linkCol
+        let linkColInfo
+        let usedInFN = {}
+        let missingData = false
+        let checkData = {}
+        //get links
+        for (let i = 0; i < usedIn.length; i++) {
+            const path = usedIn[i];
+            [linkCol,linkColInfo] = findLinkingCol(gb,rowID,path)
+            if(linkCol === undefined){throw new Error('Cannot resolve "usedIn" reference')}
+            if(linkColInfo.GBtype === 'function'){
+                checkData[path] = getLinks(rowID,linkColInfo.fn)
+                usedInFN[path] = {rows: rowID, fn: linkColInfo.fn}
+            }else{
+                let links = getCell(rowID, linkCol)
+                checkData[path] = links
+                usedInFN[path] = {rows: links, fn: linkColInfo.fn}
+            }
+            if(checkData[path] === undefined){
                 missingData = true
             }
         }
-    }
-    if(missingData){
-        console.log('second',inc,usedInFN)
-        inc ++
-        setTimeout(cascade,500,rowID,pval,inc)
-        return
-    }
-    console.log('have everything')
-    //if this far, all data is in cache for solve to work on first try
-    for (const upath in usedInFN) {
-        const {rows, fn} = usedInFN[upath];
-        let [ubase,utval,upval] = upath.split('/')
-        for (let i = 0; i < rows.length; i++) {
-            const rowid = rows[i];
-            let fnresult = solve(rowid,fn)
-            console.log(rowID, ' >>> result for >>> ' + rowid +': ', fnresult)
-            let call = edit(rowid,false,false,false,true)
-            call({[upval]: fnresult})//edit will call cascade if needed
+        if(missingData){//need getCell to resolve before moving on
+            //console.log('first',inc,usedInFN)
+            inc ++
+            setTimeout(cascade,500,rowID,pval,inc)
+            return
         }
-        
+        for (const upath in usedInFN) {
+            const {rows, fn} = usedInFN[upath];
+            for (let i = 0; i < rows.length; i++) {
+                const rowid = rows[i];
+                let check = getLinks(rowid,fn)
+                if(check === undefined){
+                    missingData = true
+                }
+            }
+        }
+        if(missingData){
+            //console.log('second',inc,usedInFN)
+            inc ++
+            setTimeout(cascade,500,rowID,pval,inc)
+            return
+        }
+        //if this far, all data is in cache for solve to work on first try
+        for (const upath in usedInFN) {
+            const {rows, fn} = usedInFN[upath];
+            let [ubase,utval,upval] = upath.split('/')
+            for (let i = 0; i < rows.length; i++) {
+                const rowid = rows[i];
+                let fnresult = solve(rowid,fn)
+                console.log(rowID, ' >>> result for >>> ' + rowid +': ', fnresult)
+                let call = edit(rowid,false,false,false,true)
+                call({[upval]: fnresult})//edit will call cascade if needed
+            }
+        }
+    }catch(e){
+        console.log(e)
     }
 }
 

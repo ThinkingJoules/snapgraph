@@ -44,16 +44,20 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
             const tTypeof = typeof testObj[key];
             const vTypeof = typeof validObj[key]
             if(vTypeof === null && !nullValids[tTypeof]){//wildcard check
-                throw new Error('typeof value must be one of:', nullValids)
+                let err = 'typeof value must be one of: '+ nullValids
+                throw new Error(err)
             }else if(vTypeof !== tTypeof){
-                throw new Error(vTypeof+ ' !== '+ tTypeof)
+                let err = vTypeof+ ' !== '+ tTypeof
+                throw new Error(err)
             }
             if(key === 'GBtype' && validGBtypes[testObj[key]] === undefined ){//type check the column data type
-                throw new Error('GBtype does not match one of:', Object.keys(validGBtypes))
+                let err = 'GBtype does not match one of: '+ Object.keys(validGBtypes).join(', ')
+                throw new Error(err)
             }
             return true
         }else{
-            throw new Error(key + ' does not match valid keys of:', Object.keys(validObj))
+            let err = key + ' does not match valid keys of: '+ Object.keys(validObj).join(', ')
+            throw new Error(err)
         }
     }    
 }
@@ -210,11 +214,12 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
                 }
                 handleLinkColumn(path, configObj, backLinkCol,cb) 
             }else{
-                return console.log('ERROR: config({linksTo: '+configObj.linksTo+' } is either not defined or invalid')
+                let err = 'config({linksTo: '+configObj.linksTo+' } is either not defined or invalid'
+                throw new Error(err)
             }            
         }else if (newType === 'function'){//parse equation and store
             let fn = configObj.fn
-            if(!fn){return console.log('ERROR: Must specify a function')}
+            if(!fn){throw new Error('Must specify a function')}
             //check equation for valididty? balanced () and only one comparison per comma block?
             basicFNvalidity(fn)
             handleFNColumn(path, configObj, backLinkCol ,true,cb) //initial change to fn column         
@@ -312,12 +317,13 @@ function checkForCirc(gb, origpath, checkpathArr){//see if add this function wil
     for (let i = 0; i < checkpathArr.length; i++) {
         const path = checkpathArr[i];
         if(collector.includes(path)){
-            throw new Error('Adding this function will create a cirular reference through: '+ path)
+            let err = 'Adding this function will create a cirular reference through: '+ path
+            throw new Error(err)
         }
     }
     return true
 }
-const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve,verifyLinksAndFNs) => function handlefn(path,configObj,cb){
+const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve,verifyLinksAndFNs) => function handlefncol(path,configObj,cb){
     //parse equation for all links
     try{
         let [base,tval,pval] = path.split('/')
@@ -327,7 +333,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         let thisColConfigSoul = configSoulFromChainPath(path)
         let fn = configObj.fn
         let oldfn = thisColConfig.fn
-        let checkLinks = verifyLinksAndFNs(path,fn)
+        verifyLinksAndFNs(path,fn)
         let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
         let links = []
         let checkmatch
@@ -347,8 +353,6 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
             usedInLinks.push(link)
         }
         checkForCirc(gb,path,usedInLinks)
-        if(!checkLinks){throw new Error('FN has a problem, not sure how it got here')}
-
         let oldLinksTo = []
         let newLinksTo = []
         let match
@@ -398,7 +402,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         let data = getValue([base,tval,pval], cache)
         if(!inMemory){
             //console.log(data)
-            setTimeout(handlefn,1000,path,configObj,cb)
+            setTimeout(handlefncol,1000,path,configObj,cb)
             return
         }else{
             for (const rowid in data) {
@@ -431,6 +435,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
             cb.call(this,undefined)
         }
     }catch(e){
+        console.log(e)
         cb.call(this, e)
         return
     }
@@ -473,7 +478,8 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
 
         if(Object.keys(data).length === 0){
             handleNewLinkColumn(prevConfig, nextConfig)
-            return console.log('No data to convert, config updated')
+            console.log('No data to convert, config updated')
+            cb.call(this,undefined)
         }
         let putObj = {}
         let nextObj = {}
@@ -494,7 +500,8 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
                         nextObj[linkGBID][GBID] = true
                     }else{
                         if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
-                            return console.log('LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable)
+                            let err = 'LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable
+                            throw new Error(err)
                         }
                         if(!putObj[GBID]){putObj[GBID] = {}}
                     }
