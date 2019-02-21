@@ -4,7 +4,7 @@ const{getValue,checkConfig, configPathFromChainPath, findID, findRowID, tsvJSONg
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, tname, pname, baseID) =>{
     if(baseID === undefined){
-        baseID = 'B' + Gun.text.random(4)   
+        baseID = 'B' + Gun.text.random(8)   
     }
     gun.get('GBase').put({[baseID]: true})
     gun.get(baseID + '/config').put(newBaseConfig({alias}))
@@ -289,7 +289,7 @@ const makeretrieve = gb => (path) => (colArr) =>{//not acutally working, unsure 
     return getRow(path, columns, 0)
 
 }
-const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function thisfn(property, gbaseGetRow, cb){
+const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function linkrowto(property, gbaseGetRow, cb){
     try{
         //gbaseGetRow = gbase[base][tval][rowID]
         let [base,tval,r] = path.split('/')
@@ -337,7 +337,7 @@ const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function thisfn(p
         if(!prevCol.lm){//link single, check for no current links
             let links = getCell(prevCol.path, pval)
             if(links === undefined){
-                setTimeout(thisfn,100,property,gbaseGetRow, cb)
+                setTimeout(linkrowto,100,property,gbaseGetRow, cb)
                 return false
             }else if(links.length !== 0){
                 throw new Error('Cannot link another row, as the column settings only allow a single link')
@@ -352,7 +352,7 @@ const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function thisfn(p
         cb.call(this, e)
     }
 }
-const makeunlinkRow = (gun, gb) => (path, byAlias) => function thisfn(property, gbaseGetRow, cb){
+const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(property, gbaseGetRow, cb){
     try{
         //gbaseGetRow = gbase[base][tval][rowID]
         let [base,tval,r] = path.split('/')

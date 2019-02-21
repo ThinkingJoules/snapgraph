@@ -253,7 +253,7 @@ const makefnOptions = gb => (base,tval,pval) =>{
                 }
             }
         }else if(['function','string','number','boolean'].includes(GBtype)){
-            ts[tval].columns.push({alias,path,pval})
+            ts[tval].columns.push({alias,path,pval:p})
         }
     }
     return ts

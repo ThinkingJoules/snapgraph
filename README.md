@@ -9,6 +9,8 @@ The row ID will be the value in the lefthand most column. It has to be unique bu
 
 This has a few API's that make it easier to use in react to build dynamic tables and pages, but this module is mostly focused around building a simple table creation and query API and can be used with any front end you would like.
 
+[API Docs](#api-docs)
+
 
 # Example Usage
 
@@ -54,7 +56,7 @@ gbase[BaseID][tval][pval].config({alias: 'New Column Name'})//Table Name
 ```
 baseParams & tableParams = {alias: 'string', sortval: 0, vis: true, archived: false, deleted: false}
 
-columnParams = {alias: 'string', sortval: 0, vis: true, archived: false, deleted: false, required: false, default: false}//default would be a default value if value was not given on new row creation.
+columnParams = {alias: 'string', sortval: 0, vis: true, archived: false, deleted: false, required: false, default: null}//default would be a default value if value was not given on new row creation.
 ```
 ## Adding Tables/Columns/Rows
 The same chaining concepts apply from above:
@@ -88,7 +90,7 @@ gbase[BaseID]['Table Name']['Column Name'].linkColumnTo(gbase[BaseID]['Other Tab
 //back link column specified (gbase will overwrite all data in 'Back Links' column)
 gbase[BaseID]['Table Name']['Column Name'].linkColumnTo(gbase[BaseID]['Other Table']['Back Links'])
 
-//You can also link columns through the config API, but it is not recommended.
+//You can't link columns through the config API any longer.
 
 ```
 To change it to string simply:
@@ -110,7 +112,7 @@ gbase[BaseID]['Table Name']['Specific Row'].unlinkRow('Column', gbase[BaseID]['O
 Note: If the column is specifed in the config as `{linkMultiple: false}` then `.linkRowTo()` will throw an error if you attempt to link more than one entry to that column at a time.
 
 ## Functions and derived data
-GBase supports functions that can pull data from one layer down and do math and put the result in the specified column.
+GBase supports functions that can pull data from one layer down (or above) and do math and put the result in the column specified with the function.
 ```
 let baseID = b123
 let userFN = 'SUM({b123/t3/p2},{b123/t3/p4}) * {b123/t3/p6.b123/t5/p1}'
@@ -124,14 +126,22 @@ SUM(2,2) * 3
 4 * 3
 = 12
 *note how functions are resolved before normal order of operations.
+
+Could also be written:
+let userFN = '{b123/t3/p2} + {b123/t3/p4} * {b123/t3/p6.b123/t5/p1}'
+userFN would resolve to:
+2 + 2 * 3
+2 + 6
+= 8
 ```
 All references must be wrapped in curly braces. The references must be in the format: '{' + baseID + '/' + tValue + '/' + pValue + '}'
 If you are referencing a value on another table, seperate the '/' seperated address with a '.' so: {ref1.ref2} reference 1 must be a link column on your current table, ref2 must be a column that will resolve to a value (or another function column, it cannot be another link).
 
-If your referenced column is a `{linkMultiple: true}` column, you MUST wrap the curly braces in a summary function. Current valid functions are: SUM, MAX, MIN, AVG, AND, OR, COUNT, COUNTALL, JOIN
+If your referenced column is a `{linkMultiple: true}` column, you MUST wrap the curly braces in a summary function. Current valid functions are: SUM, MULTIPLY, MAX, MIN, AVG, AND, OR, COUNT, COUNTALL, JOIN
 JOIN is the only function that takes one argument before the reference, the seperator. Like:
 ```
 'JOIN("-",{b123/t3/p6.b123/t5/p1})'
+//note: whitespace is only preserved if it is within quotes " "
 ```
 Functions are completed in this order:  
 * {} references are resolved to values
@@ -298,8 +308,28 @@ These are terms from linked lists. 'next' is going to move you away from root da
 
 
 
-# API Docs
+# **API Docs**
+* [newBase](#newBase)
+
 ### Gun.Chain API
+Only a single function is attached to the gun chain. It is used to load your gun instance in to GBase:
+```
+gun.gbase(gun)
+```
+## **gbase Chain**
+________
+### newBase
+**newBase(*baseName*, *tableName*, *firstColumnName*, *baseID*)**  
+All arguments are optional. Defaults are:  
+`baseName = 'New Base'`  
+`tableName = 'New Table'`  
+`firstColumnName = 'New Column'`  
+`baseID = 'B' + Gun.text.random(8)`//'B' + Random 8 Digit alphanumeric
+
+Example usage:
+```
+gbase.newBase('ACME Inc.','Customers','Customer ID')
+```
 
 
 
