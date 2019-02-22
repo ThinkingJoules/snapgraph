@@ -310,7 +310,7 @@ These are terms from linked lists. 'next' is going to move you away from root da
 
 # **API Docs**
 * [newBase](#newBase)
-
+* [newTable](#newTable)
 ### Gun.Chain API
 Only a single function is attached to the gun chain. It is used to load your gun instance in to GBase:
 ```
@@ -328,20 +328,91 @@ All arguments are optional. Defaults are:
 
 Example usage:
 ```
-gbase.newBase('ACME Inc.','Customers','Customer ID')
+gbase.newBase('ACME Inc.','Customers','Customer ID', "B123")
+//returns: baseID
+
 ```
+_________
+### newTable
+**newTable(*tableName*, *firstColumnName*)**  
+All arguments are optional. Defaults are:  
+`tableName = 'New Table'`  
+`firstColumnName = 'New Column'`  
+Note: An error will be thrown if the tableName is not unique for the base.
+Example usage:
+```
+//assume: 'ACME Inc.' has a baseID = "B123"
+gbase['ACME Inc.'].newTable('Items','Part Number')
+gbase.B123.newTable('Items','Part Number')
+//returns: new table's tval || error object
+//these two call are the same.
+```
+[baseID, tval? Read here](#gbase-vocab)
+_________
+### newColumn
+**newColumn(*firstColumnName*)**  
+All arguments are optional. Defaults are:  
+`firstColumnName = 'New Column'`  
+Note: An error will be thrown if the firstColumnName is not unique for the base.
+Example usage:
+```
+//assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "t0"
+gbase['ACME Inc.']['Items'].newColumn('Vendor')
+gbase.B123.t0.newColumn('Vendor')
+//returns: new columns's pval || error object
+//these two call are the same.
+```
+[baseID, t0, pval? Read here](#gbase-vocab)
+_________
+### newRow
+**newRow(*\*rowAlias*, *dataObj*, *cb*)**  
+rowAlias is required, others are optional   
+`dataObj = {Column Alias || pval: value} `  
+`cb = Function(err, value)`  
+Note: An empty row will be created if only the rowAlias is supplied
+Example usage:
+```
+//assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "t0"
+gbase['ACME Inc.']['Items'].newRow('8522761755')
+gbase.B123.t0.newRow('8522761755')
+--With Data--
+//assume column 'Vendor' = 'p1'
+gbase['ACME Inc.']['Items'].newRow('8522761755',{Vendor: 'Supply Store'})
+gbase.B123.t0.newRow('8522761755',{Vendor: 'Supply Store'})
+gbase.B123.t0.newRow('8522761755',{p1: 'Supply Store'})
+//all the same call
+--With Data and CB--
+gbase.B123.t0.newRow('8522761755',{p1: 'Supply Store'}, (err,value) =>{
+  if(err){//err will be falsy (undefined || false) if no error
+    //value = undefined
+    //handle err
+  }else{
+    //err = falsy
+    //value will return the new row's rowID
+  }
+})
+//returns: new columns's pval || error object
+//these two call are the same.
+```
+[rowID, rowAlias? Read here](#gbase-vocab)
+
+Edit
+
+Subscribe
+
+configs...
 
 
-
-* **gun.archive()**
-  
-
-* **gun.unarchive()**
-  
-* **gun.delete()**
-  
-
-#
+# GBase Vocab
+GBase has many concepts that are referenced in the docs. Here are some definitions:
+* **baseID**: The uuid/identifier of the base
+* **tval**: The GBase internal identifier for the table. For the first table create it is `t0`, second table created is `t1`, and so on.
+* **pval**: same as tval, except for the columns (table **p**roperties).
+* **rowID**: like t or pval, except for the row. rowID will have the complete path of it's location: `"B123/t0/r123"`. Rows are basically an instance of the table.
+* **rowAlias**: This is the human name for the rowID (just like how rows and columns are aliased). For example if you had a table called 'Items' and it's key column (`p0`) is labeled 'SKU' then: `"B123/t0/r123" = "8522761755"
+* **path**: path is basically like the rowID, but can be applied at any level. For a table: `"B123/t0"`. For a column: `"B123/t0/p0"`. If you wanted to specify a specify column/property on a row: `"B123/t0/r123/p3"`. << This is not really used in the gbase.chain API. Might be used for imported non-chain helper functions.
+* **prev**: This is part of how the linking is conceptualized. `"prev"` (short for 'previous') is basically a link to more data that you MUST follow to resolve the current row (object) you are viewing. GBase linking API does not handle 'many to many' relationships as 'links'. 'many to many' can be done through the tagging or a 'transactional' table API's.
+* **next**: Opposite of 'prev'. This is stored on each row, and contains all items that depend on this item to resolve. So for functions, if a change happens on something that has a next, it will have to go 'up' a level and update any dependent data that was changed below (and so on up through the links until there are changes that are effecting values 'above' it.)
 
 ### FAQs
 Will fill this out as I receive feedback.

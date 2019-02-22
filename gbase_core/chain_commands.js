@@ -14,21 +14,31 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
     gun.get(baseID + '/t').put({t0: true})
     return baseID
 }
-const makenewTable = (gun, findNextID, nextSortval) => (path) => (tname, pname)=>{
-    let nextT = findNextID(path)
-    let tconfig = newTableConfig({alias: tname, sortval: nextSortval(path)})
-    let pconfig = newColumnConfig({alias: pname})
-    gun.get(path + '/' + nextT + '/config').put(tconfig)
-    gun.get(path + '/' + nextT + '/r/p0/config').put(pconfig)
-    gun.get(path + '/t').put({[nextT]: true})
-    gun.get(path + '/' + nextT + '/r/p').put({p0: true})
-    return nextT
-}
-const makenewColumn = (gun, findNextID, nextSortval) => (path) => (pname, type)=>{
+const makenewTable = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) => (tname, pname)=>{
     try{
+        let cpath = configPathFromChainPath(path)
+        let nextT = findNextID(path)
+        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(path)})
+        checkConfig(newTableConfig(), tconfig)
+        checkUniqueAlias(cpath, tconfig.alias)
+        let pconfig = newColumnConfig({alias: pname})
+        gun.get(path + '/' + nextT + '/config').put(tconfig)
+        gun.get(path + '/' + nextT + '/r/p0/config').put(pconfig)
+        gun.get(path + '/t').put({[nextT]: true})
+        gun.get(path + '/' + nextT + '/r/p').put({p0: true})
+        return nextT
+    }catch(e){
+        console.log(e)
+        return e
+    }
+}
+const makenewColumn = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) => (pname, type)=>{
+    try{
+        let cpath = configPathFromChainPath(path)
         let nextP = findNextID(path)
         let pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(path)})
         checkConfig(newColumnConfig(), pconfig)
+        checkUniqueAlias(cpath,pconfig.alias)
         gun.get(path + '/r/' + nextP + '/config').put(pconfig)
         gun.get(path + '/r/p').put({[nextP]: true})
         return nextP
@@ -163,7 +173,7 @@ const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAli
                 gun.get(colSoul).get(path).put(newAlias)
             }         
         }
-        cb.call(this, undefined)
+        cb.call(this, false, path)
 
         handleRowEditUndo(path,validatedObj)
     }catch (e){

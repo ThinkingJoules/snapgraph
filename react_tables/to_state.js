@@ -231,7 +231,7 @@ const makelinkOptions = gb => (base,tval) =>{
     }
     return ts
 }
-const makefnOptions = gb => (base,tval,pval) =>{
+const makefnOptions = gb => (base,tval) =>{
     let ts = {}
     const {alias, props} = gb[base].props[tval]
     let talias = alias
