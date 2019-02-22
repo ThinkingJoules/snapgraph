@@ -498,14 +498,17 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
                         if(!putObj[GBID]){putObj[GBID] = {}}
                         putObj[GBID][linkGBID] = true
                         nextObj[linkGBID][GBID] = true
-                    }else{
+                    }else if(HID !== 'null'){
                         if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
                             let err = 'LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable
                             throw new Error(err)
                         }
                         if(!putObj[GBID]){putObj[GBID] = {}}
+                    }else{
+                        if(!putObj[GBID]){
+                            putObj[GBID] = {}
+                        }
                     }
-                    
                 }
             }
         }
