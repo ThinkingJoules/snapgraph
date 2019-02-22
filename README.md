@@ -309,8 +309,34 @@ These are terms from linked lists. 'next' is going to move you away from root da
 
 
 # **API Docs**
+### GBase Chain API
+Basic APIs
 * [newBase](#newBase)
 * [newTable](#newTable)
+* [newColumn](#newColumn)
+* [newRow](#newRow)
+* [edit](#edit)
+* [subscribe](#subscibe)
+* [clearColumn](#clearColumn)
+
+Config APIs
+* [config](#config)
+* [linkColumnTo](#linkColumnTo)
+* [linkRowTo](#linkRowTo)
+* [unlinkRow](#unlinkRow)
+
+Import APIs
+* [importNewTable](#importNewTable)
+* [importData](#importData)
+
+Non-chain helper APIs
+
+
+
+
+
+
+
 ### Gun.Chain API
 Only a single function is attached to the gun chain. It is used to load your gun instance in to GBase:
 ```
@@ -391,16 +417,107 @@ gbase.B123.t0.newRow('8522761755',{p1: 'Supply Store'}, (err,value) =>{
     //value will return the new row's rowID
   }
 })
-//returns: new columns's pval || error object
-//these two call are the same.
 ```
 [rowID, rowAlias? Read here](#gbase-vocab)
 
-Edit
+_________
+### edit
+**edit(*\*dataObj*, *cb*)**  
+dataObj is required, others are optional   
+`dataObj = {Column Alias || pval: value} `  
+`cb = Function(err, value)`  
+Note: If you try to edit a function or link column, those values will be stripped out of your dataObj before putting data in to the database.
+Example usage:
+```
+//assume:
+'ACME Inc.'= "B123"
+'Items' = 't0'
+'Vendor' = 'p1'
+'8522761755' = 'B123/t0/r123'
 
-Subscribe
+gbase['ACME Inc.']['Items']['8522761755'].edit({p1: 'Anvils 'r Us'})
+gbase.B123.t0['B123/t0/r123'].edit({p1: 'Anvils 'r Us'})
+gbase['ACME Inc.']['Items']['8522761755'].edit({'Vendor': 'Anvils 'r Us'})
+gbase.B123.t0['B123/t0/r123'].edit({'Vendor': 'Anvils 'r Us'})
+//all the same call
+
+--With Data and CB--
+gbase['ACME Inc.']['Items']['8522761755'].edit({'Vendor': 'Anvils 'r Us'}, (err,value) =>{
+  if(err){//err will be falsy (undefined || false) if no error
+    //value = undefined
+    //handle err
+  }else{
+    //err = falsy
+    //value will return truthy if successful
+  }
+})
+```
+[t0, p1? Read here to understand the terminology used.](#gbase-vocab)
+_________
+### subscribe
+**subscribe(*\*callBack*, *colArr*, *onlyVisible*, *notArchived*, *udSubID*)**  
+callBack is required, others are optional Defaults:  
+`callBack = Function(changesObj) `  
+`colArr = Default is all columns that meet 'onlyVisible' and 'notArchived' settings`  
+`onlyVisible = true`  
+`notArchived = true`  
+`udSubID = undefined // will create an ID`  
+The defaults basically will give you all columns that are not hidden and active (not Archived).
+
+Subscribe will fire the callback with only the **changed** data for your given subsciptions. So if you limited your subscriptions to a couple columns and a change happens on a different column than what you specified your callBack will not fire.
+
+The *`udSubID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This is used in the React API's to allow a single component to setup multiple subscriptions, and 'watch' the correct subscriptions when a different 'table' is loaded. `tableToState` & `rowToState` are basically wrappers on `subscribe()`.
+
+Data loading and the callBack: Depending on the state of the database and how much data is already loaded the callBack will fire immediately with what data it already has in memory (the 'p0' column is loaded all the time since it is needed for the configuration and aliasing). After the first data (probably incomplete) the callBack will fire again when the rest of the data is in memory. After that, when any changes happen those will arrive in memory and subsequently fire the callback.
+
+Example usage:
+```
+//assume:
+'ACME Inc.'= "B123"
+'Items' = 't0'
+'Vendor' = 'p1'
+'Weight' = 'p2'
+'8522761755' = 'B123/t0/r123'
+
+--Row Subsciption--
+gbase['ACME Inc.']['Items']['8522761755'].subscribe(function(data){
+  //data = {p0: '8522761755', p1: 'Anvils 'r Us', p2: 10}
+})
+
+--Table Subscription--
+gbase['ACME Inc.']['Items'].subscribe(function(data){
+  //data = {'B123/t0/r123': {p0: '8522761755', p1: 'Anvils 'r Us', p2: 10}}
+})
+
+--Column Subscription--
+gbase['ACME Inc.']['Items']['Vendor'].subscribe(function(data){
+  //data = {'B123/t0/r123': 'Anvils 'r Us'}
+})
+
+--Table Subscription w/colArr & error handling--
+//works the same for a row subscription
+let err = gbase['ACME Inc.']['Items'].subscribe(function(data){
+  //data = {'B123/t0/r123': {p1: 'Anvils 'r Us', p2: 10}}
+}, ['p1','p2'])
+
+if(err){
+  //handle Error
+}
+
+
+Note: The chain function call will return undefined || error if it failed to setup the subscription.
+```
+[Read here to understand the terminology used.](#gbase-vocab)
+
 
 configs...
+
+
+
+
+### GBase Helper Functions
+
+
 
 
 # GBase Vocab

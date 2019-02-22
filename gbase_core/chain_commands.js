@@ -117,6 +117,8 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
     }
 }
 const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =>{
+    const c = () => {}
+    cb = cb || c
     try{
         handleConfigChange(configObj, path, backLinkCol,cb)
     }catch(e){
@@ -127,6 +129,8 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
 }
 const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
     try{
+        const c = () => {}
+        cb = cb || c
         newRow = (newRow) ? true : false
         //let aliasCol = (byAlias) ? true : false
         let args = path.split('/')
@@ -211,16 +215,12 @@ const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, col
             if(colArr){// check for pvals already, or attemept to convert col array to pvals
                 for (let j = 0; j < colArr.length; j++) {
                     const col = colArr[j];
-                    if(col[0] === 'p' && col.slice(1)*1 > -1){//if col is 'p' + [any number] then already pval
-                        columns.push(col)
+                    let pval = findID(cols, col)
+                    if(pval !== undefined && cols[pval].vis === onlyVisible && !cols[pval].archived === notArchived && !cols[pval].deleted){
+                        columns.push(pval)
                     }else{
-                        let pval = findID(cols, col)
-                        if(pval !== undefined && cols[pval].vis === onlyVisible && !cols[pval].archived === notArchived && !cols[pval].deleted){
-                            columns.push(pval)
-                        }else{
-                            let err = 'Cannot find column with name: '+ col
-                            throw new Error(err)
-                        }
+                        let err = 'Cannot find column with name: '+ col
+                        throw new Error(err)
                     }
                 }
             }else{//full object columns
@@ -453,11 +453,8 @@ const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (
 const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain) => (path) => (tsv, tAlias,cb)=>{
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     try{
-        let checkTname = checkUniqueAlias([path],tAlias)
-        if(!checkTname){
-            let err = 'ERROR: '+tAlias+' is not a unique table name'
-            throw new Error(err)
-        }
+        let cpath = configPathFromChainPath(path)
+        checkUniqueAlias(cpath, tAlias)
         let dataArr = tsvJSONgb(tsv)
         let tval = findNextID(path)
         let nextSort = nextSortval(path)

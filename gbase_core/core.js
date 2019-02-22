@@ -820,8 +820,7 @@ function handleSubUpdate(subID, buffer){
             if(pvals[0] !== 'ALL'){
                 let rowCopy = Gun.obj.copy(row)
                 for (const pval in rowCopy) {
-                    let includes = pvals.includes(pval)
-                    if(!includes){
+                    if(!pvals.includes(pval)){
                         delete rowCopy[pval]
                     }
                 }
@@ -841,8 +840,7 @@ function handleSubUpdate(subID, buffer){
                     const row = table[rowid];
                     let rowCopy = Gun.obj.copy(row) || {}
                     for (const pval in rowCopy) {
-                        let includes = pvals.includes(pval)
-                        if(!includes){
+                        if(!pvals.includes(pval)){
                             delete rowCopy[pval]
                         }
                     }
@@ -851,7 +849,7 @@ function handleSubUpdate(subID, buffer){
                 }
             }else{
                 out = table
-                //console.log('all',out)
+                console.log('all',out)
             }
             
         }
