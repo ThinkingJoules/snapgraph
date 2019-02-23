@@ -1,4 +1,18 @@
-const {convertValueToType, configPathFromChainPath, configSoulFromChainPath, findRowID, findID, getValue, removeFromArr} = require('../gbase_core/util')
+const {convertValueToType,
+    configPathFromChainPath,
+    configSoulFromChainPath,
+    findRowID,
+    findID,
+    getValue,
+    removeFromArr,
+    handleRowEditUndo,
+    checkUniqueAlias,
+    checkUniqueSortval,
+    findNextID
+} = require('../gbase_core/util')
+
+const {verifyLinksAndFNs} = require('../function_lib/function_utils')
+
 //CONFIG FUNCTIONS
 const newBaseConfig = (config) =>{
     config = config || {}
@@ -62,10 +76,13 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
     }    
 }
 
-const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo, oldConfigVals, handleFNColumn) => (configObj, path, backLinkCol, cb)=>{
+const makehandleConfigChange = (gun,gb,cache,gunSubs,loadColDataToCache,newColumn,cascade,solve) => (configObj, path, backLinkCol, cb)=>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     cb = (cb instanceof Function && cb) || function(){}
+    const handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve)
+    const handleLinkColumn = makehandleLinkColumn(gun, gb,cache, gunSubs, loadColDataToCache,newColumn)
+    const changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn)
     let cpath = configPathFromChainPath(path)
     let csoul = configSoulFromChainPath(path)
     let validConfig
@@ -82,8 +99,8 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
     if(cpath[cpath.length-2] === 'props' || cpath.length === 1){//base,table,col config change
         //these should throw errors and stop the call if they don't pass
         checkConfig(validConfig, configObj)
-        checkUniqueAlias(cpath, configObj.alias)//will pass if alias is not present
-        checkUniqueSortval(cpath, configObj.sortval)//same as alias
+        checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
+        checkUniqueSortval(gb,cpath, configObj.sortval)//same as alias
         if(configObj.GBtype || configObj.linksTo || configObj.fn){//new type change or update to link of fn
             let typeStuff = {}
             for (const key in configObj) {//split config obj for normal configs vs type/link configs
@@ -111,7 +128,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
             }
         }
         if(Object.keys(configObj).length !== 0){
-            history.old = oldConfigVals(cpath, configObj)
+            history.old = oldConfigVals(gb, cpath, configObj)
             history.new = configObj
             gun.get(csoul+'/history').get(tstamp).put(JSON.stringify(history))
             gun.get(csoul).put(configObj)
@@ -119,7 +136,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
         }
     }else{//handle HID change
         //expects path argument of base/tval/rowid
-        let checkAlias = (configObj.alias) ? checkUniqueAlias(cpath, configObj.alias) : false
+        let checkAlias = (configObj.alias) ? checkUniqueAlias(gb, cpath, configObj.alias) : false
         if(checkAlias){
             let chainpath = path.split('/')
             let rowID = chainpath[chainpath.length-1]
@@ -127,7 +144,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
             gun.get(path).get('p0').put(configObj.alias)
             gun.get(csoul).get(rowID).put(configObj.alias)
             let put = {p0: configObj.alias}
-            handleRowEditUndo(path,put)
+            handleRowEditUndo(gun,gb,path,put)
             cb.call(this, undefined)         
         }else{
             throw new Error('ERROR: New row alias is not unique')
@@ -135,7 +152,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
     }
     return true
 }
-const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn, handleUnlinkColumn) =>function changeColtype(path, configObj, backLinkCol,cb){
+const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn) =>function changeColtype(path, configObj, backLinkCol,cb){
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let [base, tval, pval] = path.split('/')
@@ -234,7 +251,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
     }
     
 }
-const makeoldConfigVals = gb =>(pathArr, configObj)=>{
+const oldConfigVals = (gb,pathArr, configObj)=>{
     let oldObj = {}
     let config = getValue(pathArr, gb)
     for (const key in configObj) {
@@ -325,7 +342,7 @@ function checkForCirc(gb, origpath, checkpathArr){//see if add this function wil
     }
     return true
 }
-const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve,verifyLinksAndFNs) => function handlefncol(path,configObj,cb){
+const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve) => function handlefncol(path,configObj,cb){
     //parse equation for all links
     try{
         cb = (cb instanceof Function && cb) || function(){}
@@ -336,7 +353,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         let thisColConfigSoul = configSoulFromChainPath(path)
         let fn = configObj.fn
         let oldfn = thisColConfig.fn
-        verifyLinksAndFNs(path,fn)
+        verifyLinksAndFNs(gb,path,fn)
         let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
         let links = []
         let checkmatch
@@ -447,7 +464,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
 
 //LINK STUFF
 
-const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =>function handlelinkcol(path, configObj, backLinkCol, cb){
+const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newColumn) =>function handlelinkcol(path, configObj, backLinkCol, cb){
     try{
         cb = (cb instanceof Function && cb) || function(){}
         if(configObj.linkColumnTo === undefined){throw new Error('Must use the ".linkColumnTo()" API to make a column a link')}
@@ -481,9 +498,8 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
         
 
         if(Object.keys(data).length === 0){
-            handleNewLinkColumn(prevConfig, nextConfig)
+            handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prevConfig, nextConfig,cb)
             console.log('No data to convert, config updated')
-            cb.call(this,undefined)
         }
         let putObj = {}
         let nextObj = {}
@@ -518,37 +534,12 @@ const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =
         }
         prevConfig.data = putObj
         nextConfig.data = nextObj
-        handleNewLinkColumn(prevConfig, nextConfig,cb)
+        handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prevConfig, nextConfig,cb)
     }catch(e){
         cb.call(this,e)
     }
 }
-const makehandleUnlinkColumn = (gb, changeColumnType) => (path) => {//not used?
-    console.log(path)
-    let cpath = configPathFromChainPath(path)
-    let colParams = getValue(cpath,gb)
-    let otherLink = colParams.linksTo
-    let lcpath
-    let lcolParams
-    let changeLinkCol = false
-    if(otherLink.length > 0){//need to undo other col
-        console.log(otherLink)
-        lcpath = configPathFromChainPath(otherLink)
-        lcolParams = getValue(lcpath,gb)
-        console.log(lcolParams)
-        if(lcolParams && (lcolParams.GBtype === 'prev' || lcolParams.GBtype === 'next')){
-            changeLinkCol = true
-        }
-    }
-    let csoul = configSoulFromChainPath(path)
-    gun.get(csoul).put({linksTo: ""})
-    console.log(changeLinkCol)
-    if(changeLinkCol){
-        changeColumnType(otherLink,{GBtype: 'string'})
-    }
-
-}
-const makehandleNewLinkColumn = (gun, gunSubs, newColumn, loadColDataToCache) =>(prev, next,cb)=>{
+function handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prev, next,cb){
     // let prevConfig = {path,colSoul, data: prevPutObj}
     // let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, data: nextPutObj}
     cb = (cb instanceof Function && cb) || function(){}
@@ -621,7 +612,7 @@ const makehandleNewLinkColumn = (gun, gunSubs, newColumn, loadColDataToCache) =>
 
 //IMPORT STUFF
 
-const makehandleImportColCreation = (gun, gb, findNextID, nextSortval) => (base, tval, colHeaders, datarow, append)=>{
+const handleImportColCreation = (gun, gb, base, tval, colHeaders, datarow, append)=>{
     // create configs
     let path = base+'/'+tval
     let gbpath = configPathFromChainPath(path)
@@ -654,9 +645,9 @@ const makehandleImportColCreation = (gun, gb, findNextID, nextSortval) => (base,
                 colExists[col] = false
             }
         }
-        let nextP = findNextID(path)
+        let nextP = findNextID(gb, path)
         let pInt = nextP.slice(1) *1
-        let nextS = nextSortval(path)
+        let nextS = nextSortval(gb, path)
         for (let i = 0; i < colHeaders.length; i++) {
             const palias = colHeaders[i];
             if(!colExists[palias]){
@@ -682,7 +673,7 @@ const makehandleImportColCreation = (gun, gb, findNextID, nextSortval) => (base,
     
     return results
 }
-const makehandleTableImportPuts = gun => (path, resultObj, cb)=>{
+const handleTableImportPuts = (gun, path, resultObj, cb)=>{
     //console.log(resultObj)
     //path base/tval
     cb = (cb instanceof Function && cb) || function(){}
@@ -710,12 +701,10 @@ module.exports = {
     newColumnConfig,
     makehandleConfigChange,
     makechangeColumnType,
-    makeoldConfigVals,
+    oldConfigVals,
     makehandleLinkColumn,
-    makehandleNewLinkColumn,
-    makehandleImportColCreation,
-    makehandleTableImportPuts,
-    makehandleFNColumn,
-    makehandleUnlinkColumn
-
+    handleNewLinkColumn,
+    handleImportColCreation,
+    handleTableImportPuts,
+    makehandleFNColumn
 }

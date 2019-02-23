@@ -1,5 +1,19 @@
-const{newBaseConfig,newTableConfig,newColumnConfig} = require('./configs')
-const{getValue,checkConfig, configPathFromChainPath, findID, findRowID, tsvJSONgb, watchObj,convertValueToType} = require('./util')
+const{newBaseConfig,newTableConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts} = require('./configs')
+const{getValue,
+    checkConfig,
+    configPathFromChainPath,
+    findID,
+    findRowID,
+    tsvJSONgb,
+    watchObj,
+    convertValueToType,
+    validateData,
+    handleRowEditUndo,
+    checkUniqueAlias,
+    findNextID,
+    nextSortval,
+    getColumnType
+} = require('./util')
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, tname, pname, baseID) =>{
@@ -14,13 +28,13 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
     gun.get(baseID + '/t').put({t0: true})
     return baseID
 }
-const makenewTable = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) => (tname, pname)=>{
+const makenewTable = (gun, gb) => (path) => (tname, pname)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let nextT = findNextID(path)
-        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(path)})
+        let nextT = findNextID(gb,path)
+        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path)})
         checkConfig(newTableConfig(), tconfig)
-        checkUniqueAlias(cpath, tconfig.alias)
+        checkUniqueAlias(gb, cpath, tconfig.alias)
         let pconfig = newColumnConfig({alias: pname})
         gun.get(path + '/' + nextT + '/config').put(tconfig)
         gun.get(path + '/' + nextT + '/r/p0/config').put(pconfig)
@@ -32,13 +46,13 @@ const makenewTable = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) =
         return e
     }
 }
-const makenewColumn = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) => (pname, type)=>{
+const makenewColumn = (gun, gb) => (path) => (pname, type)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let nextP = findNextID(path)
-        let pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(path)})
+        let nextP = findNextID(gb,path)
+        let pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
         checkConfig(newColumnConfig(), pconfig)
-        checkUniqueAlias(cpath,pconfig.alias)
+        checkUniqueAlias(gb,cpath,pconfig.alias)
         gun.get(path + '/r/' + nextP + '/config').put(pconfig)
         gun.get(path + '/r/p').put({[nextP]: true})
         return nextP
@@ -47,7 +61,7 @@ const makenewColumn = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) 
         return false
     }
 }
-const makenewRow = (checkUniqueAlias, edit) => (path) => (alias, data, cb)=>{//HANDLE NEW PUT HERE, MOVE FROM EDIT
+const makenewRow = (edit) => (path) => (alias, data, cb)=>{//HANDLE NEW PUT HERE, MOVE FROM EDIT
     try{
         cb = (cb instanceof Function && cb) || function(){}
         if(alias === undefined || typeof alias === 'object'){
@@ -57,15 +71,8 @@ const makenewRow = (checkUniqueAlias, edit) => (path) => (alias, data, cb)=>{//H
         let tpath = path
         let id = 'r' + Gun.text.random(6)
         let fullpath = tpath + '/' + id
-        let rowpath = configPathFromChainPath(fullpath)
-        let aliasCheck = checkUniqueAlias(rowpath, alias)
         let call = edit(fullpath,false,true,alias)
-        if(aliasCheck){
-            call(data, cb)
-        }else{
-            let err = '[ ' + alias + ' ] is not a unique row name on this table'
-            throw new Error(err)
-        }
+        call(data, cb)
     }catch(e){
         cb.call(this, e)
         console.log(e)
@@ -126,7 +133,7 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
         return false
     }
 }
-const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
+const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
     try{
         cb = (cb instanceof Function && cb) || function(){}
         newRow = (newRow) ? true : false
@@ -154,7 +161,7 @@ const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAli
         //}else{
         //    putObj = editObj
         //}
-        let validatedObj = validateData(path,putObj,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
+        let validatedObj = validateData(gb,path,putObj,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
         if(!validatedObj){return}
         //console.log(validatedObj)
         for (const key in validatedObj) {
@@ -166,18 +173,19 @@ const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAli
             }else if(key === 'p0' && !newRow){
                 //check uniqueness
                 let rowpath = configPathFromChainPath(path)
-                let aliasCheck = checkUniqueAlias(rowpath, alias)
-                if(aliasCheck){
-                    gun.get(colSoul).get(path).put(value)
-                }
+                checkUniqueAlias(gb,rowpath, alias)
+                gun.get(colSoul).get(path).put(value)
             }else if(newRow && newAlias){
-                //new row, uniqueness already checked
+                let rowpath = configPathFromChainPath(path)
+                checkUniqueAlias(gb,rowpath,newAlias)
                 gun.get(colSoul).get(path).put(newAlias)
-            }         
+            }else{
+                throw new Error('Must specifiy at least a row alias for a new row.')
+            }      
         }
         cb.call(this, false, path)
 
-        handleRowEditUndo(path,validatedObj)
+        handleRowEditUndo(gun,gb,path,validatedObj)
     }catch (e){
         cb.call(this, e)
     }
@@ -387,7 +395,7 @@ const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(propert
         cb.call(this, e)
     }
 }
-const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTESTED
+const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTESTED
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     cb = (cb instanceof Function && cb) || function(){}
     if(ovrwrt !== undefined){//turn truthy falsy to boolean
@@ -409,7 +417,7 @@ const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (
     let tval = path.split('/')[1]
     let result = {}
     let headers = dataArr[0]
-    let headerPvals = handleImportColCreation(base, tval, headers, dataArr[1], append)
+    let headerPvals = handleImportColCreation(gun, gb, base, tval, headers, dataArr[1], append)
     let existingRows = getValue([base,'props',tval,'rows'], gb)
 
     for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
@@ -431,22 +439,22 @@ const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (
             }
         }
     }
-    handleTableImportPuts(path, result, cb)
+    handleTableImportPuts(gun, path, result, cb)
 }
-const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,triggerChainRebuild) => (path) => (tsv, tAlias,cb)=>{
+const makeimportNewTable = (gun,gb,triggerChainRebuild) => (path) => (tsv, tAlias,cb)=>{
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let cpath = configPathFromChainPath(path)
-        checkUniqueAlias(cpath, tAlias)
+        checkUniqueAlias(gb,cpath, tAlias)
         let dataArr = tsvJSONgb(tsv)
-        let tval = findNextID(path)
-        let nextSort = nextSortval(path)
+        let tval = findNextID(gb,path)
+        let nextSort = nextSortval(gb,path)
         let tconfig = newTableConfig({alias: tAlias, sortval: nextSort})
         gun.get(path + '/' + tval + '/config').put(tconfig)
         let result = {}
         let headers = dataArr[0]
-        let headerPvals = handleImportColCreation(path, tval, headers, dataArr[1], true)
+        let headerPvals = handleImportColCreation(gun, gb, path, tval, headers, dataArr[1], true)
         for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
             const rowArr = dataArr[i];
             let rowsoul
@@ -469,20 +477,20 @@ const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handle
         }
         gun.get(path + '/t').put({[tval]: true})
         let tpath = path + '/' + tval
-        handleTableImportPuts(tpath, result,cb)
+        handleTableImportPuts(gun, tpath, result,cb)
         triggerChainRebuild(tpath)
     }catch(e){
         console.log(e)
         return e
     }
 }
-const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache, getColumnType) => (path) => function clearcol(cb){
+const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache) => (path) => function clearcol(cb){
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,pval] = path.split('/')
         let csoul = [base,tval,'r',pval].join('/')
         let data = getValue([base,tval,pval],cache)
-        let type = getColumnType(path)
+        let type = getColumnType(gb,path)
         if(!gunSubs[path] && data === undefined){
             loadColDataToCache(base,tval,pval)
             setTimeout(clearcol,1000, cb)

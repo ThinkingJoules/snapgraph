@@ -1,7 +1,7 @@
-const {setMergeValue, getValue, setValue, gbByAlias,gbForUI} = require('../gbase_core/util')
-const maketableToState = (gb, vTable, subscribe, generateHeaderRow, linkColPvals, linkColIdxs, xformRowObjToArr) => (base, tval, thisReact)=>{
+const {setMergeValue, getValue, setValue, gbByAlias,gbForUI,findRowAlias, linkColPvals} = require('../gbase_core/util')
+const maketableToState = (gb, vTable, subscribe) => (base, tval, thisReact)=>{
     let oldData = getValue([base,tval,'last'], vTable)
-    let flaggedCols = linkColIdxs(base,tval)
+    let flaggedCols = linkColIdxs(gb,base,tval)
     if(thisReact.state && thisReact.state.vTable && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.vTable)){
         thisReact.setState({vTable: oldData, linkColumns: flaggedCols})
         return
@@ -12,11 +12,11 @@ const maketableToState = (gb, vTable, subscribe, generateHeaderRow, linkColPvals
     let subID = base + '+' + tval
     let call = subscribe(_path)
     call(function(data){
-        let flaggedCols = linkColIdxs(base,tval)
-        let links = linkColPvals(base,tval)
+        let flaggedCols = linkColIdxs(gb,base,tval)
+        let links = linkColPvals(gb,base,tval)
         let rows = getValue([base, 'props', tval, 'rows'], gb)     
         if(!rows){return}
-        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let [headers, headerValues] = generateHeaderRow(gb, base, tval)
         let newTable = [headerValues]
         for (const rowid in data) {// put data in
             const rowObj = data[rowid];
@@ -39,7 +39,7 @@ const maketableToState = (gb, vTable, subscribe, generateHeaderRow, linkColPvals
             const rowAlias = sortedRows[i];
             const rowID = rowsbyalias[rowAlias]
             const rowObj = tableData[rowID]
-            let rowArr = xformRowObjToArr(rowObj, headers, links)
+            let rowArr = xformRowObjToArr(gb, rowObj, headers, links)
             newTable.push(rowArr)
         }
         if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable) || !thisReact.state.linkColumns || JSON.stringify(thisReact.state.linkColumns) !== JSON.stringify(flaggedCols)){
@@ -49,12 +49,12 @@ const maketableToState = (gb, vTable, subscribe, generateHeaderRow, linkColPvals
         
     }, undefined, true, true, subID)
 }
-const makerowToState = (vTable, subscribe, generateHeaderRow, linkColPvals, xformRowObjToArr) => (rowID, thisReact)=>{
+const makerowToState = (gb,vTable, subscribe, linkColPvals, xformRowObjToArr) => (rowID, thisReact)=>{
     let [base, tval, rval] = rowID.split('/')
     let oldData = getValue([base,tval,rowID], vTable)
     if(oldData !== undefined){
-        let links = linkColPvals(base,tval)
-        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let links = linkColPvals(gb,base,tval)
+        let [headers, headerValues] = generateHeaderRow(gb, base, tval)
         let oldRow = [headerValues]
         let rowArr = xformRowObjToArr(oldData, headers,links)
         oldRow.push(rowArr)
@@ -73,7 +73,7 @@ const makerowToState = (vTable, subscribe, generateHeaderRow, linkColPvals, xfor
     let call = subscribe(_path)
     call(function(data){
         let links = linkColPvals(base,tval)
-        let [headers, headerValues] = generateHeaderRow(base, tval)
+        let [headers, headerValues] = generateHeaderRow(gb, base, tval)
         let newRow = [headerValues]
         let rowObj
         for (const rowid in data) {// put data in
@@ -149,7 +149,7 @@ const makebuildRoutes = gb =>(thisReact, baseID)=>{
         thisReact.setState({GBroutes: result})
     }
 }
-const makegenerateHeaderRow = gb =>(base, tval)=>{
+const generateHeaderRow = (gb, base, tval)=>{
     let columns = getValue([base, 'props', tval, 'props'], gb)
     let headerAlias = {}
     let headerOrder = {}
@@ -170,7 +170,7 @@ const makegenerateHeaderRow = gb =>(base, tval)=>{
     return [headers,headerValues]
 
 }
-const makexformRowObjToArr = findRowAlias => (rowObj, orderedHeader, linkColPvals)=>{
+const xformRowObjToArr = (gb, rowObj, orderedHeader, linkColPvals)=>{
     let rowArr = []
     for (let j = 0; j < orderedHeader.length; j++) {
         const pval = orderedHeader[j];
@@ -180,7 +180,7 @@ const makexformRowObjToArr = findRowAlias => (rowObj, orderedHeader, linkColPval
                 let cellValue = []
                 for (let i = 0; i < rowObj[pval].length; i++) {
                     const link = rowObj[pval][i];
-                    cellValue.push(findRowAlias(link))
+                    cellValue.push(findRowAlias(gb,link))
                 }
                 rowArr.push(cellValue)
 
@@ -193,9 +193,9 @@ const makexformRowObjToArr = findRowAlias => (rowObj, orderedHeader, linkColPval
     }
     return rowArr
 }
-const makelinkColIdxs = (generateHeaderRow, linkColPvals) => (base, tval)=>{
-    let headers = generateHeaderRow(base,tval)[0]
-    let links = linkColPvals(base,tval)
+const linkColIdxs = (gb, base, tval)=>{
+    let headers = generateHeaderRow(gb,base,tval)[0]
+    let links = linkColPvals(gb,base,tval)
     let flaggedCols = []
     for (let i = 0; i < headers.length; i++) {
         const pval = headers[i];
@@ -265,9 +265,9 @@ module.exports = {
     maketableToState,
     makerowToState,
     makebuildRoutes,
-    makegenerateHeaderRow,
-    makexformRowObjToArr,
-    makelinkColIdxs,
+    generateHeaderRow,
+    xformRowObjToArr,
+    linkColIdxs,
     makelinkOptions,
     makefnOptions
 }

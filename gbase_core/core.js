@@ -10,66 +10,24 @@ let bufferState = false
 let vTable = {}
 let reactConfigCB
 let gbChainState = true
-if(!gun){}
 
 const {
     cachePathFromChainPath,
     cachePathFromSoul,
     configPathFromSoul,
     configPathFromChainPath,
-    configSoulFromChainPath,
-    findID,
-    findRowID,
-    makefindRowAlias,
     gbForUI,
     gbByAlias,
-    makelinkColPvals,
     setValue,
     setMergeValue,
     getValue,
-    makevalidateData,
-    makehandleRowEditUndo,
-    makecheckUniqueAlias,
-    makecheckUniqueSortval,
-    makefindNextID,
-    makenextSortval,
-    convertValueToType,
-    makeisLinkMulti,
-    makegetColumnType,
-    tsvJSONgb,
+    getColumnType,
     findLinkingCol
 } = require('./util.js')
-const findRowAlias = makefindRowAlias(gb)
-const linkColPvals = makelinkColPvals(gb)
-const validateData = makevalidateData(gb)
-let handleRowEditUndo
-const checkUniqueAlias = makecheckUniqueAlias(gb)
-const checkUniqueSortval = makecheckUniqueSortval(gb)
-const findNextID = makefindNextID(gb)
-const nextSortval = makenextSortval(gb)
-const isLinkMulti = makeisLinkMulti(gb)
-const getColumnType = makegetColumnType(gb)
 
 const {makehandleConfigChange,
-    makechangeColumnType,
-    makeoldConfigVals,
-    makehandleLinkColumn,
-    makehandleNewLinkColumn,
-    makehandleImportColCreation,
-    makehandleTableImportPuts,
-    makehandleFNColumn,
-    makehandleUnlinkColumn
 }= require('./configs')
 let handleConfigChange
-let changeColumnType
-let handleLinkColumn
-const oldConfigVals = makeoldConfigVals(gb)
-let handleNewLinkColumn 
-let handleImportColCreation
-let handleTableImportPuts
-let handleFNColumn
-let handleUnlinkColumn
-
 
 const {makenewBase,
     makenewTable,
@@ -97,12 +55,12 @@ let newRow
 let linkColumnTo
 let config
 let edit
-const subscribe = makesubscribe(gb,gsubs,requestInitialData)
-const retrieve = makeretrieve(gb)
+const subscribe = makesubscribe(gb,gsubs,requestInitialData)//like a .on()
+const retrieve = makeretrieve(gb)//not working currently, will be like a .once()??
 let linkRowTo
 let unlinkRow
 let clearColumn
-const importData = makeimportData(gb,handleImportColCreation,handleTableImportPuts)
+let importData
 let importNewTable
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
@@ -110,37 +68,19 @@ const showgsub = makeshowgsub(gsubs)
 const showgunsub = makeshowgunsub(gunSubs)
 
 const {makesolve,
-    makeinitialParseLinks,
-    makegetCell,
-    makegetLinks,
-    makeverifyLinksAndFNs
+    makegetLinks
 } = require('../function_lib/function_utils');
-const initialParseLinks = makeinitialParseLinks(isLinkMulti,getColumnType)
-const getCell = makegetCell(gunSubs,cache,loadRowPropToCache)
-const getLinks = makegetLinks(gb,initialParseLinks,getCell,getColumnType)
+const getLinks = makegetLinks(gb,getCell)
 const solve = makesolve(getLinks)
-const verifyLinksAndFNs = makeverifyLinksAndFNs(isLinkMulti,getColumnType)
-
-
-
-
-
 
 const {maketableToState,
     makerowToState,
     makebuildRoutes,
-    makegenerateHeaderRow,
-    makexformRowObjToArr,
-    makelinkColIdxs,
     makelinkOptions,
     makefnOptions
 } = require('../react_tables/to_state')
-
-const generateHeaderRow = makegenerateHeaderRow(gb)
-const linkColIdxs = makelinkColIdxs(generateHeaderRow,linkColPvals)
-const xformRowObjToArr = makexformRowObjToArr(findRowAlias)
-const tableToState = maketableToState(gb,vTable,subscribe,generateHeaderRow,linkColPvals,linkColIdxs, xformRowObjToArr)
-const rowToState = makerowToState(vTable,subscribe,generateHeaderRow,linkColPvals, xformRowObjToArr)
+const tableToState = maketableToState(gb,vTable,subscribe)
+const rowToState = makerowToState(gb,vTable,subscribe)
 const buildRoutes = makebuildRoutes(gb)
 const linkOptions = makelinkOptions(gb)
 const fnOptions = makefnOptions(gb)
@@ -150,26 +90,20 @@ startGunConfigSubs()
 const gunToGbase = gunInstance =>{
     gun = gunInstance
     //DI after gunInstance is received from outside
-    handleRowEditUndo = makehandleRowEditUndo(gun, gb)
-    handleNewLinkColumn = makehandleNewLinkColumn(gun,gunSubs,newColumn,loadColDataToCache)
-    handleImportColCreation = makehandleImportColCreation(gun,gb)
-    handleTableImportPuts = makehandleTableImportPuts(gun)
     newBase = makenewBase(gun)
-    newTable = makenewTable(gun,findNextID,nextSortval,checkUniqueAlias)
-    newColumn = makenewColumn(gun,findNextID,nextSortval,checkUniqueAlias)
-    edit = makeedit(gun,gb,validateData,handleRowEditUndo,cascade)
-    newRow = makenewRow(checkUniqueAlias,edit)
-    importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,triggerChainRebuild)
-    handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
-    handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve,verifyLinksAndFNs)
-    handleUnlinkColumn = makehandleUnlinkColumn(gb,changeColumnType)
-    changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn, handleUnlinkColumn)
-    handleConfigChange = makehandleConfigChange(gun,gb,checkUniqueAlias,checkUniqueSortval,changeColumnType,handleRowEditUndo,oldConfigVals,handleFNColumn)
-    linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
+    newTable = makenewTable(gun,gb)
+    newColumn = makenewColumn(gun,gb)
+    edit = makeedit(gun,gb,cascade)
+    newRow = makenewRow(edit)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
+    clearColumn = makeclearColumn(gun,gb,cache,gunSubs,loadColDataToCache)
+    importData = makeimportData(gun, gb)
+    importNewTable = makeimportNewTable(gun,gb,triggerChainRebuild)
+    
+    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,loadColDataToCache,newColumn,cascade,solve)
+    linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(handleConfigChange)
-    clearColumn = makeclearColumn(gun,gb,cache,gunSubs,loadColDataToCache,getColumnType)
 
 
     gbase.newBase = newBase
@@ -427,7 +361,7 @@ function loadColDataToCache(base, tval, pval){
     let path = [base, tval, pval]
     let rows = getValue([base,tval,'p0'], cache)
     let inc = 0
-    let isLink = getColumnType([base,tval,pval].join('/'))
+    let isLink = getColumnType(gb,[base,tval,pval].join('/'))
     if(!gunSubs[colSoul]){//create subscription
         if((isLink === 'prev' || isLink === 'next') && rows !== undefined){//get links for all rows for given pval, put in cache
             for (const row in rows) {
@@ -528,7 +462,7 @@ function loadRowPropToCache(path, pval){
     let cpath = [base, tval, pval, path]
     //console.log(cpath)
     //console.log(getValue(cpath,cache))
-    let isLink = getColumnType([base,tval,pval].join('/'))
+    let isLink = getColumnType(gb,[base,tval,pval].join('/'))
     let rowLinks = path +'/links/'+pval
     let subname = colSoul + '+' + path
     if(!gunSubs[rowLinks] && (isLink === 'prev' || isLink === 'next')){//may already be subd from rowprops
@@ -697,6 +631,19 @@ function requestInitialData(path, colArr, reqType){
         }
     }
     return cachedData
+}
+function getCell(rowID,pval){
+    let [base,tval,r] = rowID.split('/')
+    let value = getValue([base,tval,pval,rowID], cache)
+    let cellsub = [base,tval,'r',pval].join('/')
+    cellsub += '+'+rowID
+    let colsub = [base,tval,'r',pval].join('/')
+    if(!gunSubs[colsub] && !gunSubs[cellsub] && value === undefined){
+        loadRowPropToCache(rowID, pval)
+        return
+    }else{
+        return value
+    }
 }
 
 
@@ -906,16 +853,6 @@ function loadGBaseConfig(thisReact){
 
 
 //WIP___________________________________________________
-
-
-
-
-
-
-
-
-
-
 
 
 

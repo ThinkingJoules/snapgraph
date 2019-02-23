@@ -1,5 +1,5 @@
 const gfn = require('./functions')
-const {convertValueToType,getValue} = require('../gbase_core/util')
+const {convertValueToType,getValue,isLinkMulti,getColumnType} = require('../gbase_core/util')
 //FUNCTION STUFF
 const makesolve = getLinks =>function solve(rowID, eq, tries){
     let linksResolved
@@ -577,7 +577,7 @@ function stripDoubleQuotes(str){
 //FUNCTION LINK PARSING
 let gRollup = ["SUM","MAX","MIN","AVG","AND","OR","COUNT","COUNTALL","JOIN","MULTIPLY"];//valid Rollup FNs
 let nextLinkFNs = ["JOIN", "CONCAT"]
-const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
+const verifyLinksAndFNs = (gb, path, fnString)=>{
     let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
     let match
     let nextUsed = false
@@ -586,8 +586,8 @@ const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split('.')
-        let linkMulti = isLinkMulti(links[0])
-        let valueType = getColumnType(links[0])
+        let linkMulti = isLinkMulti(gb,links[0])
+        let valueType = getColumnType(gb,links[0])
         let summation = false
         if(valueType === 'next'){nextUsed = true}
         if(linkMulti){
@@ -648,7 +648,7 @@ const makeverifyLinksAndFNs = (isLinkMulti,getColumnType) => (path, fnString)=>{
     }
     return true
 }
-const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>{
+const initialParseLinks = (gb, fnString, rowID)=>{
     let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
     let out = {}
     let match
@@ -656,8 +656,8 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
         let replace = match[0]
         let path = match[1]
         let links = path.split('.')
-        let linkMulti = isLinkMulti(links[0])
-        let valueType = getColumnType(links[0])
+        let linkMulti = isLinkMulti(gb,links[0])
+        let valueType = getColumnType(gb,links[0])
         let summation = false
         let summationargs = false
         if(linkMulti){
@@ -680,22 +680,9 @@ const makeinitialParseLinks = (isLinkMulti,getColumnType) => (fnString, rowID)=>
     } 
     return out
 }
-const makegetCell = (gunSubs,cache,loadRowPropToCache) =>(rowID,pval)=>{
-    let [base,tval,r] = rowID.split('/')
-    let value = getValue([base,tval,pval,rowID], cache)
-    let cellsub = [base,tval,'r',pval].join('/')
-    cellsub += '+'+rowID
-    let colsub = [base,tval,'r',pval].join('/')
-    if(!gunSubs[colsub] && !gunSubs[cellsub] && value === undefined){
-        loadRowPropToCache(rowID, pval)
-        return
-    }else{
-        return value
-    }
-}
-const makegetLinks = (gb,initialParseLinks, getCell, getColumnType) => function getlinks(rowID, fnString, linksObj, tries){
+const makegetLinks = (gb, getCell) => function getlinks(rowID, fnString, linksObj, tries){
     if(linksObj === undefined){
-        linksObj = initialParseLinks(fnString, rowID)
+        linksObj = initialParseLinks(gb, fnString, rowID)
     }
     tries = tries || 0
     let done = 0
@@ -709,20 +696,20 @@ const makegetLinks = (gb,initialParseLinks, getCell, getColumnType) => function 
             let[b,t,pval] = pathInfo.links[0].split('/')
             if(!pathInfo.linkMulti && pathInfo.links.length === 1){//getCell should be a value
                 changes.data = getCell(pathInfo.currentRow, pval)
-                changes.valueType = getColumnType(changes.links[0])
+                changes.valueType = getColumnType(gb,changes.links[0])
             }else if(!pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be array
                 let request = getCell(pathInfo.currentRow, pval)
                 if(request !== undefined && (request === "" || request === null || request.length === 0)){//null data, no links
                     changes.data = 0
                     changes.links.shift() //remove the successfully retrieved link
-                    changes.valueType = getColumnType(changes.links[0])
+                    changes.valueType = getColumnType(gb,changes.links[0])
                 }else if(request !== undefined){
                     if(request.length === 1){//single link like it should be
                         changes.links.shift() //remove the successfully retrieved link
                         changes.currentRow = request[0]
                         let [b,t,p] = changes.links[0].split('/')
                         changes.data = getCell(request[0],p)
-                        changes.valueType = getColumnType(changes.links[0])
+                        changes.valueType = getColumnType(gb,changes.links[0])
                     }else if(request.length > 1){
                         throw new Error('Column is not a link multiple, but there are multiple links')
                     }
@@ -731,7 +718,7 @@ const makegetLinks = (gb,initialParseLinks, getCell, getColumnType) => function 
                 }
             }else if(pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj with one or more keys
                 let request = getCell(pathInfo.currentRow, pval)
-                changes.valueType = getColumnType(pathInfo.links[0])
+                changes.valueType = getColumnType(gb,pathInfo.links[0])
                 if(request !== undefined && (request === "" || request === null || request.length === 0)){//null data
                     changes.data.push(0)
                     changes.links.shift() //remove the successfully retrieved link
@@ -858,8 +845,7 @@ module.exports = {
     findFN,
     findFNArgs,
     makesolve,
-    makeinitialParseLinks,
-    makegetCell,
+    initialParseLinks,
     makegetLinks,
-    makeverifyLinksAndFNs
+    verifyLinksAndFNs
 }

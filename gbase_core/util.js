@@ -157,7 +157,7 @@ const allUsedIn = gb =>{//could move this to a getter on the gb object?
     return out
 }
 
-const makefindRowAlias = gb => (rowID) =>{//obj is .rows, input human name, returns rowID
+const findRowAlias = (gb, rowID) =>{//obj is .rows, input human name, returns rowID
     let [base, tval] = rowID.split('/')
     let obj = getValue([base, 'props',tval,'rows'],gb)
     return obj[rowID]
@@ -225,7 +225,7 @@ const gbByAlias = (gb) =>{
     }
     return output
 }
-const makelinkColPvals = gb =>(base,tval)=>{
+const linkColPvals = (gb,base,tval)=>{
     let obj = getValue([base,'props',tval,'props'], gb)
     let result = {}
     for (const key in obj) {
@@ -283,7 +283,7 @@ function getValue(propertyPath, obj){
         return obj[properties[0]]
     }
 }
-const makevalidateData = gb =>(editThisPath, putObj, fromCascade)=>{//prunes specials
+const validateData =(gb,editThisPath, putObj, fromCascade)=>{//prunes specials
     let args = editThisPath.split('/')
     let output = {}
     for (const pval in putObj) {
@@ -306,7 +306,7 @@ const makevalidateData = gb =>(editThisPath, putObj, fromCascade)=>{//prunes spe
     }
     return output
 }
-const makehandleRowEditUndo = (gun, gb) =>(gbpath, editObj)=>{
+const handleRowEditUndo = (gun, gb, gbpath, editObj)=>{
     //gbpath should = base/tval/rowid
     //editObj = {p0: 'value, p4: 'other value', etc..}
     let arrpath = gbpath.split('/')
@@ -325,7 +325,7 @@ const makehandleRowEditUndo = (gun, gb) =>(gbpath, editObj)=>{
     //node undo
     gun.get(gbpath + '/history').get(tstamp).put(JSON.stringify(undo.put))   
 }
-const makecheckUniqueAlias = gb =>(pathArr, alias)=>{
+const checkUniqueAlias = (gb,pathArr, alias)=>{
     let configPath = pathArr.slice()
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
@@ -356,7 +356,7 @@ const makecheckUniqueAlias = gb =>(pathArr, alias)=>{
         throw new Error(errmsg)
     }
 }
-const makecheckUniqueSortval = gb =>(pathArr, sortval)=>{
+const checkUniqueSortval = (gb,pathArr, sortval)=>{
     let configPath = pathArr.slice()
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
@@ -381,7 +381,7 @@ const makecheckUniqueSortval = gb =>(pathArr, sortval)=>{
         throw new Error(err)
     }
 }
-const makefindNextID = gb => (path)=>{
+const findNextID = (gb,path)=>{
     let curIDsPath = configPathFromChainPath(path)
     curIDsPath.push('props')
     let curIDs = getValue(curIDsPath, gb)
@@ -392,7 +392,7 @@ const makefindNextID = gb => (path)=>{
         return nextid
     }
 }
-const makenextSortval = gb => (path)=>{
+const nextSortval = (gb,path)=>{
     let curIDsPath = configPathFromChainPath(path)
     curIDsPath.push('props')
     let curIDs = getValue(curIDsPath, gb)
@@ -445,7 +445,7 @@ function convertValueToType(gb, value, newType, rowAlias){
     }
     return out
 }
-const makeisLinkMulti = gb => (colStr)=>{
+const isLinkMulti = (gb,colStr)=>{
     let cpath = configPathFromChainPath(colStr)
     let config = getValue(cpath,gb) || {}
     if(config.linkMultiple && (config.GBtype === 'prev' || config.GBtype === 'prev')){
@@ -453,7 +453,7 @@ const makeisLinkMulti = gb => (colStr)=>{
     }
     return false
 }
-const makegetColumnType = gb =>(colStr)=>{
+const getColumnType = (gb,colStr)=>{
     let cpath = configPathFromChainPath(colStr)
     let config = getValue(cpath,gb) || {}
     if(config.GBtype !== undefined){
@@ -552,22 +552,22 @@ module.exports = {
     configSoulFromChainPath,
     findID,
     findRowID,
-    makefindRowAlias,
+    findRowAlias,
     gbForUI,
     gbByAlias,
-    makelinkColPvals,
+    linkColPvals,
     setValue,
     setMergeValue,
     getValue,
-    makevalidateData,
-    makehandleRowEditUndo,
-    makecheckUniqueAlias,
-    makecheckUniqueSortval,
-    makefindNextID,
-    makenextSortval,
+    validateData,
+    handleRowEditUndo,
+    checkUniqueAlias,
+    checkUniqueSortval,
+    findNextID,
+    nextSortval,
     convertValueToType,
-    makeisLinkMulti,
-    makegetColumnType,
+    isLinkMulti,
+    getColumnType,
     tsvJSONgb,
     watchObj,
     allUsedIn,
