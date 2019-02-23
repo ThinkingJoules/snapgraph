@@ -30,7 +30,25 @@ const newTableConfig = (config) =>{
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
-    return {alias, sortval, vis, archived, deleted}
+    let type = config.type || 'static'
+    let result = config.result || ""
+    return {alias, type, sortval, vis, result, archived, deleted}
+}
+const newInteractionColumnConfig = (config) =>{
+    config = config || {}
+    let alias = config.alias || 'New Column'
+    let sortval = config.sortval || 0
+    let vis = config.vis || true
+    let archived = config.archived || false
+    let deleted = config.deleted || false
+    let GBtype = config.GBtype || 'string' 
+    let required = config.requred || false 
+    let defaultval = config.defaultval || null 
+    let fn = config.fn || "" 
+    let usedIn = JSON.stringify([])
+    let associations = JSON.stringify([])
+    let dateIndex = config.dateIndex || false
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, associations, dateIndex}
 }
 const newColumnConfig = (config) =>{
     config = config || {}
@@ -48,11 +66,11 @@ const newColumnConfig = (config) =>{
     let linkMultiple = config.linkMultiple || true
     return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple}
 }
-const validGBtypes = {string: true, number: true, boolean: true, null: true, prev: true, next: true, function: true, tag: true, link: true} //link is not really valid, but is always handled
+const validGBtypes = ["string", "number", "boolean", "null", "prev", "next", "function", "tag", "link"] //link is not really valid, but is always handled
+const validTableTypes = ['static','interaction']
 const checkConfig = (validObj, testObj) =>{//use for new configs, or update to configs
     //whichConfig = base, table, column, ..row?
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}
-    let output
     for (const key in testObj) {
         if (validObj[key] !== undefined) {//key is valid
             const tTypeof = typeof testObj[key];
@@ -64,8 +82,12 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
                 let err = vTypeof+ ' !== '+ tTypeof
                 throw new Error(err)
             }
-            if(key === 'GBtype' && validGBtypes[testObj[key]] === undefined ){//type check the column data type
-                let err = 'GBtype does not match one of: '+ Object.keys(validGBtypes).join(', ')
+            if(key === 'type' && !validTableTypes.includes(testObj[key])){
+                let err = 'Table type does not match one of: '+ validTableTypes.join(', ')
+                throw new Error(err)
+            }
+            if(key === 'GBtype' && !validGBtypes.includes(testObj[key])){//type check the column data type
+                let err = 'GBtype does not match one of: '+ validGBtypes.join(', ')
                 throw new Error(err)
             }
             return true
@@ -698,6 +720,7 @@ const handleTableImportPuts = (gun, path, resultObj, cb)=>{
 module.exports = {
     newBaseConfig,
     newTableConfig,
+    newInteractionColumnConfig,
     newColumnConfig,
     makehandleConfigChange,
     makechangeColumnType,
