@@ -1,5 +1,4 @@
 "use strict";
-var globalVar = require("global");
 const {
         buildRoutes,
         getRow,
@@ -15,7 +14,7 @@ const { fnHelp }=require('./function_lib/functions')
 
 
 if(typeof window !== "undefined"){
-    var Gun = globalVar.Gun;
+    var Gun = window.Gun;
 }else{
     var Gun = global.Gun;
 }
