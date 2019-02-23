@@ -109,6 +109,7 @@ function configSoulFromChainPath(thisPath){//should redo with regex
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
     let first = name[0]
     let rest = name.slice(1)
+    let out = false
     if(first === 'p' && !isNaN(rest *1)){//if name is a pval just return the name
         return name
     }
@@ -116,11 +117,17 @@ const findID = (obj, name) =>{//obj is level above .props, input human name, ret
         if (obj.hasOwnProperty(key)) {
             const alias = obj[key].alias;
             if(alias === name){
-                return key
+                out = key
+                break
             }
         }
     }
-    return false
+    if(out){
+        return out
+    }else{
+        let err = 'Cannot find column with name: '+ pval
+        throw new Error(err)
+    }
 }
 const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     for (const key in obj) {

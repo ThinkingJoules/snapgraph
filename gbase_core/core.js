@@ -9,6 +9,7 @@ let subBuffer = {}
 let bufferState = false
 let vTable = {}
 let reactConfigCB
+let gbChainState = true
 if(!gun){}
 
 const {
@@ -158,7 +159,7 @@ const gunToGbase = gunInstance =>{
     newColumn = makenewColumn(gun,findNextID,nextSortval,checkUniqueAlias)
     edit = makeedit(gun,gb,validateData,handleRowEditUndo,cascade)
     newRow = makenewRow(checkUniqueAlias,edit)
-    importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain)
+    importNewTable = makeimportNewTable(gun,checkUniqueAlias,findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,triggerChainRebuild)
     handleLinkColumn = makehandleLinkColumn(gb,cache,loadColDataToCache,handleNewLinkColumn)
     handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve,verifyLinksAndFNs)
     handleUnlinkColumn = makehandleUnlinkColumn(gb,changeColumnType)
@@ -192,7 +193,7 @@ function startGunConfigSubs(){
                         let configpath = configPathFromSoul(id)
                         setMergeValue(configpath,data,gb)
                         setupPropSubs(key)
-                        rebuildGBchain(id)
+                        triggerChainRebuild(id)
                     })
                     let basestate = key + '/state'
                     gun.get(basestate).on(function(gundata, id){
@@ -290,7 +291,7 @@ function handleGunSubConfig(subSoul){
                 }
                 let configpath = configPathFromSoul(subSoul)
                 setMergeValue(configpath,data,gb)
-                rebuildGBchain(id)
+                triggerChainRebuild(id)
             })
             
             
@@ -346,8 +347,15 @@ function buildRowPath(rowID,byAlias,newRow){
     return res
 
 }
+function triggerChainRebuild(path){
+    if(gbChainState){
+        gbChainState = false
+        setTimeout(rebuildGBchain, 3000, path)
+    }
+}
 function rebuildGBchain(path){
     //console.log('rebuilding gbase.chain from: ' + path)
+    gbChainState = true
     let res = {}
     for (const baseID in gb) {
         const baseConfig = gb[baseID];
@@ -463,7 +471,7 @@ function loadColDataToCache(base, tval, pval){
                     if(pval === 'p0'){
                         let configpath = configPathFromSoul(colSoul)
                         setMergeValue(configpath,{},gb)
-                        rebuildGBchain(colSoul)
+                        triggerChainRebuild(colSoul)
                     }
                 }
             })
@@ -486,7 +494,7 @@ function loadColDataToCache(base, tval, pval){
                 if(pval === 'p0'){
                     let configpath = configPathFromSoul(colSoul)
                     setMergeValue(configpath,data,gb)
-                    rebuildGBchain(id)
+                    triggerChainRebuild(id)
                 }
                 for (const key in data) {//remove stale cached rows
                     let rowpath = [base, tval, 'rows', key]

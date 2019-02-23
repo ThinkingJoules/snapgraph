@@ -65,6 +65,7 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
 const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, changeColumnType, handleRowEditUndo, oldConfigVals, handleFNColumn) => (configObj, path, backLinkCol, cb)=>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
+    cb = (cb instanceof Function && cb) || function(){}
     let cpath = configPathFromChainPath(path)
     let csoul = configSoulFromChainPath(path)
     let validConfig
@@ -136,6 +137,7 @@ const makehandleConfigChange = (gun, gb, checkUniqueAlias, checkUniqueSortval, c
 }
 const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, handleFNColumn, handleUnlinkColumn) =>function changeColtype(path, configObj, backLinkCol,cb){
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let [base, tval, pval] = path.split('/')
         let newType = configObj.GBtype
         if(pval[0] !== 'p'){
@@ -326,6 +328,7 @@ function checkForCirc(gb, origpath, checkpathArr){//see if add this function wil
 const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, solve,verifyLinksAndFNs) => function handlefncol(path,configObj,cb){
     //parse equation for all links
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,pval] = path.split('/')
         loadColDataToCache(base,tval,pval)
         let cpath = configPathFromChainPath(path)
@@ -446,6 +449,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
 
 const makehandleLinkColumn = (gb,cache,loadColDataToCache,handleNewLinkColumn) =>function handlelinkcol(path, configObj, backLinkCol, cb){
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         if(configObj.linkColumnTo === undefined){throw new Error('Must use the ".linkColumnTo()" API to make a column a link')}
         let [base, tval, pval] = path.split('/')
         let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
@@ -547,6 +551,7 @@ const makehandleUnlinkColumn = (gb, changeColumnType) => (path) => {//not used?
 const makehandleNewLinkColumn = (gun, gunSubs, newColumn, loadColDataToCache) =>(prev, next,cb)=>{
     // let prevConfig = {path,colSoul, data: prevPutObj}
     // let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, data: nextPutObj}
+    cb = (cb instanceof Function && cb) || function(){}
     gunSubs[prev.colSoul] = false
     if(next.colSoul){//all data
         gunSubs[next.colSoul] = false
@@ -680,6 +685,7 @@ const makehandleImportColCreation = (gun, gb, findNextID, nextSortval) => (base,
 const makehandleTableImportPuts = gun => (path, resultObj, cb)=>{
     //console.log(resultObj)
     //path base/tval
+    cb = (cb instanceof Function && cb) || function(){}
     let basesoul = path + '/r/'
     //console.log(basesoul)
     gun.get(basesoul + 'p0').put(resultObj.p0)//put alias keys in first, to ensure they write first in case of disk error, can reimport

@@ -49,8 +49,7 @@ const makenewColumn = (gun, findNextID, nextSortval,checkUniqueAlias) => (path) 
 }
 const makenewRow = (checkUniqueAlias, edit) => (path) => (alias, data, cb)=>{//HANDLE NEW PUT HERE, MOVE FROM EDIT
     try{
-        const c = () =>{}
-        cb = cb || c
+        cb = (cb instanceof Function && cb) || function(){}
         if(alias === undefined || typeof alias === 'object'){
             let err = 'You must specify an alias for this column, you supplied: '+ alias
             throw new Error(err)
@@ -74,6 +73,7 @@ const makenewRow = (checkUniqueAlias, edit) => (path) => (alias, data, cb)=>{//H
 }
 const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLinkCol, cb)=>{
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,pval] = path.split('/')
         if(pval==='p0'){throw new Error("Cannot use the first column to link another table")}
         let cpath = configPathFromChainPath(path)
@@ -117,9 +117,8 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
     }
 }
 const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =>{
-    const c = () => {}
-    cb = cb || c
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         handleConfigChange(configObj, path, backLinkCol,cb)
     }catch(e){
         console.log(e)
@@ -129,8 +128,7 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
 }
 const makeedit = (gun,gb,validateData,handleRowEditUndo, cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
     try{
-        const c = () => {}
-        cb = cb || c
+        cb = (cb instanceof Function && cb) || function(){}
         newRow = (newRow) ? true : false
         //let aliasCol = (byAlias) ? true : false
         let args = path.split('/')
@@ -301,19 +299,11 @@ const makeretrieve = gb => (path) => (colArr) =>{//not acutally working, unsure 
 }
 const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function linkrowto(property, gbaseGetRow, cb){
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         //gbaseGetRow = gbase[base][tval][rowID]
         let [base,tval,r] = path.split('/')
         let cols = getValue([base,'props',tval,'props'], gb)
-        let pval
-        if(byAlias){
-            pval = findID(cols,property)
-            if(!pval){
-                let err = 'Cannot find column with name: '+ pval +'. Linking aborted'
-                throw new Error(err)
-            }
-        }else{
-            pval = property
-        }
+        let pval = findID(cols,property)
         let colpath = [base,tval,pval].join('/')
         let colType = cols[pval].GBtype
         let linksTo = cols[pval].linksTo
@@ -365,18 +355,10 @@ const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function linkrowt
 const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(property, gbaseGetRow, cb){
     try{
         //gbaseGetRow = gbase[base][tval][rowID]
+        cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,r] = path.split('/')
         let cols = getValue([base,'props',tval,'props'], gb)
-        let pval
-        if(byAlias){
-            pval = findID(cols,property)
-            if(!pval){
-                let err = 'Cannot find column with name: '+ pval +'. Edit aborted'
-                throw new Error(err)
-            }
-        }else{
-            pval = property
-        }
+        let pval = findID(cols,property)
         let colpath = [base,tval,pval].join('/')
         let colType = cols[pval].GBtype
         let linksTo = cols[pval].linksTo
@@ -407,6 +389,7 @@ const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(propert
 }
 const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTESTED
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
+    cb = (cb instanceof Function && cb) || function(){}
     if(ovrwrt !== undefined){//turn truthy falsy to boolean
         ovrwrt = (ovrwrt) ? true : false
     }else{
@@ -450,9 +433,10 @@ const makeimportData = (gb, handleImportColCreation, handleTableImportPuts) => (
     }
     handleTableImportPuts(path, result, cb)
 }
-const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,rebuildGBchain) => (path) => (tsv, tAlias,cb)=>{
+const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handleImportColCreation,handleTableImportPuts,triggerChainRebuild) => (path) => (tsv, tAlias,cb)=>{
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let cpath = configPathFromChainPath(path)
         checkUniqueAlias(cpath, tAlias)
         let dataArr = tsvJSONgb(tsv)
@@ -486,7 +470,7 @@ const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handle
         gun.get(path + '/t').put({[tval]: true})
         let tpath = path + '/' + tval
         handleTableImportPuts(tpath, result,cb)
-        rebuildGBchain(tpath)
+        triggerChainRebuild(tpath)
     }catch(e){
         console.log(e)
         return e
@@ -494,6 +478,7 @@ const makeimportNewTable = (gun, checkUniqueAlias, findNextID,nextSortval,handle
 }
 const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache, getColumnType) => (path) => function clearcol(cb){
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,pval] = path.split('/')
         let csoul = [base,tval,'r',pval].join('/')
         let data = getValue([base,tval,pval],cache)
