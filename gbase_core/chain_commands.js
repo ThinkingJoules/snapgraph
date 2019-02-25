@@ -1,6 +1,5 @@
-const{newBaseConfig,newTableConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts} = require('./configs')
+const{newBaseConfig,newTableConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts,checkConfig} = require('./configs')
 const{getValue,
-    checkConfig,
     configPathFromChainPath,
     findID,
     findRowID,
@@ -46,11 +45,16 @@ const makenewTable = (gun, gb) => (path) => (tname, pname)=>{
         return e
     }
 }
-const makenewColumn = (gun, gb) => (path) => (pname, type)=>{
+const makenewColumn = (gun, gb) => (path,linksTo) => (pname, type)=>{
     try{
         let cpath = configPathFromChainPath(path)
         let nextP = findNextID(gb,path)
-        let pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+        let pconfig
+        if(linksTo){
+            pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path), linksTo})
+        }else{
+            pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+        }
         checkConfig(newColumnConfig(), pconfig)
         checkUniqueAlias(gb,cpath,pconfig.alias)
         gun.get(path + '/r/' + nextP + '/config').put(pconfig)
@@ -105,7 +109,9 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
         for (const p in ltPs) {
             let ltpconfig = ltPs[p]
             const type = ltpconfig.GBtype;
-            if(type === 'next'){
+            const a = ltpconfig.archived;
+            const d = ltpconfig.deleted;
+            if(type === 'next' && !a && !d){
                 let err = 'Can only have one "next" link column per table. Column: '+ ltpconfig.alias + ' is already a next column.'
                 throw new Error(err)
             }
@@ -222,16 +228,16 @@ const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, col
                 for (let j = 0; j < colArr.length; j++) {
                     const col = colArr[j];
                     let pval = findID(cols, col)
-                    if(pval !== undefined && cols[pval].vis === onlyVisible && !cols[pval].archived === notArchived && !cols[pval].deleted){
+                    if(pval !== undefined && cols[pval].vis === onlyVisible && cols[pval].archived !== notArchived && !cols[pval].deleted){
                         columns.push(pval)
-                    }else{
+                    }else if(pval === undefined){
                         let err = 'Cannot find column with name: '+ col
                         throw new Error(err)
                     }
                 }
             }else{//full object columns
                 for (const colp in cols) {
-                    if(cols[colp].vis === onlyVisible && !cols[colp].archived === notArchived && !cols[colp].deleted){
+                    if(cols[colp].vis === onlyVisible && cols[colp].archived === !notArchived && !cols[colp].deleted){
                         columns.push(colp)
                     }
                 }
@@ -243,22 +249,14 @@ const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, col
         //with filtered column list, generate configs from given args
         if(level === 'row'){//row path
             rowid = pathArgs[2]
-            if(colArr !== undefined){
-                objKey = tstring + rowid + '/' + colsString + '-' + subID
-            }else{
-                objKey = tstring + rowid + '/' + 'ALL-' + subID
-            }
+            objKey = tstring + rowid + '/' + colsString + '-' + subID
         }else if(level === 'column'){//column path
             pval = pathArgs[2]
             objKey = tstring + 'r/' + pval + '-' + subID
         }else{//table path
             rowid = false
             pval = false
-            if(colArr !== undefined){
-                objKey = tstring  + colsString + '-' + subID
-            }else{
-                objKey = tstring + 'ALL-' + subID
-            }
+            objKey = tstring  + colsString + '-' + subID
         }
         if(typeof gsubs[base] !== 'object'){
             gsubs[base] = new watchObj()
