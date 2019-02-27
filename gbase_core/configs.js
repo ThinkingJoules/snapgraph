@@ -251,7 +251,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
             //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
             let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
             let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
-            if(configObj.linksTo && getValue([linkBase,'props',linkTval], gb)){//check linksTo is valid table
+            if(configObj.linksTo && getValue([linkBase,'props',linkTval, 'props', linkPval], gb)){//check linksTo is valid table
                 if(backLinkCol && !getValue([backLBase,'props',backLTval, 'props', backLPval], gb)){//if backLinkCol specified, validate it exists
                     return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linkRowTo + '] Not Found')
                 }
@@ -535,7 +535,7 @@ const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newCo
                 putObj[GBID] = {}
                 let linkArr = linkStr.split(', ')
                 for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
-                    const HID = String(linkArr[i]);
+                    const HID = linkArr[i];
                     linkGBID = findRowID(linkHIDs,HID)
                     if(linkGBID){
                         if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
@@ -558,12 +558,12 @@ const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newCo
         }
         prevConfig.data = putObj
         nextConfig.data = nextObj
-        handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, prevConfig, nextConfig,cb)
+        handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prevConfig, nextConfig,cb)
     }catch(e){
         cb.call(this,e)
     }
 }
-function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, prev, next,cb){
+function handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prev, next,cb){
     // let prevConfig = {path,colSoul, data: prevPutObj}
     // let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, data: nextPutObj}
     cb = (cb instanceof Function && cb) || function(){}
@@ -594,19 +594,17 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
         }
         cb.call(this,undefined)
     }else{//create new next col on linksTo sheet
-        let prevCpath = configPathFromChainPath(prev.path)
-        let prevC = getValue(prevCpath,gb)
         let nextPathArgs = next.path.split('/')
         nextPathArgs.pop()
-        let call = newColumn(next.path, prev.path)
-        let nextP = call(prevC.alias + "'s", 'next')
+        let call = newColumn(_path)
+        let nextP = call(prev.t + "'s")
         if(next.data === undefined){
             next.data = false
         }
-        if(nextP[0] !== 'p'){throw new Error('Did not return a new pval. Instead returned: ' + nextP)}
-        let nextColSoul = nextPathArgs[0] + '/' + nextPathArgs[1] + '/r/' + nextP
+        if(nextP[0] !== 'p'){return console.log('did not return a new pval for new next col')}
+        nextColSoul = nextPathArgs[0] + '/' + nextPathArgs[1] + '/r/' + nextP
         let nextPath = nextPathArgs[0] + '/' + nextPathArgs[1] + '/' + nextP
-        //gun.get(nextColSoul + '/config').put({linksTo: prev.path})
+        gun.get(nextColSoul + '/config').put({GBtype: 'next', linksTo: prev.path})
         if (next.data !== undefined) {
             //gun.get(nextColSoul).put(next.data)
             for (const rowid in next.data) {
@@ -733,6 +731,5 @@ module.exports = {
     handleNewLinkColumn,
     handleImportColCreation,
     handleTableImportPuts,
-    makehandleFNColumn,
-    checkConfig
+    makehandleFNColumn
 }

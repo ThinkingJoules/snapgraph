@@ -132,7 +132,7 @@ const findID = (obj, name) =>{//obj is level above .props, input human name, ret
 const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
-            const alias = String(obj[key])
+            const alias = obj[key]
             if(alias === name){
                 return key
             }
@@ -229,8 +229,7 @@ const linkColPvals = (gb,base,tval)=>{
     let obj = getValue([base,'props',tval,'props'], gb)
     let result = {}
     for (const key in obj) {
-        let {linksTo,GBtype,archived,deleted} = obj[key]
-        if (linksTo && !archived && !deleted && (GBtype === 'prev' ||GBtype === 'next')) {
+        if (obj[key].linksTo && obj[key].GBtype === 'prev' || obj[key].GBtype === 'next') {
             const link = obj[key].linksTo
             result[key] = link
         }
