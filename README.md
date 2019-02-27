@@ -342,7 +342,7 @@ Only a single function is attached to the gun chain. It is used to load your gun
 ```
 gun.gbase(gun)
 ```
-## **gbase Chain**
+## **gbase Chain -Basic APIs-**
 ________
 ### newBase
 **newBase(*baseName*, *tableName*, *firstColumnName*, *baseID*)**  
@@ -509,8 +509,31 @@ Note: The chain function call will return undefined || error if it failed to set
 ```
 [Read here to understand the terminology used.](#gbase-vocab)
 
+## **gbase Chain -Config APIs-**
+________
+### config
+**config(*\*configObj*, *backLinkCol*, *cb*)**  
+configObj is required. 
 
-configs...
+configObj: Base
+```
+//valid keys
+```
+configObj: Table
+```
+//valid keys
+```
+configObj: Column
+```
+//valid keys
+```
+
+Example usage:
+```
+
+
+```
+_________
 
 
 

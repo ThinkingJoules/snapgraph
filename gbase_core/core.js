@@ -260,7 +260,7 @@ function buildTablePath(baseID, tval){
                 rowa[alias] = buildRowPath(gbid,true,false)
         }
     }
-    setupGBalias(path)
+    //setupGBalias(path)
     res[0] = Object.assign({}, colgb, rowgb, tableChainOpt(path))
     res[1] = Object.assign({}, cola, rowa, tableChainOpt(path))
     return res
@@ -268,7 +268,7 @@ function buildTablePath(baseID, tval){
 function buildColumnPath(baseID, tval, pval){
     let res
     const path = baseID + '/' + tval + '/' + pval
-    setupGBalias(path)
+    //setupGBalias(path)
     res = columnChainOpt(path)
     return res
 
@@ -277,7 +277,7 @@ function buildRowPath(rowID,byAlias,newRow){
     let res
     const path = rowID
     res = rowChainOpt(path,byAlias,newRow)
-    setupGBalias(path)
+    //setupGBalias(path)
     return res
 
 }
@@ -577,7 +577,7 @@ function requestInitialData(path, colArr, reqType){
         rowid = false
         pval = false
     }
-    if(!colArr && reqType === 'row' || reqType === 'table'){
+    if(!colArr && (reqType === 'row' || reqType === 'table')){
         colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
     }
     if(reqType === 'row'){
@@ -793,14 +793,13 @@ function handleSubUpdate(subID, buffer){
             if(pvals[0] !== 'ALL'){
                 for (const rowid in table) {
                     const row = table[rowid];
-                    let rowCopy = Gun.obj.copy(row) || {}
-                    for (const pval in rowCopy) {
-                        if(!pvals.includes(pval)){
-                            delete rowCopy[pval]
+                    let rowCopy = {}
+                    for (const pval in row) {
+                        if(pvals.includes(pval)){
+                            rowCopy[pval] = row[pval]
                         }
                     }
-                    out = Object.assign(out,rowCopy)
-                    //console.log(out)
+                    out[rowid] = rowCopy
                 }
             }else{
                 out = table
