@@ -32,7 +32,8 @@ const newTableConfig = (config) =>{
     let deleted = config.deleted || false
     let type = config.type || 'static'
     let result = config.result || ""
-    return {alias, type, sortval, vis, result, archived, deleted}
+    let direction = config.direction || ""
+    return {alias, type, sortval, vis, result, direction, archived, deleted}
 }
 const newInteractionColumnConfig = (config) =>{
     config = config || {}
@@ -42,13 +43,13 @@ const newInteractionColumnConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let GBtype = config.GBtype || 'string' 
-    let required = config.requred || false 
+    let required = config.required || false 
     let defaultval = config.defaultval || null 
     let fn = config.fn || "" 
     let usedIn = JSON.stringify([])
     let associations = JSON.stringify([])
-    let dateIndex = config.dateIndex || false
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, associations, dateIndex}
+    let dateFormat = config.dateFormat || ""
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, associations, dateFormat}
 }
 const newColumnConfig = (config) =>{
     config = config || {}
@@ -58,16 +59,17 @@ const newColumnConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let GBtype = config.GBtype || 'string' 
-    let required = config.requred || false 
+    let required = config.required || false 
     let defaultval = config.defaultval || null 
     let fn = config.fn || "" 
     let usedIn = JSON.stringify([])
     let linksTo = config.linksTo || ""
     let linkMultiple = config.linkMultiple || true
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple}
+    let dateFormat = config.dateFormat || ""
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, dateFormat}
 }
-const validGBtypes = ["string", "number", "boolean", "null", "prev", "next", "function", "tag", "link"] //link is not really valid, but is always handled
-const validTableTypes = ['static','interaction']
+const validGBtypes = ["string", "number", "boolean", "date", "percent", "list", "null", "prev", "next", "function", "tag", "interaction", "link"] //link is not really valid, but is always handled
+const validTableTypes = ['static', 'asset', 'transaction', 'interaction', 'log', 'intent']
 const checkConfig = (validObj, testObj) =>{//use for new configs, or update to configs
     //whichConfig = base, table, column, ..row?
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}

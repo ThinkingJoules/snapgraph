@@ -838,7 +838,7 @@ function handleNewData(soul, data){
     }
     if(!bufferState){
         bufferState = true
-        setTimeout(flushSubBuffer, 100)
+        setTimeout(flushSubBuffer, 250)
     }
     // determine what has changed
     //set new values

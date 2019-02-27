@@ -1,4 +1,4 @@
-const{newBaseConfig,newTableConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts} = require('./configs')
+const{newBaseConfig,newTableConfig,newInteractionColumnConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts} = require('./configs')
 const{getValue,
     checkConfig,
     configPathFromChainPath,
@@ -17,9 +17,7 @@ const{getValue,
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, tname, pname, baseID) =>{
-    if(baseID === undefined){
-        baseID = 'B' + Gun.text.random(8)   
-    }
+    baseID = baseID || 'B' + Gun.text.random(8)   
     gun.get('GBase').put({[baseID]: true})
     gun.get(baseID + '/config').put(newBaseConfig({alias}))
     gun.get(baseID + '/t0/config').put(newTableConfig({alias: tname}))
@@ -28,11 +26,14 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
     gun.get(baseID + '/t').put({t0: true})
     return baseID
 }
-const makenewTable = (gun, gb) => (path) => (tname, pname)=>{
+const makenewStaticTable = (gun, gb) => (path) => (tname, pname, tableType)=>{
     try{
         let cpath = configPathFromChainPath(path)
         let nextT = findNextID(gb,path)
-        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path)})
+        if(tableType && tableType !== 'static' && tableType !== 'asset'){
+            throw new Error('Type must be either "static" or "asset".')
+        }
+        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path), type:tableType})
         checkConfig(newTableConfig(), tconfig)
         checkUniqueAlias(gb, cpath, tconfig.alias)
         let pconfig = newColumnConfig({alias: pname})
@@ -46,6 +47,60 @@ const makenewTable = (gun, gb) => (path) => (tname, pname)=>{
         return e
     }
 }
+const validInteraction = ['transaction', 'interaction', 'intent']
+const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assetTable)=>{
+    //assocArr = ['baseID/tval', 'baseID/tval2] //associations can be other interaction tables
+    //resultConfig = {result: baseID/t1/pval,
+                    //instance: baseID/t2/pval //>> linksTo: baseID/t1/pn || undefined, meaning result and instance are one to one.
+    //}
+    try{
+        if(!validInteraction.includes(tableType)){
+            throw new Error('Either no table type specified, or specified value is not one of: '+ validInteraction.join(', '))
+        }
+        let tconfig
+        let cols = {}
+        if(tableType === 'transaction'){//this is a transactional interaction
+            if(!assetTable){throw new Error('Must specify which asset you want this table to be able to transact with.')}
+            let cpath = configPathFromChainPath(assetTable)
+            let {type} = getValue(cpath, gb)
+            if(type !== 'asset'){throw new Error('Specified table was not of type "asset".')}
+            tconfig = newTableConfig({alias: tname, type: 'transaction', sortval: nextSortval(gb,path)})
+            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true})
+            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
+        }else if(tableType === 'interaction'){//simple interaction with a static table
+            tconfig = newTableConfig({alias: tname, type: 'interaction', sortval: nextSortval(gb,path)})
+            cols.p0 = newInteractionColumnConfig({alias: 'Interaction ID', required: true})
+            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
+        }else if(tableType === 'intent'){//intent is basically a collector of transactions, long lived
+            if(!assetTable){throw new Error('Must specify which asset you want this table to be able to transact with.')}
+            let cpath = configPathFromChainPath(assetTable)
+            let {type} = getValue(cpath, gb)
+            if(type !== 'asset'){throw new Error('Specified table was not of type "asset".')}
+            tconfig = newTableConfig({alias: tname, type: 'intent', sortval: nextSortval(gb,path)})
+            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true})
+            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
+        }
+        let cpath = configPathFromChainPath(path)
+        let nextT = findNextID(gb,path)
+        checkConfig(newTableConfig(), tconfig)
+        checkUniqueAlias(gb, cpath, tconfig.alias)
+        
+        gun.get(path + '/' + nextT + '/config').put(tconfig)
+        let ps = {}
+        for (const pval in cols) {
+            const colConfig = cols[pval];
+            ps[pval] = true
+            gun.get(path + '/' + nextT + '/r/'+ pval +'/config').put(colConfig)
+        }
+        gun.get(path + '/t').put({[nextT]: true})
+        gun.get(path + '/' + nextT + '/r/p').put(ps)
+        return nextT
+    }catch(e){
+        console.log(e)
+        return e
+    }
+}
+
 const makenewColumn = (gun, gb) => (path) => (pname, type)=>{
     try{
         let cpath = configPathFromChainPath(path)
@@ -61,7 +116,7 @@ const makenewColumn = (gun, gb) => (path) => (pname, type)=>{
         return false
     }
 }
-const makenewRow = (edit) => (path) => (alias, data, cb)=>{//HANDLE NEW PUT HERE, MOVE FROM EDIT
+const makenewRow = (edit) => (path) => (alias, data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         if(alias === undefined || typeof alias === 'object'){
@@ -133,7 +188,7 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
         return false
     }
 }
-const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
+const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         newRow = (newRow) ? true : false
@@ -526,7 +581,8 @@ const makeshowgunsub = (gunSubs)=> () =>{
 
 module.exports = {
     makenewBase,
-    makenewTable,
+    makenewStaticTable,
+    makenewInteractionTable,
     makenewColumn,
     makenewRow,
     makelinkColumnTo,
