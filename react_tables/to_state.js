@@ -156,12 +156,10 @@ const generateHeaderRow = (gb, base, tval)=>{
     let headers = []
     let headerValues = []
     for (const pval in columns) {
-        const {alias,sortval,archived,deleted} = columns[pval];
-        if(!archived && !deleted){
-            headerAlias[pval] = alias
-            headerOrder[sortval] = pval
-        }
-        
+        const alias = columns[pval].alias;
+        const sortval = columns[pval].sortval;
+        headerAlias[pval] = alias
+        headerOrder[sortval] = pval
     }
     let headerSort = Object.keys(headerOrder).sort(function(a, b){return a - b});
     for (let i = 0; i < headerSort.length; i++) {
@@ -176,6 +174,7 @@ const xformRowObjToArr = (gb, rowObj, orderedHeader, linkColPvals)=>{
     let rowArr = []
     for (let j = 0; j < orderedHeader.length; j++) {
         const pval = orderedHeader[j];
+        let linksArr
         if(rowObj[pval]){
             if(linkColPvals[pval]){//value is link
                 let cellValue = []
@@ -220,7 +219,7 @@ const makelinkOptions = gb => (base,tval) =>{
                 if (GBtype === 'next') {
                     valid = false
                     break
-                }else if(GBtype === 'string'|| GBtype === 'number'){
+                }else if(GBtype === 'string'){
                     colObj.pval = p
                     validCols.push(colObj)
                 }
