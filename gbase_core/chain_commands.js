@@ -16,9 +16,7 @@ const{getValue,
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, tname, pname, baseID) =>{
-    if(baseID === undefined){
-        baseID = 'B' + Gun.text.random(8)   
-    }
+    baseID = baseID || 'B' + Gun.text.random(8)   
     gun.get('GBase').put({[baseID]: true})
     gun.get(baseID + '/config').put(newBaseConfig({alias}))
     gun.get(baseID + '/t0/config').put(newTableConfig({alias: tname}))
@@ -27,11 +25,14 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
     gun.get(baseID + '/t').put({t0: true})
     return baseID
 }
-const makenewTable = (gun, gb) => (path) => (tname, pname)=>{
+const makenewStaticTable = (gun, gb) => (path) => (tname, pname, tableType)=>{
     try{
         let cpath = configPathFromChainPath(path)
         let nextT = findNextID(gb,path)
-        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path)})
+        if(tableType && tableType !== 'static' && tableType !== 'asset'){
+            throw new Error('Type must be either "static" or "asset".')
+        }
+        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path), type:tableType})
         checkConfig(newTableConfig(), tconfig)
         checkUniqueAlias(gb, cpath, tconfig.alias)
         let pconfig = newColumnConfig({alias: pname})
@@ -65,7 +66,7 @@ const makenewColumn = (gun, gb) => (path,linksTo) => (pname, type)=>{
         return false
     }
 }
-const makenewRow = (edit) => (path) => (alias, data, cb)=>{//HANDLE NEW PUT HERE, MOVE FROM EDIT
+const makenewRow = (edit) => (path) => (alias, data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         if(alias === undefined || typeof alias === 'object'){
@@ -139,7 +140,7 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
         return false
     }
 }
-const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{//TODO: MOVE NEW ROW TO THE NEWROW API
+const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         newRow = (newRow) ? true : false
@@ -524,7 +525,8 @@ const makeshowgunsub = (gunSubs)=> () =>{
 
 module.exports = {
     makenewBase,
-    makenewTable,
+    makenewStaticTable,
+    makenewInteractionTable,
     makenewColumn,
     makenewRow,
     makelinkColumnTo,
