@@ -25,35 +25,17 @@ const newBaseConfig = (config) =>{
 }
 const newTableConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Table'
+    let alias = config.alias || 'New Table ' + config.sortval
     let sortval = config.sortval || 0
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
     let type = config.type || 'static'
-    let result = config.result || ""
-    let direction = config.direction || ""
-    return {alias, type, sortval, vis, result, direction, archived, deleted}
-}
-const newInteractionColumnConfig = (config) =>{
-    config = config || {}
-    let alias = config.alias || 'New Column'
-    let sortval = config.sortval || 0
-    let vis = config.vis || true
-    let archived = config.archived || false
-    let deleted = config.deleted || false
-    let GBtype = config.GBtype || 'string' 
-    let required = config.required || false 
-    let defaultval = config.defaultval || null 
-    let fn = config.fn || "" 
-    let usedIn = JSON.stringify([])
-    let associations = JSON.stringify([])
-    let dateFormat = config.dateFormat || ""
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, associations, dateFormat}
+    return {alias, type, sortval, vis, archived, deleted}
 }
 const newColumnConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Column'
+    let alias = config.alias || 'New Column ' + config.sortval
     let sortval = config.sortval || 0
     let vis = config.vis || true
     let archived = config.archived || false
@@ -65,11 +47,71 @@ const newColumnConfig = (config) =>{
     let usedIn = JSON.stringify([])
     let linksTo = config.linksTo || ""
     let linkMultiple = config.linkMultiple || true
+    let associatedWith = config.associatedWith || ""
+    let format = config.format || ""
     let dateFormat = config.dateFormat || ""
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, dateFormat}
+    let result = config.result || ""
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, associatedWith, dateFormat, format, result}
 }
-const validGBtypes = ["string", "number", "boolean", "date", "percent", "list", "null", "prev", "next", "function", "tag", "interaction", "link"] //link is not really valid, but is always handled
-const validTableTypes = ['static', 'asset', 'transaction', 'interaction', 'log', 'intent']
+const newInteractionTableConfig = (config) =>{
+    config = config || {}
+    let alias = config.alias || 'New Interaction Table ' + config.sortval
+    let sortval = config.sortval || 0
+    let vis = config.vis || true
+    let archived = config.archived || false
+    let deleted = config.deleted || false
+    let type = config.type || 'interaction'
+    let transactions = (config.transactions && JSON.stringify(config.transactions)) || JSON.stringify({}) // {resultColPath1: inc || dec}, must have an instance column in li with same tval
+    let reference = config.reference || "" //only for transactions, could be any table path that has the same context
+    let completed = config.completed || "" //column on table that shows whether record is complete.
+    let context = config.context || "" //only for transactions, this is a static table path
+    /*reference and context will be tPaths, and there will be 'association' columns made on this transaction for each
+    basically the reference and context will treat those association columns with special rules.
+    */
+    return {alias, type, sortval, vis, transactions, completed, context, reference, archived, deleted}
+}
+const newInteractionColumnConfig = (config) =>{
+    config = config || {}
+    let alias = config.alias || 'New Interaction Column ' + config.sortval
+    let sortval = config.sortval || 0
+    let vis = config.vis || true
+    let archived = config.archived || false
+    let deleted = config.deleted || false
+    let GBtype = config.GBtype || 'string' 
+    let required = config.required || false 
+    let defaultval = config.defaultval || null 
+    let fn = config.fn || "" 
+    let usedIn = (config.usedIn && JSON.stringify(config.usedIn)) || JSON.stringify([])
+    let associations = (config.associations && JSON.stringify(config.associations)) || JSON.stringify([])
+    let format = config.format || ""
+    let dateFormat = config.dateFormat || ""
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, associations, dateFormat, format}
+}
+const newListItemsConfig = (config) =>{
+    config = config || {}
+    let total_AU = config.total_AU || ""
+    let total = config.total || ""
+    let completed = config.completed || "" //column on li that should show that row as being completed
+    return {total_AU, total, completed}
+}
+const newListItemColumnConfig = (config) =>{
+    config = config || {}
+    let alias = config.alias || 'New Line Item Column ' + config.sortval
+    let sortval = config.sortval || 0
+    let vis = config.vis || true
+    let archived = config.archived || false
+    let deleted = config.deleted || false
+    let GBtype = config.GBtype || 'string' 
+    let required = config.required || false 
+    let defaultval = config.defaultval || null 
+    let fn = config.fn || "" 
+    let usedIn = (config.usedIn && JSON.stringify(config.usedIn)) || JSON.stringify([])
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn}
+}
+const validGBtypes = ["string", "number", "boolean", "date", "list", "null", "prev", "next", "function", "tag", "association", "result", "cumulative", "link"] //link is not really valid, but is always handled
+const validTableTypes = ['static', 'transaction', 'interaction']
+const validListItemType = ['instance','lifunction','string','number']
+const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj) =>{//use for new configs, or update to configs
     //whichConfig = base, table, column, ..row?
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}
@@ -81,7 +123,7 @@ const checkConfig = (validObj, testObj) =>{//use for new configs, or update to c
                 let err = 'typeof value must be one of: '+ nullValids
                 throw new Error(err)
             }else if(vTypeof !== tTypeof){
-                let err = vTypeof+ ' !== '+ tTypeof
+                let err = vTypeof + ' !== '+ tTypeof
                 throw new Error(err)
             }
             if(key === 'type' && !validTableTypes.includes(testObj[key])){
@@ -214,7 +256,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
                 cb.call(this,undefined)
             }
         }
-        let colSoul = base + '/' + tval + '/r/' + pval
+        let colSoul = base + '/' + tval + '/' + pval
         
         if(newType === 'string' || newType === 'number' || newType === 'boolean'){//100% pass, or error and change nothing.
             let data = getValue([base,tval,pval], cache)
@@ -251,7 +293,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
             //initial upload links MUST look like: "HIDabc, HID123" spliting on ", "
             let [linkBase, linkTval, linkPval] = (configObj.linksTo) ? configObj.linksTo.split('/') : [false,false,false]
             let [backLBase, backLTval, backLPval] = (backLinkCol) ? backLinkCol.split('/') : [false,false,false]
-            if(configObj.linksTo && getValue([linkBase,'props',linkTval, 'props', linkPval], gb)){//check linksTo is valid table
+            if(configObj.linksTo && getValue([linkBase,'props',linkTval], gb)){//check linksTo is valid table
                 if(backLinkCol && !getValue([backLBase,'props',backLTval, 'props', backLPval], gb)){//if backLinkCol specified, validate it exists
                     return console.log('ERROR-Aborted Linking: Back link column ['+backLinkCol+ '] on sheet: ['+ linkRowTo + '] Not Found')
                 }
@@ -437,7 +479,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         for (let i = 0; i < newLinksTo.length; i++) {
             const link = newLinksTo[i];
             let [base,tval,pval] = link.split('/')
-            let soul = [base,tval,'r',pval].join('/')
+            let soul = link
             if(!gunSubs[soul]){
                 inMemory = false
                 loadColDataToCache(base,tval,pval)
@@ -463,7 +505,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
                 gun.get(thisColConfigSoul).put({GBtype: 'function'})
             }
             gun.get(thisColConfigSoul).put({fn: fn})//add fn to config
-            let colSoul = [base,tval,'r',pval].join('/')
+            let colSoul = [base,tval,pval].join('/')
             //console.log(result)
             gun.get(colSoul).put(result)//put the new calc results in to gun
 
@@ -514,8 +556,8 @@ const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newCo
         let targetLink = configObj.linksTo
         let targetTable = targetLink.t
 
-        let colSoul = base + '/' + tval + '/r/' + pval
-        let nextColSoul = (backLinkCol) ? backLBase + '/' + backLTval + '/r/' + backLPval : false
+        let colSoul = [base,tval,pval].join('/')
+        let nextColSoul = (backLinkCol) ? [backLBase,backLTval,backLPval].join('/') : false
     
         let prevConfig = {path,colSoul}
         let nextConfig = {path: configObj.linksTo,nextLinkCol: backLinkCol, colSoul: nextColSoul}
@@ -602,7 +644,7 @@ function handleNewLinkColumn(gun, gunSubs, newColumn, loadColDataToCache, prev, 
             next.data = false
         }
         if(nextP[0] !== 'p'){return console.log('did not return a new pval for new next col')}
-        nextColSoul = nextPathArgs[0] + '/' + nextPathArgs[1] + '/r/' + nextP
+        nextColSoul = nextPathArgs[0] + '/' + nextPathArgs[1] + '/' + nextP
         let nextPath = nextPathArgs[0] + '/' + nextPathArgs[1] + '/' + nextP
         gun.get(nextColSoul + '/config').put({GBtype: 'next', linksTo: prev.path})
         if (next.data !== undefined) {
@@ -655,8 +697,8 @@ const handleImportColCreation = (gun, gb, base, tval, colHeaders, datarow, appen
             let pconfig = newColumnConfig({alias: palias, GBtype: colType, sortval: sort})
             let typeCheck = checkConfig(newColumnConfig(), pconfig)
             if(typeCheck){
-                gun.get(path + '/r/' + pval + '/config').put(pconfig)
-                gun.get(path + '/r/p').put({[pval]: true})
+                gun.get(path + '/' + pval + '/config').put(pconfig)
+                gun.get(path + '/p').put({[pval]: true})
             }
         }
     }else if(append){//existing table and we can add more columns/rows
@@ -683,8 +725,8 @@ const handleImportColCreation = (gun, gb, base, tval, colHeaders, datarow, appen
                 let pconfig = newColumnConfig({alias: palias, GBtype: colType, sortval: sort})
                 let typeCheck = checkConfig(newColumnConfig(), pconfig)
                 if(typeCheck){
-                    gun.get(path + '/r/' + pval + '/config').put(pconfig)
-                    gun.get(path + '/r/p').put({[pval]: true})
+                    gun.get(path + '/' + pval + '/config').put(pconfig)
+                    gun.get(path + '/p').put({[pval]: true})
                     pInt ++
                     nextS += 10
                 }
@@ -701,7 +743,7 @@ const handleTableImportPuts = (gun, path, resultObj, cb)=>{
     //console.log(resultObj)
     //path base/tval
     cb = (cb instanceof Function && cb) || function(){}
-    let basesoul = path + '/r/'
+    let basesoul = path + '/'
     //console.log(basesoul)
     gun.get(basesoul + 'p0').put(resultObj.p0)//put alias keys in first, to ensure they write first in case of disk error, can reimport
     //create instance nodes
@@ -722,6 +764,7 @@ const handleTableImportPuts = (gun, path, resultObj, cb)=>{
 module.exports = {
     newBaseConfig,
     newTableConfig,
+    newInteractionTableConfig,
     newInteractionColumnConfig,
     newColumnConfig,
     makehandleConfigChange,
@@ -731,5 +774,8 @@ module.exports = {
     handleNewLinkColumn,
     handleImportColCreation,
     handleTableImportPuts,
-    makehandleFNColumn
+    makehandleFNColumn,
+    newListItemsConfig,
+    newListItemColumnConfig,
+    checkConfig
 }

@@ -1,6 +1,16 @@
-const{newBaseConfig,newTableConfig,newInteractionColumnConfig,newColumnConfig,handleImportColCreation,handleTableImportPuts} = require('./configs')
+const{newBaseConfig,
+    newTableConfig,
+    newInteractionTableConfig,
+    newInteractionColumnConfig,
+    newColumnConfig,
+    handleImportColCreation,
+    handleTableImportPuts,
+    newListItemsConfig,
+    newListItemColumnConfig,
+    checkConfig
+} = require('./configs')
+
 const{getValue,
-    checkConfig,
     configPathFromChainPath,
     findID,
     findRowID,
@@ -12,7 +22,8 @@ const{getValue,
     checkUniqueAlias,
     findNextID,
     nextSortval,
-    getColumnType
+    getColumnType,
+    hasColumnType
 } = require('./util')
 
 //GBASE CHAIN COMMANDS
@@ -21,9 +32,9 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
     gun.get('GBase').put({[baseID]: true})
     gun.get(baseID + '/config').put(newBaseConfig({alias}))
     gun.get(baseID + '/t0/config').put(newTableConfig({alias: tname}))
-    gun.get(baseID + '/t0/r/p0/config').put(newColumnConfig({alias: pname}))   
-    gun.get(baseID + '/t0/r/p').put({p0: true})
-    gun.get(baseID + '/t').put({t0: true})
+    gun.get(baseID + '/t0/p0/config').put(newColumnConfig({alias: pname}))   
+    gun.get(baseID + '/t0/p').put({p0: true})
+    gun.get(baseID + '/t').put({t0: 'static'})
     return baseID
 }
 const makenewStaticTable = (gun, gb) => (path) => (tname, pname, tableType)=>{
@@ -38,78 +49,190 @@ const makenewStaticTable = (gun, gb) => (path) => (tname, pname, tableType)=>{
         checkUniqueAlias(gb, cpath, tconfig.alias)
         let pconfig = newColumnConfig({alias: pname})
         gun.get(path + '/' + nextT + '/config').put(tconfig)
-        gun.get(path + '/' + nextT + '/r/p0/config').put(pconfig)
-        gun.get(path + '/t').put({[nextT]: true})
-        gun.get(path + '/' + nextT + '/r/p').put({p0: true})
+        gun.get(path + '/' + nextT + '/p0/config').put(pconfig)
+        gun.get(path + '/t').put({[nextT]: "static"})
+        gun.get(path + '/' + nextT + '/p').put({p0: true})
         return nextT
     }catch(e){
         console.log(e)
         return e
     }
 }
-const validInteraction = ['transaction', 'interaction', 'intent']
-const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assetTable)=>{
+const validInteraction = ['transaction', 'interaction']
+const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocArr, contextRef, ref)=>{
+    //path = baseID
     //assocArr = ['baseID/tval', 'baseID/tval2] //associations can be other interaction tables
     //resultConfig = {result: baseID/t1/pval,
                     //instance: baseID/t2/pval //>> linksTo: baseID/t1/pn || undefined, meaning result and instance are one to one.
     //}
     try{
+        const newColumn = makenewColumn(gun,gb)
+        const newInteractionColumn = makenewInteractionColumn(gun,gb)
         if(!validInteraction.includes(tableType)){
             throw new Error('Either no table type specified, or specified value is not one of: '+ validInteraction.join(', '))
         }
+        let cpath = configPathFromChainPath(path)
+        assocArr = assocArr || []
         let tconfig
+        let liconfig
         let cols = {}
+        let liCols = {}
+        let nextT = findNextID(gb,path)
+        let nextPval = 0
         if(tableType === 'transaction'){//this is a transactional interaction
-            if(!assetTable){throw new Error('Must specify which asset you want this table to be able to transact with.')}
-            let cpath = configPathFromChainPath(assetTable)
-            let {type} = getValue(cpath, gb)
-            if(type !== 'asset'){throw new Error('Specified table was not of type "asset".')}
-            tconfig = newTableConfig({alias: tname, type: 'transaction', sortval: nextSortval(gb,path)})
-            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true})
-            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
+            if(!contextRef){throw new Error('Must specify a static table to use as context for all of these transactions.')}
+            let contextCpath = configPathFromChainPath(contextRef)
+            let {alias} = getValue(contextCpath,gb)
+            tconfig = newInteractionTableConfig({alias: tname, type: 'transaction', sortval: nextSortval(gb,path)})
+            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true, sortval: 0})
+            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true, sortval: 10})
+            cols.p2 = newInteractionColumnConfig({alias: 'Completed', GBtype: 'lifunction', fn: 'IF(AND({li/p3}),TRUE(),FALSE())', sortval: 20 })
+            liCols.p0 = newListItemColumnConfig({alias, sortval: 0, GBtype: 'association', required:true})
+            liCols.p1 = newListItemColumnConfig({alias: 'Quantity', sortval: 10, GBtype: 'number', required:true, defaultval: 1, usedIn:['p3'] })
+            liCols.p2 = newListItemColumnConfig({alias: 'Completed ' + alias, sortval: 20, GBtype: 'result', usedIn:['p3']})
+            liCols.p3 = newListItemColumnConfig({alias: 'Completed', sortval: 30, GBtype: 'lifunction', fn: 'IF({p1} = {p2},TRUE(),FALSE())', usedIn:[[path, nextT, 'p2'].join('/')] })
+            liconfig = newListItemsConfig({total: 'p2', completed: 'p3'})
+            nextPval = 3
+            if(ref){//this new transaction table is trying to be linked to another transaction/interaction
+                let [rbase,rtval] = ref.split('/')//clean to make sure no pval specified
+                let refTpath = [rbase,rtval].join('/')
+                let refCpath = configPathFromChainPath(refTpath)
+                let {type, context} = getValue(refCpath,gb)
+                if(type === 'transaction'){//linking transaction to transaction
+                    if(context !== contextRef){throw new Error(context + '!=' + contextRef +' : Cannot reference a transaction with a different context')}
+                    //bring in associations from ref
+                    assocArr = assocArr.concat(hasColumnType(gb,refTpath,'association'))
+                }else{
+                    throw new Error('A transaction can only reference another transaction? Can they reference an interaction? Cannot see why.')
+                }
+            }
+            let cleanPaths = assocArr.map(function(path){
+                let [base,tval] = path.split('/')
+                let clean = [base,tval].join('/')
+                return clean
+            })
+            let uniq = [ ...new Set(cleanPaths) ]
+            for (let i = 0; i < uniq.length; i++) {//create bi-directional associations
+                const tpath = uniq[i];
+                let linkpath = tpath.split('/')
+                let linkCpath = configPathFromChainPath(tpath)
+                let {alias, type} = getValue(linkCpath,gb)
+                let pval = 'p' + nextPval
+                let ipath = [path, nextT, pval].join('/')
+                let call
+                if(type === "static"){
+                    call = newColumn(tpath, {associatedWith: ipath})
+                }else{
+                    call = newInteractionColumn(tpath, {associatedWith: ipath})
+                }
+                let linkpval = call('Associated ' + tname, 'association')
+                linkpath.push(linkpval)
+                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/')})
+                nextPval ++
+            }
+            checkConfig(newTableConfig(), tconfig)
+            checkUniqueAlias(gb, cpath, tconfig.alias)
+            gun.get(path + '/' + nextT + '/config').put(tconfig)
+            let ps = {}
+            for (const pval in cols) {
+                const colConfig = cols[pval];
+                ps[pval] = true
+                gun.get(path + '/' + nextT + '/'+ pval +'/config').put(colConfig)
+            }
+            gun.get(path + '/' + nextT + '/li/config').put(liconfig)
+            let lips = {}
+            for (const pval in liCols) {
+                const colConfig = liCols[pval];
+                lips[pval] = true
+                gun.get(path + '/' + nextT + '/li/'+ pval +'/config').put(colConfig)
+            }
+            gun.get(path + '/' + nextT + '/p').put(ps)
+            gun.get(path + '/' + nextT + '/li').put(lips)
+            gun.get(path + '/t').put({[nextT]: tableType})
+            return nextT
         }else if(tableType === 'interaction'){//simple interaction with a static table
             tconfig = newTableConfig({alias: tname, type: 'interaction', sortval: nextSortval(gb,path)})
             cols.p0 = newInteractionColumnConfig({alias: 'Interaction ID', required: true})
             cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
-        }else if(tableType === 'intent'){//intent is basically a collector of transactions, long lived
-            if(!assetTable){throw new Error('Must specify which asset you want this table to be able to transact with.')}
-            let cpath = configPathFromChainPath(assetTable)
-            let {type} = getValue(cpath, gb)
-            if(type !== 'asset'){throw new Error('Specified table was not of type "asset".')}
-            tconfig = newTableConfig({alias: tname, type: 'intent', sortval: nextSortval(gb,path)})
-            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true})
-            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
+            let cleanPaths = assocArr.map(function(path){
+                let [base,tval] = path.split('/')
+                let clean = [base,tval].join('/')
+                return clean
+            })
+            let uniq = [ ...new Set(cleanPaths) ]
+            for (let i = 0; i < uniq.length; i++) {//create bi-directional associations
+                const tpath = uniq[i];
+                let linkpath = tpath.split('/')
+                let linkCpath = configPathFromChainPath(tpath)
+                let {alias, type} = getValue(linkCpath,gb)
+                let pval = 'p' + nextPval
+                let ipath = [path, nextT, pval].join('/')
+                let call
+                if(type === "static"){
+                    call = newColumn(tpath, {associatedWith: ipath})
+                }else{
+                    call = newInteractionColumn(tpath, {associatedWith: ipath})
+                }
+                let linkpval = call('Associated ' + tname, 'association')
+                linkpath.push(linkpval)
+                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/')})
+                nextPval ++
+            }
+            checkConfig(newTableConfig(), tconfig)
+            checkUniqueAlias(gb, cpath, tconfig.alias)
+            gun.get(path + '/' + nextT + '/config').put(tconfig)
+            let ps = {}
+            for (const pval in cols) {
+                const colConfig = cols[pval];
+                ps[pval] = true
+                gun.get(path + '/' + nextT + '/'+ pval +'/config').put(colConfig)
+            }
+            gun.get(path + '/' + nextT + '/p').put(ps)
+            gun.get(path + '/t').put({[nextT]: tableType})
+            return nextT
         }
-        let cpath = configPathFromChainPath(path)
-        let nextT = findNextID(gb,path)
-        checkConfig(newTableConfig(), tconfig)
-        checkUniqueAlias(gb, cpath, tconfig.alias)
-        
-        gun.get(path + '/' + nextT + '/config').put(tconfig)
-        let ps = {}
-        for (const pval in cols) {
-            const colConfig = cols[pval];
-            ps[pval] = true
-            gun.get(path + '/' + nextT + '/r/'+ pval +'/config').put(colConfig)
-        }
-        gun.get(path + '/t').put({[nextT]: true})
-        gun.get(path + '/' + nextT + '/r/p').put(ps)
-        return nextT
     }catch(e){
         console.log(e)
         return e
     }
 }
-
-const makenewColumn = (gun, gb) => (path) => (pname, type)=>{
+const makenewInteractionColumn = (gun, gb) => (path,config) => (pname, type)=>{
+    try{
+        
+        let cpath = configPathFromChainPath(path)
+        let nextP = findNextID(gb,path)
+        let pconfig
+        if(config){
+            config = Object.assign({alias: pname, GBtype: type, sortval: nextSortval(gb,path)}, config)
+            pconfig = newInteractionColumnConfig(config)
+        }else{
+            pconfig = newInteractionColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+        }
+        checkConfig(newInteractionColumnConfig(), pconfig)
+        checkUniqueAlias(gb,cpath,pconfig.alias)
+        gun.get(path + '/' + nextP + '/config').put(pconfig)
+        gun.get(path + '/p').put({[nextP]: true})
+        return nextP
+    }catch(e){
+        console.log(e)
+        return false
+    }
+}
+const makenewColumn = (gun, gb) => (path, config) => (pname, type)=>{
     try{
         let cpath = configPathFromChainPath(path)
         let nextP = findNextID(gb,path)
-        let pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+        let pconfig
+        if(config){
+            config = Object.assign({alias: pname, GBtype: type, sortval: nextSortval(gb,path)}, config)
+            pconfig = newColumnConfig(config)
+        }else{
+            pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+        }
         checkConfig(newColumnConfig(), pconfig)
         checkUniqueAlias(gb,cpath,pconfig.alias)
-        gun.get(path + '/r/' + nextP + '/config').put(pconfig)
-        gun.get(path + '/r/p').put({[nextP]: true})
+        gun.get(path + '/' + nextP + '/config').put(pconfig)
+        gun.get(path + '/p').put({[nextP]: true})
         return nextP
     }catch(e){
         console.log(e)
@@ -220,7 +343,7 @@ const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) 
         if(!validatedObj){return}
         //console.log(validatedObj)
         for (const key in validatedObj) {
-            let colSoul = base + '/' + tval + '/r/' + key
+            let colSoul = base + '/' + tval + '/' + key
             const value = validatedObj[key];
             if(key !== 'p0'){//put non-row name changes
                 gun.get(colSoul).get(path).put(value)
@@ -277,16 +400,16 @@ const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, col
                 for (let j = 0; j < colArr.length; j++) {
                     const col = colArr[j];
                     let pval = findID(cols, col)
-                    if(pval !== undefined && cols[pval].vis === onlyVisible && !cols[pval].archived === notArchived && !cols[pval].deleted){
+                    if(pval !== undefined && cols[pval].vis === onlyVisible && cols[pval].archived !== notArchived && !cols[pval].deleted){
                         columns.push(pval)
-                    }else{
+                    }else if(pval === undefined){
                         let err = 'Cannot find column with name: '+ col
                         throw new Error(err)
                     }
                 }
             }else{//full object columns
                 for (const colp in cols) {
-                    if(cols[colp].vis === onlyVisible && !cols[colp].archived === notArchived && !cols[colp].deleted){
+                    if(cols[colp].vis === onlyVisible && cols[colp].archived === !notArchived && !cols[colp].deleted){
                         columns.push(colp)
                     }
                 }
@@ -298,22 +421,14 @@ const makesubscribe = (gb,gsubs, requestInitialData) => (path) => (callBack, col
         //with filtered column list, generate configs from given args
         if(level === 'row'){//row path
             rowid = pathArgs[2]
-            if(colArr !== undefined){
-                objKey = tstring + rowid + '/' + colsString + '-' + subID
-            }else{
-                objKey = tstring + rowid + '/' + 'ALL-' + subID
-            }
+            objKey = tstring + rowid + '/' + colsString + '-' + subID
         }else if(level === 'column'){//column path
             pval = pathArgs[2]
             objKey = tstring + 'r/' + pval + '-' + subID
         }else{//table path
             rowid = false
             pval = false
-            if(colArr !== undefined){
-                objKey = tstring  + colsString + '-' + subID
-            }else{
-                objKey = tstring + 'ALL-' + subID
-            }
+            objKey = tstring  + colsString + '-' + subID
         }
         if(typeof gsubs[base] !== 'object'){
             gsubs[base] = new watchObj()
@@ -543,7 +658,7 @@ const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache) => (path) =>
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let [base,tval,pval] = path.split('/')
-        let csoul = [base,tval,'r',pval].join('/')
+        let csoul = path
         let data = getValue([base,tval,pval],cache)
         let type = getColumnType(gb,path)
         if(!gunSubs[path] && data === undefined){
@@ -583,6 +698,7 @@ module.exports = {
     makenewBase,
     makenewStaticTable,
     makenewInteractionTable,
+    makenewInteractionColumn,
     makenewColumn,
     makenewRow,
     makelinkColumnTo,

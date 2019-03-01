@@ -80,7 +80,7 @@ const makerowToState = (gb,vTable, subscribe, linkColPvals, xformRowObjToArr) =>
             rowObj = data[rowid];
             setMergeValue([base,tval,rowid],rowObj,vTable)
         }
-        let rowArr = xformRowObjToArr(rowObj, headers, links)
+        let rowArr = xformRowObjToArr(gb,rowObj, headers, links)
         newRow.push(rowArr)
         let rowValue = getValue([base,tval,rowID], vTable)
         if(!thisReact.state.vRow || thisReact.state.vRow && rowValue && JSON.stringify(rowValue) !== JSON.stringify(thisReact.state.vRow)){
@@ -156,10 +156,11 @@ const generateHeaderRow = (gb, base, tval)=>{
     let headers = []
     let headerValues = []
     for (const pval in columns) {
-        const alias = columns[pval].alias;
-        const sortval = columns[pval].sortval;
-        headerAlias[pval] = alias
-        headerOrder[sortval] = pval
+        const {alias,sortval,archived,deleted} = columns[pval];
+        if(!archived && !deleted){
+            headerAlias[pval] = alias
+            headerOrder[sortval] = pval
+        }
     }
     let headerSort = Object.keys(headerOrder).sort(function(a, b){return a - b});
     for (let i = 0; i < headerSort.length; i++) {
@@ -174,7 +175,6 @@ const xformRowObjToArr = (gb, rowObj, orderedHeader, linkColPvals)=>{
     let rowArr = []
     for (let j = 0; j < orderedHeader.length; j++) {
         const pval = orderedHeader[j];
-        let linksArr
         if(rowObj[pval]){
             if(linkColPvals[pval]){//value is link
                 let cellValue = []
@@ -219,7 +219,7 @@ const makelinkOptions = gb => (base,tval) =>{
                 if (GBtype === 'next') {
                     valid = false
                     break
-                }else if(GBtype === 'string'){
+                }else if(GBtype === 'string'|| GBtype === 'number'){
                     colObj.pval = p
                     validCols.push(colObj)
                 }

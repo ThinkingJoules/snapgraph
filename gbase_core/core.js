@@ -30,7 +30,9 @@ const {makehandleConfigChange,
 let handleConfigChange
 
 const {makenewBase,
-    makenewTable,
+    makenewStaticTable,
+    makenewInteractionTable,
+    makenewInteractionColumn,
     makenewColumn,
     makenewRow,
     makelinkColumnTo,
@@ -49,7 +51,9 @@ const {makenewBase,
     makeclearColumn
 } = require('./chain_commands')
 let newBase
-let newTable
+let newStaticTable
+let newITtable
+let newIColumn
 let newColumn
 let newRow
 let linkColumnTo
@@ -91,8 +95,10 @@ const gunToGbase = gunInstance =>{
     gun = gunInstance
     //DI after gunInstance is received from outside
     newBase = makenewBase(gun)
-    newTable = makenewTable(gun,gb)
+    newStaticTable = makenewStaticTable(gun,gb)
     newColumn = makenewColumn(gun,gb)
+    newITtable = makenewInteractionTable(gun,gb)
+    newIColumn = makenewInteractionColumn(gun,gb)
     edit = makeedit(gun,gb,cascade)
     newRow = makenewRow(edit)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
@@ -126,7 +132,8 @@ function startGunConfigSubs(){
                         delete data['_']
                         let configpath = configPathFromSoul(id)
                         setMergeValue(configpath,data,gb)
-                        setupPropSubs(key)
+                        setupTableSubs(key)
+                        //setupPropSubs(key)
                         triggerChainRebuild(id)
                     })
                     let basestate = key + '/state'
@@ -145,97 +152,111 @@ function startGunConfigSubs(){
         setTimeout(startGunConfigSubs, 50);
     }
 }
-function setupPropSubs(frompath){
-    let pathArgs = frompath.split('/')
-    if(pathArgs[pathArgs.length -1] === 'config'){
-        pathArgs.pop()
-    }
-    if(pathArgs.length === 1){//find all tables
-        let tpath = pathArgs.slice()
-        tpath.push('t')
-        tpath = tpath.join('/')
-        gun.get(tpath).on(function(gundata, id){
-            let data = Gun.obj.copy(gundata)
-            delete data['_']
-            for (const tval in data) {
-                const value = data[tval];
-                if (value) {
-                    let tsoul = pathArgs.slice()
-                    tsoul.push(tval)
-                    tsoul.push('config')
-                    tsoul = tsoul.join('/')
-                    handleGunSubConfig(tsoul)//will sub if not already subed and merge in gb
-                    setupPropSubs(tsoul)
+function setupTableSubs(baseID){
+    let pathArgs = baseID.split('/')
+    let tpath = baseID.split('/')
+    tpath.push('t')
+    let s = tpath.join('/')
+    gun.get(s).on(function(gundata, id){
+        let data = Gun.obj.copy(gundata)
+        delete data['_']
+        for (const tval in data) {
+            const value = data[tval];
+            if(value){
+                let tsoul = pathArgs.slice()
+                tsoul.push(tval)
+                let tconfig = tsoul.slice()
+                tconfig.push('config')
+                tsoul = tsoul.join('/')
+                handleGunSubConfig(tconfig.join('/'))//will sub if not already subed and merge in gb
+                if (value === 'static') {//setup static tables and column subs
+                    setupRowSubs(tsoul)
+                }else if(value === 'transaction'){
+                    setupLIsubs(tsoul)
                 }
+                setupColumnSubs(tsoul)
             }
-        })
-    }
-    if(pathArgs[pathArgs.length -1][0] === 't' && pathArgs[pathArgs.length -1].length > 1){//find all columns on table && all rows
-        let colPath = pathArgs.slice()
-        colPath.push('r/p')
-        colPath = colPath.join('/')
-        let rowPath = pathArgs.slice()
-        rowPath.push('r/p0')
-        rowPath = rowPath.join('/')
-        gun.get(colPath).on(function(gundata, id){
-            let data = Gun.obj.copy(gundata)
-            delete data['_']
-            for (const pval in data) {
-                const value = data[pval];
-                if (value) {
-                    let psoul = pathArgs.slice()
-                    psoul.push('r')
-                    psoul.push(pval)
-                    psoul.push('config')
-                    psoul = psoul.join('/')
-                    handleGunSubConfig(psoul)//will sub if not already subed
-                }
-            }
-        })
-        handleGunSubConfig(rowPath)
-    }
+        }
+    })
 
-    
+
 }
+function setupRowSubs(tpath){
+    let [base,tval] = tpath.split('/')
+    loadColDataToCache(base,tval,'p0')
+}
+function setupColumnSubs(tpath){
+    let colPath = tpath.split('/')
+    colPath.push('p')
+    colPath = colPath.join('/')
+    gun.get(colPath).on(function(gundata, id){
+        let data = Gun.obj.copy(gundata)
+        delete data['_']
+        for (const pval in data) {
+            const value = data[pval];
+            if (value) {
+                let psoul = tpath.split('/')
+                psoul.push(pval)
+                psoul.push('config')
+                psoul = psoul.join('/')
+                handleGunSubConfig(psoul)//will sub if not already subed
+            }
+        }
+    })
+}
+function setupLIsubs(tpath){
+    let liPath = tpath.split('/')
+    liPath.push('li')
+    let liconfig = liPath.slice()
+    liconfig.push('config')
+    handleGunSubConfig(liconfig.join('/'))
+    let s = liPath.join('/')
+    gun.get(s).on(function(gundata, id){
+        let data = Gun.obj.copy(gundata)
+        delete data['_']
+        for (const pval in data) {
+            const value = data[pval];
+            if (value) {
+                let psoul = tpath.split('/')
+                psoul.push('li')
+                psoul.push(pval)
+                psoul.push('config')
+                psoul = psoul.join('/')
+                console.log(psoul)
+                handleGunSubConfig(psoul)//will sub if not already subed
+            }
+        }
+    })
+}
+
 function handleGunSubConfig(subSoul){
     //will be table config, column config or p0 col for rows
-    let p0col = subSoul.split('/')
     let configpath = configPathFromSoul(subSoul)
-    let cachepath = cachePathFromSoul(subSoul)
-    let base, tval, pval
-    [base,tval,pval] = cachepath
-    if(p0col[p0col.length-1] === 'p0'){//handle row case
-        loadColDataToCache(base,tval,pval)
-    }else{
-        let configLoaded = getValue(configpath,gb)
-        if(!configLoaded || configLoaded.alias === undefined){//create subscription
-            gun.get(subSoul, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    let configpath = configPathFromSoul(subSoul)
-                    setMergeValue(configpath,{},gb)
-                }
-            })
-            gun.get(subSoul).on(function(gundata, id){
-                gunSubs[subSoul] = true
-                let data = Gun.obj.copy(gundata)
-                delete data['_']
-                if(data.usedIn){
-                    data.usedIn = JSON.parse(data.usedIn)
-                }
+    let configLoaded = getValue(configpath,gb)
+    if(!configLoaded || configLoaded.alias === undefined){//create subscription
+        gun.get(subSoul, function(msg,eve){//check for existence only
+            eve.off()
+            if(msg.put === undefined){
                 let configpath = configPathFromSoul(subSoul)
-                setMergeValue(configpath,data,gb)
-                triggerChainRebuild(id)
-            })
-            
-            
-        }else{//do nothing, gun is already subscribed and cache is updating
-    
-        }
+                setMergeValue(configpath,{},gb)
+            }
+        })
+        gun.get(subSoul).on(function(gundata, id){
+            gunSubs[subSoul] = true
+            let data = Gun.obj.copy(gundata)
+            delete data['_']
+            if(data.usedIn){
+                data.usedIn = JSON.parse(data.usedIn)
+            }
+            let configpath = configPathFromSoul(subSoul)
+            setMergeValue(configpath,data,gb)
+            triggerChainRebuild(id)
+        })
+        
+        
+    }else{//do nothing, gun is already subscribed and cache is updating
+
     }
-
-
-
 }
 function buildTablePath(baseID, tval){
     let colRes = []
@@ -243,11 +264,12 @@ function buildTablePath(baseID, tval){
     let res = []
     const path = baseID + '/' + tval
     const tableConfig = gb[baseID].props[tval];
+    let type = tableConfig.type
     let colgb = colRes[0] = {}
     let cola = colRes[1] = {}
     for (const p in tableConfig.props) {
         const palias = tableConfig.props[p].alias;
-        let colpath = buildColumnPath(baseID, tval, p)
+        let colpath = buildColumnPath(baseID, tval, p,type)
         colgb[p] = colpath
         cola[palias] = colpath
     }
@@ -260,16 +282,20 @@ function buildTablePath(baseID, tval){
                 rowa[alias] = buildRowPath(gbid,true,false)
         }
     }
-    setupGBalias(path)
+    //setupGBalias(path)
     res[0] = Object.assign({}, colgb, rowgb, tableChainOpt(path))
     res[1] = Object.assign({}, cola, rowa, tableChainOpt(path))
     return res
 }
-function buildColumnPath(baseID, tval, pval){
+function buildColumnPath(baseID, tval, pval, ttype){
     let res
     const path = baseID + '/' + tval + '/' + pval
-    setupGBalias(path)
-    res = columnChainOpt(path)
+    //setupGBalias(path)
+    if(ttype === 'static'){
+        res = columnChainOpt(path)
+    }else{
+        res = Object.assign(columnChainOpt(path),{newColumn: newIColumn(path)})
+    }
     return res
 
 }
@@ -277,7 +303,7 @@ function buildRowPath(rowID,byAlias,newRow){
     let res
     const path = rowID
     res = rowChainOpt(path,byAlias,newRow)
-    setupGBalias(path)
+    //setupGBalias(path)
     return res
 
 }
@@ -341,7 +367,7 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), newTable: newTable(_path), importNewTable: importNewTable(_path)}
+    return {_path, config: config(_path), newStaticTable: newStaticTable(_path), newInteractionTable: newITtable(_path), importNewTable: importNewTable(_path)}
 }
 function tableChainOpt(_path){
     return {_path, config: config(_path), newRow: newRow(_path), newColumn: newColumn(_path), importData: importData(_path), subscribe: subscribe(_path)}
@@ -356,8 +382,8 @@ function rowChainOpt(_path,byAlias){
 //CACHE
 function loadColDataToCache(base, tval, pval){
     //gun.gbase(baseID).loadColDataToCache('t0','p0', this)
-    let colSoul = base + '/' + tval + '/r/' + pval
-    let p0soul = [base,tval,'r','p0'].join('/')
+    let colSoul = base + '/' + tval + '/' + pval
+    let p0soul = [base,tval,'p0'].join('/')
     let path = [base, tval, pval]
     let rows = getValue([base,tval,'p0'], cache)
     let inc = 0
@@ -458,7 +484,7 @@ function loadRowPropToCache(path, pval){
     let pArgs = path.split('/')
     let base = pArgs[0]
     let tval = pArgs[1]
-    let colSoul = base + '/' + tval + '/r/' + pval
+    let colSoul = base + '/' + tval + '/' + pval
     let cpath = [base, tval, pval, path]
     //console.log(cpath)
     //console.log(getValue(cpath,cache))
@@ -577,7 +603,7 @@ function requestInitialData(path, colArr, reqType){
         rowid = false
         pval = false
     }
-    if(!colArr && reqType === 'row' || reqType === 'table'){
+    if(!colArr && (reqType === 'row' || reqType === 'table')){
         colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
     }
     if(reqType === 'row'){
@@ -600,7 +626,7 @@ function requestInitialData(path, colArr, reqType){
         let tRows = getValue([base, 'props', tval, 'rows'], gb)
         for (let i = 0; i < colArr.length; i++) {//could have some row subs, but not col sub, sub columns if not already
             const pval = colArr[i];
-            let colSoul = base + '/' + tval +'/r/' + pval
+            let colSoul = base + '/' + tval +'/' + pval
             if(!gunSubs[colSoul]){
                 loadColDataToCache(base,tval,pval)
             }
@@ -620,7 +646,7 @@ function requestInitialData(path, colArr, reqType){
         }
     }else if(reqType === 'column'){
         console.log('getting column: '+ path)
-        let colSoul = base + '/' + tval +'/r/' + pval
+        let colSoul = base + '/' + tval +'/' + pval
         if(!gunSubs[colSoul]){
             loadColDataToCache(base,tval,pval)
         }
@@ -635,9 +661,9 @@ function requestInitialData(path, colArr, reqType){
 function getCell(rowID,pval){
     let [base,tval,r] = rowID.split('/')
     let value = getValue([base,tval,pval,rowID], cache)
-    let cellsub = [base,tval,'r',pval].join('/')
+    let cellsub = [base,tval,pval].join('/')
     cellsub += '+'+rowID
-    let colsub = [base,tval,'r',pval].join('/')
+    let colsub = [base,tval,pval].join('/')
     if(!gunSubs[colsub] && !gunSubs[cellsub] && value === undefined){
         loadRowPropToCache(rowID, pval)
         return
@@ -730,7 +756,7 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
 //sub id format: 
 //row: tval/rowid/pval1,pval2,pvaln-subID <--subID is random AN string
 //table: tval/pval1,pval2,pvaln-subID <--subID is random AN string
-//column: tval/r/pval-subID <--subID is random AN string
+//column: tval/pval-subID <--subID is random AN string
 
 //basically any data edit on a column soul will update any sub
 function flushSubBuffer(){
@@ -751,10 +777,10 @@ function parseSubID(subID){
     let base = baseArgs[0]
     let tval = baseArgs[1]
     let rowid
-    if(baseArgs[2][0] === 'r' && baseArgs[2].length > 1){
+    if(baseArgs[2][0] === 'r'){
         subType = 'row'
         rowid = base + '/' + tval + '/' + baseArgs[2]
-    }else if(baseArgs[2][0] === 'p' || baseArgs[2][0] === 'A'){
+    }else if(baseArgs[2][0] === 'p'){
         subType = 'table'
     }else{
         subType = 'column'
@@ -771,42 +797,29 @@ function handleSubUpdate(subID, buffer){
     //console.log(subID, type)
     if(type === 'row'){
         let row = getValue([base,tval,rowid], buffer)
-        if(row !== undefined && pvals[0] !== 'ALL'){
-            if(pvals[0] !== 'ALL'){
-                let rowCopy = Gun.obj.copy(row)
-                for (const pval in rowCopy) {
-                    if(!pvals.includes(pval)){
-                        delete rowCopy[pval]
-                    }
+        if(row !== undefined){
+            let rowCopy = {}
+            for (const pval in row) {
+                if(pvals.includes(pval)){
+                    rowCopy[pval] = row[pval]
                 }
-                out = rowCopy
-            }else{
-                out = row
             }
-            
+            out = rowCopy
         }
     }else if(type === 'table'){
         let table = getValue([base,tval], buffer)
         //console.log(table)
         if(table !== undefined){
-            //console.log(pvals[0])
-            if(pvals[0] !== 'ALL'){
-                for (const rowid in table) {
-                    const row = table[rowid];
-                    let rowCopy = Gun.obj.copy(row) || {}
-                    for (const pval in rowCopy) {
-                        if(!pvals.includes(pval)){
-                            delete rowCopy[pval]
-                        }
+            for (const rowid in table) {
+                const row = table[rowid];
+                let rowCopy = {}
+                for (const pval in row) {
+                    if(pvals.includes(pval)){
+                        rowCopy[pval] = row[pval]
                     }
-                    out = Object.assign(out,rowCopy)
-                    //console.log(out)
                 }
-            }else{
-                out = table
-                console.log('all',out)
+                out[rowid] = rowCopy
             }
-            
         }
     }else{//column
         let table = getValue([base,tval], buffer)
@@ -831,7 +844,7 @@ function handleNewData(soul, data){
     let pathArgs = soul.split('/')
     let base = pathArgs[0]
     let tval = pathArgs[1]
-    let pval = pathArgs[3]
+    let pval = pathArgs[2]
     for (const rowid in data) {
         const value = data[rowid];
         setValue([base,tval,rowid,pval], value, subBuffer)

@@ -9,9 +9,7 @@ function cachePathFromSoul(soul){//should redo with regex
      }
     if(pathArgs.length === 4){//move r in path
        let rval = pathArgs.splice(2,1)
-        if(rval.length > 1){
-            pathArgs.push(rval)
-        }
+        pathArgs.push(rval)
     }
     return pathArgs
 
@@ -37,9 +35,6 @@ function configPathFromSoul(soul){//should redo with regex
         pathArgs.pop()
         config = true
     }
-    if(pathArgs.length > 2){//remove r in path
-       pathArgs.splice(2,1)
-    }
     let configpath= []
     
     if(pathArgs.length > 1){
@@ -48,12 +43,14 @@ function configPathFromSoul(soul){//should redo with regex
             if(i === pathArgs.length-1){//end of path, our config
                 if(config){
                     configpath.push(path)
-                }else if(pathArgs[pathArgs.length -1] === 'p0' && !config){//handle rows
+                }else if(path === 'p0' && !config){//handle rows
                     configpath.push('rows')
                 }
-            }else if (i === pathArgs.length-2 && pathArgs[pathArgs.length -1] === 'p0' && !config){
+            }else if (i === 1 && pathArgs[2] === 'li'){//path is tval, next path is 'li', don't push props
                 configpath.push(path)
-            }else{
+            }else if (i === 1 && pathArgs[2] === 'p0' && !config){//don't push 'props' for rows
+                configpath.push(path)
+            }else{//push path, then props
                 configpath.push(path)
                 configpath.push('props')
             }
@@ -77,7 +74,7 @@ function configPathFromChainPath(thisPath){//should redo with regex
                 configpath.push(path)
             }else if(i === pathArgs.length-1 && rowPath){//end of path for a row
                 configpath.push(thisPath)
-            }else if (nextPath[0] === 'r' && nextPath.length >1){//if this path is a row push tval then 'rows'
+            }else if (nextPath[0] === 'r'){//if this path is a row push tval then 'rows'
                 rowPath = true
                 configpath.push(path)
                 configpath.push('rows')
@@ -95,12 +92,9 @@ function configPathFromChainPath(thisPath){//should redo with regex
 function configSoulFromChainPath(thisPath){//should redo with regex
     let pathArgs = thisPath.split('/')
     
-    if(pathArgs[pathArgs.length -1][0] === 'p'){//insert /r/
-       pathArgs.splice(2,0, 'r')
-    }else if(pathArgs[pathArgs.length -1][0] === 'r' && pathArgs[pathArgs.length -1].length > 1){
-        pathArgs.splice(2,pathArgs.length, 'r/p0') //p0 soul for table
-    }
-    if(pathArgs[pathArgs.length -1] !== 'config'){
+    if(pathArgs[pathArgs.length -1][0] === 'r'){
+        pathArgs.splice(2,pathArgs.length, 'p0') //p0 soul for table
+    }else if(pathArgs[pathArgs.length -1] !== 'config'){
         pathArgs.push('config')
     }
     return pathArgs.join('/')
@@ -132,7 +126,7 @@ const findID = (obj, name) =>{//obj is level above .props, input human name, ret
 const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
-            const alias = obj[key]
+            const alias = String(obj[key])
             if(alias === name){
                 return key
             }
@@ -156,7 +150,6 @@ const allUsedIn = gb =>{//could move this to a getter on the gb object?
     }
     return out
 }
-
 const findRowAlias = (gb, rowID) =>{//obj is .rows, input human name, returns rowID
     let [base, tval] = rowID.split('/')
     let obj = getValue([base, 'props',tval,'rows'],gb)
@@ -229,7 +222,8 @@ const linkColPvals = (gb,base,tval)=>{
     let obj = getValue([base,'props',tval,'props'], gb)
     let result = {}
     for (const key in obj) {
-        if (obj[key].linksTo && obj[key].GBtype === 'prev' || obj[key].GBtype === 'next') {
+        let {linksTo,GBtype,archived,deleted} = obj[key]
+        if (linksTo && !archived && !deleted && (GBtype === 'prev' ||GBtype === 'next')) {
             const link = obj[key].linksTo
             result[key] = link
         }
@@ -309,7 +303,7 @@ const validateData =(gb,editThisPath, putObj, fromCascade)=>{//prunes specials
 const handleRowEditUndo = (gun, gb, gbpath, editObj)=>{
     //gbpath should = base/tval/rowid
     //editObj = {p0: 'value, p4: 'other value', etc..}
-    let arrpath = gbpath.split('/')
+    let [baseID,tval,r] = gbpath.split('/')
     let tstamp = Date.now()
     let undo = {}
     undo._path = gbpath
@@ -321,7 +315,7 @@ const handleRowEditUndo = (gun, gb, gbpath, editObj)=>{
     if(lenCheck.length > 100){
         delete fullList[lenCheck[0]]
     }
-    gun.get(arrpath[0] + '/state').get('history').put(JSON.stringify(fullList))
+    gun.get(baseID + '/state').get('history').put(JSON.stringify(fullList))
     //node undo
     gun.get(gbpath + '/history').get(tstamp).put(JSON.stringify(undo.put))   
 }
@@ -512,6 +506,24 @@ function findLinkingCol(gb, fromPath, usedInPath){
         }
     }
 }
+function hasColumnType(gb, tPathOrPpath, type){
+    let [base,tval] = tPathOrPpath.split('/')
+    let tPath = [base,tval].join('/')
+    let cpath = configPathFromChainPath(tPath)
+    let {props} = getValue(cpath, gb)
+    let cols = []
+    for (const pval in props) {
+        const {GBtype} = props[pval];
+        if(GBtype === type){
+            cols.push(pval)
+        }
+    }
+    if(cols.length){
+        return cols
+    }else{
+        return false
+    }
+}
 function watchObj(){
 }
 Object.defineProperty(watchObj.prototype, "watch", {
@@ -572,5 +584,6 @@ module.exports = {
     watchObj,
     allUsedIn,
     removeFromArr,
-    findLinkingCol
+    findLinkingCol,
+    hasColumnType
 }
