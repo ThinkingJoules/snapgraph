@@ -49,7 +49,7 @@ const maketableToState = (gb, vTable, subscribe) => (base, tval, thisReact)=>{
         
     }, undefined, true, true, subID)
 }
-const makerowToState = (gb,vTable, subscribe, linkColPvals, xformRowObjToArr) => (rowID, thisReact)=>{
+const makerowToState = (gb,vTable, subscribe) => (rowID, thisReact)=>{
     let [base, tval, rval] = rowID.split('/')
     let oldData = getValue([base,tval,rowID], vTable)
     if(oldData !== undefined){

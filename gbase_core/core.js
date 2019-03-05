@@ -48,7 +48,8 @@ const {makenewBase,
     makeshowgsub,
     makeshowgunsub,
     makeunlinkRow,
-    makeclearColumn
+    makeclearColumn,
+    makeassociateTables
 } = require('./chain_commands')
 let newBase
 let newStaticTable
@@ -66,6 +67,7 @@ let unlinkRow
 let clearColumn
 let importData
 let importNewTable
+let associateTables
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubs)
@@ -89,6 +91,12 @@ const buildRoutes = makebuildRoutes(gb)
 const linkOptions = makelinkOptions(gb)
 const fnOptions = makefnOptions(gb)
 
+const {timeIndex,
+    queryIndex,
+    timeLog
+} = require('../chronicle/chronicle')
+
+
 startGunConfigSubs()
 
 const gunToGbase = gunInstance =>{
@@ -99,24 +107,60 @@ const gunToGbase = gunInstance =>{
     newColumn = makenewColumn(gun,gb)
     newITtable = makenewInteractionTable(gun,gb)
     newIColumn = makenewInteractionColumn(gun,gb)
-    edit = makeedit(gun,gb,cascade)
+    let tl = timeLog(gun)
+    let ti = timeIndex(gun)
+    edit = makeedit(gun,gb,cascade,tl,ti)
     newRow = makenewRow(edit)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
     clearColumn = makeclearColumn(gun,gb,cache,gunSubs,loadColDataToCache)
     importData = makeimportData(gun, gb)
     importNewTable = makeimportNewTable(gun,gb,triggerChainRebuild)
-    
+    associateTables = makeassociateTables(gun,gb)
     handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,loadColDataToCache,newColumn,cascade,solve)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(handleConfigChange)
-
+    let qi = queryIndex(gun)
 
     gbase.newBase = newBase
+    gbase.ti = ti
+    gbase.tl = tl
+    gbase.qi = qi
+
 
 }
 
 //GBASE INITIALIZATION
+/*
+---GUN SOULS---
+Gun Config Paths:
+base/'config'
+base/'state'
+base/tval/'config'
+base/tval/pval/'config'
+base/tval/'li'/'config'
+base/tval/'li'/pval/config
+
+Gun timeindex:
+'timeIndex>'base/tval/pval/ <any 'date' column on any table will have an index {[rowid]: true}
+
+Gun changelog (time indexed, but instead of souls at timepoints, it is the fields changed on .edit()):
+{[pval]: value}
+'timeLog>'base/tval/rval/
+'timeLog>'base/tval/rval/'li'/rowid/
+
+Gun Data Paths:
+base/tval/pval <only for 'static' table data {[rowid]: value}
+base/tval/rval <all rows this is 'rowid', transactions stores all root data here
+base/tval/rval/'history' <stores all edits, could index these by time (would work for my query check clearing as well...)
+base/tval/rval/pval/'links' <static data links {[linkpath]: true}
+base/tval/rval/pval/'associations' <valid on all tables {[assocpath]: true}
+base/tval/rval/'li' <List of line items, {[rowID]: true}  see next soul VVV
+base/tval/rval/'li'/rowid <rowid is for the instance linked to this row that is being transacted {p0: contextInstance, p1: 1, ...}
+base/tval/rval/'context' <only transactions, stores a stringified obj of li instance at time of addition {[contextRowid]: JSON.stringify({p0: 'A row instance', p1:  2, ...})}
+
+
+*/
 function startGunConfigSubs(){
     if(gun){
         gun.get('GBase').on(function(gundata, id){
@@ -228,7 +272,6 @@ function setupLIsubs(tpath){
         }
     })
 }
-
 function handleGunSubConfig(subSoul){
     //will be table config, column config or p0 col for rows
     let configpath = configPathFromSoul(subSoul)
@@ -347,20 +390,6 @@ function rebuildGBchain(path){
     }
 
 }
-function setupGBalias(gbasechainpath){
-    let cpath = configPathFromChainPath(gbasechainpath)
-    let gbvalue = getValue(cpath, gb)
-    //console.log(cpath, gbvalue)
-    if(gbvalue){
-        if(!gb[gbasechainpath]){
-            Object.defineProperty(gb,gbasechainpath, {
-                get: function(){
-                    return gbvalue
-                }
-            })
-        }
-    }
-}
 
 //STATIC CHAIN OPTS
 function gbaseChainOpt(){
@@ -376,7 +405,7 @@ function columnChainOpt(_path){
     return {_path, config: config(_path), subscribe: subscribe(_path), linkColumnTo: linkColumnTo(_path), clearColumn: clearColumn(_path)}
 }
 function rowChainOpt(_path,byAlias){
-    return {_path, edit: edit(_path,byAlias), retrieve: retrieve(_path), subscribe: subscribe(_path), linkRowTo: linkRowTo(_path,byAlias), unlinkRow: unlinkRow(_path,byAlias)}
+    return {_path, edit: edit(_path), retrieve: retrieve(_path), subscribe: subscribe(_path), linkRowTo: linkRowTo(_path,byAlias), unlinkRow: unlinkRow(_path,byAlias)}
 }
 
 //CACHE
@@ -740,7 +769,7 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
                 const rowid = rows[i];
                 let fnresult = solve(rowid,fn)
                 console.log(rowID, ' >>> result for >>> ' + rowid +': ', fnresult)
-                let call = edit(rowid,false,false,false,true)
+                let call = edit(rowid,false,false,true)
                 call({[upval]: fnresult})//edit will call cascade if needed
             }
         }

@@ -25,8 +25,8 @@ const newBaseConfig = (config) =>{
 }
 const newTableConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Table ' + config.sortval
     let sortval = config.sortval || 0
+    let alias = config.alias || 'New Table ' + config.sortval
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -35,8 +35,8 @@ const newTableConfig = (config) =>{
 }
 const newColumnConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Column ' + config.sortval
     let sortval = config.sortval || 0
+    let alias = config.alias || 'New Column ' + config.sortval
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -48,15 +48,17 @@ const newColumnConfig = (config) =>{
     let linksTo = config.linksTo || ""
     let linkMultiple = config.linkMultiple || true
     let associatedWith = config.associatedWith || ""
+    let loadAssociated = config.loadAssociated || "15i"
+    let associatedIndex = config.associatedIndex || ""
     let format = config.format || ""
     let dateFormat = config.dateFormat || ""
     let result = config.result || ""
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, associatedWith, dateFormat, format, result}
+    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, associatedWith, loadAssociated, associatedIndex,dateFormat, format, result}
 }
 const newInteractionTableConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Interaction Table ' + config.sortval
     let sortval = config.sortval || 0
+    let alias = config.alias || 'New Interaction Table ' + config.sortval
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -65,15 +67,16 @@ const newInteractionTableConfig = (config) =>{
     let reference = config.reference || "" //only for transactions, could be any table path that has the same context
     let completed = config.completed || "" //column on table that shows whether record is complete.
     let context = config.context || "" //only for transactions, this is a static table path
+    let loadInteractions = config.loadInteractions || "100i"
     /*reference and context will be tPaths, and there will be 'association' columns made on this transaction for each
     basically the reference and context will treat those association columns with special rules.
     */
-    return {alias, type, sortval, vis, transactions, completed, context, reference, archived, deleted}
+    return {alias, type, sortval, vis, transactions, completed, context, reference, loadInteractions,archived, deleted}
 }
 const newInteractionColumnConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Interaction Column ' + config.sortval
     let sortval = config.sortval || 0
+    let alias = config.alias || 'New Interaction Column ' + config.sortval
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -89,15 +92,16 @@ const newInteractionColumnConfig = (config) =>{
 }
 const newListItemsConfig = (config) =>{
     config = config || {}
+    let type = 'li'
     let total_AU = config.total_AU || ""
     let total = config.total || ""
     let completed = config.completed || "" //column on li that should show that row as being completed
-    return {total_AU, total, completed}
+    return {total_AU, total, completed, type}
 }
 const newListItemColumnConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Line Item Column ' + config.sortval
     let sortval = config.sortval || 0
+    let alias = config.alias || 'New Line Item Column ' + config.sortval
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -110,7 +114,7 @@ const newListItemColumnConfig = (config) =>{
 }
 const validGBtypes = ["string", "number", "boolean", "date", "list", "null", "prev", "next", "function", "tag", "association", "result", "cumulative", "link"] //link is not really valid, but is always handled
 const validTableTypes = ['static', 'transaction', 'interaction']
-const validListItemType = ['instance','lifunction','string','number']
+const validListItemType = ['context','contextLink','function','string','number']
 const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj) =>{//use for new configs, or update to configs
     //whichConfig = base, table, column, ..row?

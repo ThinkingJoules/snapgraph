@@ -23,7 +23,10 @@ const{getValue,
     findNextID,
     nextSortval,
     getColumnType,
-    hasColumnType
+    hasColumnType,
+    handleStaticDataEdit,
+    handleInteractionDataEdit,
+    handleLIDataEdit
 } = require('./util')
 
 //GBASE CHAIN COMMANDS
@@ -62,9 +65,7 @@ const validInteraction = ['transaction', 'interaction']
 const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocArr, contextRef, ref)=>{
     //path = baseID
     //assocArr = ['baseID/tval', 'baseID/tval2] //associations can be other interaction tables
-    //resultConfig = {result: baseID/t1/pval,
-                    //instance: baseID/t2/pval //>> linksTo: baseID/t1/pn || undefined, meaning result and instance are one to one.
-    //}
+    
     try{
         const newColumn = makenewColumn(gun,gb)
         const newInteractionColumn = makenewInteractionColumn(gun,gb)
@@ -83,14 +84,17 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
             if(!contextRef){throw new Error('Must specify a static table to use as context for all of these transactions.')}
             let contextCpath = configPathFromChainPath(contextRef)
             let {alias} = getValue(contextCpath,gb)
-            tconfig = newInteractionTableConfig({alias: tname, type: 'transaction', sortval: nextSortval(gb,path)})
+            tconfig = newInteractionTableConfig({alias: tname, type: 'transaction', context: contextRef ,sortval: nextSortval(gb,path)})
             cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true, sortval: 0})
-            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true, sortval: 10})
-            cols.p2 = newInteractionColumnConfig({alias: 'Completed', GBtype: 'lifunction', fn: 'IF(AND({li/p3}),TRUE(),FALSE())', sortval: 20 })
+            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', GBtype: 'date', required: true, sortval: 10})
+            let lip1Ref = ['{',base,nextT,'li','p1', '}'].join('/')
+            let lip2Ref = ['{',base,nextT,'li','p2', '}'].join('/')
+            let lip3Ref = ['{',base,nextT,'li','p3', '}'].join('/')
+            cols.p2 = newInteractionColumnConfig({alias: 'Completed', GBtype: 'function', fn: 'IF(AND('+lip3Ref+'),TRUE(),FALSE())', sortval: 20 })
             liCols.p0 = newListItemColumnConfig({alias, sortval: 0, GBtype: 'association', required:true})
             liCols.p1 = newListItemColumnConfig({alias: 'Quantity', sortval: 10, GBtype: 'number', required:true, defaultval: 1, usedIn:['p3'] })
             liCols.p2 = newListItemColumnConfig({alias: 'Completed ' + alias, sortval: 20, GBtype: 'result', usedIn:['p3']})
-            liCols.p3 = newListItemColumnConfig({alias: 'Completed', sortval: 30, GBtype: 'lifunction', fn: 'IF({p1} = {p2},TRUE(),FALSE())', usedIn:[[path, nextT, 'p2'].join('/')] })
+            liCols.p3 = newListItemColumnConfig({alias: 'Completed', sortval: 30, GBtype: 'function', fn: 'IF('+lip1Ref+'='+lip2Ref+',TRUE(),FALSE())', usedIn:[[path, nextT, 'p2'].join('/')] })
             liconfig = newListItemsConfig({total: 'p2', completed: 'p3'})
             nextPval = 3
             if(ref){//this new transaction table is trying to be linked to another transaction/interaction
@@ -102,6 +106,7 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
                     if(context !== contextRef){throw new Error(context + '!=' + contextRef +' : Cannot reference a transaction with a different context')}
                     //bring in associations from ref
                     assocArr = assocArr.concat(hasColumnType(gb,refTpath,'association'))
+                    tconfig.reference = refTpath
                 }else{
                     throw new Error('A transaction can only reference another transaction? Can they reference an interaction? Cannot see why.')
                 }
@@ -121,9 +126,9 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
                 let ipath = [path, nextT, pval].join('/')
                 let call
                 if(type === "static"){
-                    call = newColumn(tpath, {associatedWith: ipath})
+                    call = newColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
                 }else{
-                    call = newInteractionColumn(tpath, {associatedWith: ipath})
+                    call = newInteractionColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
                 }
                 let linkpval = call('Associated ' + tname, 'association')
                 linkpath.push(linkpval)
@@ -171,11 +176,11 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
                 if(type === "static"){
                     call = newColumn(tpath, {associatedWith: ipath})
                 }else{
-                    call = newInteractionColumn(tpath, {associatedWith: ipath})
+                    call = newInteractionColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
                 }
                 let linkpval = call('Associated ' + tname, 'association')
                 linkpath.push(linkpval)
-                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/')})
+                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/'), associatedIndex: [path,nextT,'p1'].join('/')})
                 nextPval ++
             }
             checkConfig(newTableConfig(), tconfig)
@@ -249,7 +254,7 @@ const makenewRow = (edit) => (path) => (alias, data, cb)=>{
         let tpath = path
         let id = 'r' + Gun.text.random(6)
         let fullpath = tpath + '/' + id
-        let call = edit(fullpath,false,true,alias)
+        let call = edit(fullpath,true,alias)
         call(data, cb)
     }catch(e){
         cb.call(this, e)
@@ -311,22 +316,18 @@ const makeconfig = handleConfigChange => (path) => (configObj, backLinkCol,cb) =
         return false
     }
 }
-const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) => (editObj, cb)=>{
+const makeedit = (gun,gb,cascade,timeLog,timeIndex) => (path,newRow,newAlias,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         newRow = (newRow) ? true : false
-        //let aliasCol = (byAlias) ? true : false
-        let args = path.split('/')
-        let base = args[0]
-        let tval = args[1]
+        let [base,tval,r,li,lir] = path.split('/')
         let tpath = configPathFromChainPath([base,tval].join('/'))
         let ppath = tpath.slice()
-        let checkTable = getValue(tpath, gb)
+        let {type} = getValue(tpath, gb)
         ppath.push('props')
         let cols = getValue(ppath, gb)
         let putObj = {}
         //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
-        //if(aliasCol){
         for (const palias in editObj) {
             let pval = findID(cols, palias) //will break if column has human name of 'p' + Number()
             if (pval) {
@@ -336,9 +337,17 @@ const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) 
                 throw new Error(err)
             }
         }
-        //}else{
-        //    putObj = editObj
-        //}
+        if(type === 'static'){
+            handleStaticDataEdit(gun,gb,cascade,timeLog,timeIndex,path,newRow,newAlias,fromCascade,putObj,cb)
+        }else if (type === 'interaction' || (type === 'transaction' && li !== 'li') ){
+            handleInteractionDataEdit(gun,gb,cascade,timeLog,timeIndex,path,newRow,newAlias,fromCascade,putObj, cb)
+        }else if (type === 'transaction' && li === 'li'){
+            handleLIDataEdit(gun,gb,cascade,timeLog,path,newRow,newAlias,fromCascade,putObj, cb)
+        }else{
+            throw new Error('Cannot determine type of table instance you are editing.')
+        }
+
+
         let validatedObj = validateData(gb,path,putObj,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
         if(!validatedObj){return}
         //console.log(validatedObj)
@@ -363,7 +372,7 @@ const makeedit = (gun,gb,cascade) => (path,byAlias,newRow,newAlias,fromCascade) 
         }
         cb.call(this, false, path)
 
-        handleRowEditUndo(gun,gb,path,validatedObj)
+        timeLog(path,validatedObj)
     }catch (e){
         cb.call(this, e)
     }
@@ -565,6 +574,66 @@ const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(propert
         cb.call(this, e)
     }
 }
+
+const makeassociateTables = (gun, gb) => path => (table, cb)=>{
+    //path = baseID/tval
+    //All tables can have one associated column that points to 1 other associated table/column
+    //this will create a new column on each table that point at each other.
+    //Multiple associations should use tags as a grouping mechanism or another meta table
+    try{
+        const newColumn = makenewColumn(gun,gb)
+        const newInteractionColumn = makenewInteractionColumn(gun,gb)
+        cb = (cb instanceof Function && cb) || function(){}
+        let [base,tval] = path.split('/')
+        let {type: tType} = getValue([base,'props',tval,'type'],gb)
+        let [abase,atval] = table.split('/')
+        if(atval === tval){throw new Error ('Cannot associate a table to itself')}
+        let fromAssoc = hasColumnType(gb,path,'association')
+        let timeIndex = hasColumnType(gb,path,'date')
+        for (let i = 0; i < fromAssoc.length; i++) {
+            const p = fromAssoc[i];
+            let {associatedWith} = getValue(base,'props',tval,'props',p)
+            let [testbase,testtval] = associatedWith.split('/')
+            if(testtval === atval){
+                throw new Error('These tables are already associated')
+            }
+        }
+        //associate to config (static table)
+        let linkpath = table.split('/')
+        let linkCpath = configPathFromChainPath(table)
+        let {alias, type} = getValue(linkCpath,gb)
+        let pval = findNextID(gb,path)
+        let ipath = [base, tval, pval].join('/')
+        let call
+        if(type === "static"){
+            call = newColumn(table, {associatedWith: ipath, associatedIndex: timeIndex[0] || ""})
+        }else{
+            call = newInteractionColumn(table, {associatedWith: ipath})
+        }
+        let linkpval = call('Associated ' + tname, 'association')
+        linkpath.push(linkpval)
+        let col
+        if(tType === "static"){
+            col = newColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: nextSortval(gb,path), associatedWith: linkpath.join('/'), associatedIndex: timeIndex[0] || ""})
+        }else{
+            col = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: nextSortval(gb,path), associatedWith: linkpath.join('/'), associatedIndex: timeIndex[0] || ""})
+        }
+        
+
+        gun.get(path + '/' + tval + '/'+ pval +'/config').put(col)
+        gun.get(base + '/' + tval + '/p').put({[pval]: true})
+
+
+        cb.call(this,false,pval)
+
+    }catch(e){
+        cb.call(this,e)
+        return
+    }
+}
+
+
+
 const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTESTED
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     cb = (cb instanceof Function && cb) || function(){}
@@ -714,5 +783,6 @@ module.exports = {
     makeshowgsub,
     makeshowgunsub,
     makeunlinkRow,
-    makeclearColumn
+    makeclearColumn,
+    makeassociateTables
 }

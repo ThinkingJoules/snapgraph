@@ -260,6 +260,9 @@ function setMergeValue(propertyPath, value, obj){
       }else if(typeof value === 'object'){
         if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "object") obj[properties[0]] = {}
         obj[properties[0]] = Object.assign(obj[properties[0]], value)
+      }else if(typeof value === 'number'){
+        if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "number") obj[properties[0]] = 0
+        obj[properties[0]] += value
       }else{
         obj[properties[0]] = value
       }
@@ -277,25 +280,97 @@ function getValue(propertyPath, obj){
         return obj[properties[0]]
     }
 }
-const validateData =(gb,editThisPath, putObj, fromCascade)=>{//prunes specials
-    let args = editThisPath.split('/')
+function checkNewRow(gb, path, putObj){
+    let [base,tval,rval,li,lir] = path.split('/')
+    let propsPath
+    if(li === 'li'){//li table
+        propsPath = [base,'props',tval,'li']
+    }else{//top level table
+        propsPath = [base,'props',tval]
+    }
+    let {props} = getValue(propsPath, gb)
+    let out = {}
+    for (const pval in props) {
+        const {alias,required, defaultval, GBtype} = props[pval];
+        let input = putObj[pval]
+        if(input === undefined && required && defaultval === null){
+            throw new Error('Required field missing: '+ alias)
+        }
+        if(input === undefined && defaultval !== null){
+            out[pval] = defaultval
+        }else{
+            out[pval] = input
+        }
+    }
+    return putObj
+}
+
+const validateStaticData =(gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
+    let [base,tval] = editThisPath.split('/')
     let output = {}
+    if(newRow){
+        putObj = checkNewRow(putObj)
+    }
     for (const pval in putObj) {
         let value = putObj[pval]
-        let GBtype = getValue([args[0],'props', args[1], 'props', pval, 'GBtype'], gb)
+        let {GBtype, alias} = getValue([base,'props', tval, 'props', pval], gb)
         if(GBtype === undefined){
-            let colname = getValue([args[0],'props', args[1], 'props', pval, 'alias'], gb)
-            let err = 'Cannot find data type for column: '+ colname+'['+ pval+'].'
+            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
             throw new Error(err)
         }
-        let specials = {prev: 'string', next: 'string', transaction: 'string', tag: 'string'}
-        if(specials[GBtype] === undefined){//root data type
-            if(typeof value === GBtype || (fromCascade && GBtype === 'function')){
-                output[pval] = value
-            }else{
-                let err = 'typeof '+ value + ' is not of type '+ GBtype
-                throw new Error(err)
-            }
+        let specials = ["prev", "next", "association", "tag", "function"]
+        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade){//fromCascade will always write regardless of GBtype
+            output[pval] = value
+        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
+            let err = 'typeof '+ value + ' is not of type '+ GBtype
+            throw new Error(err)
+        }
+    }
+    return output
+}
+const validateInteractionData =(gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
+    let [base,tval] = editThisPath.split('/')
+    let output = {}
+    if(newRow){
+        putObj = checkNewRow(putObj)
+    }
+    for (const pval in putObj) {
+        let value = putObj[pval]
+        let {GBtype, alias} = getValue([base,'props', tval, 'props', pval], gb)
+        if(GBtype === undefined){
+            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
+            throw new Error(err)
+        }
+        let specials = ["association"]
+        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade){//fromCascade will always write regardless of GBtype
+            output[pval] = value
+        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
+            let err = 'typeof '+ value + ' is not of type '+ GBtype
+            throw new Error(err)
+        }
+    }
+    return output
+}
+
+const validateLIData =(gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
+    let [base,tval,rval,li,lirid] = editThisPath.split('/')
+    let output = {}
+    if(newRow){
+        putObj = checkNewRow(putObj)
+    }
+    for (const pval in putObj) {
+        let value = putObj[pval]
+        let {GBtype, alias} = getValue([base,'props', tval, 'li', 'props', pval], gb)
+        if(GBtype === undefined){
+            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
+            throw new Error(err)
+        }
+        let specials = ["association"] //needs to be edited in special API
+        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade){//fromCascade will always write regardless of GBtype
+            output[pval] = value
+        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
+            let err = 'typeof '+ value + ' is not of type '+ GBtype
+            throw new Error(err)
         }
     }
     return output
@@ -481,13 +556,13 @@ function removeFromArr(item,arr){
     return arr
 }
 function findLinkingCol(gb, fromPath, usedInPath){
-    let [base,tval,pval] = fromPath.split('/')
+    let [base,tval] = fromPath.split('/')
     let [ubase,utval,upval] = usedInPath.split('/')
     let fn = getValue([ubase,'props',utval,'props',upval, 'fn'], gb)
-    let res = []
     if(tval === utval){//local link, type should be 'function'
         let {GBtype,usedIn} = getValue([base,'props',tval,'props',upval], gb)
-        res = [upval,{GBtype, fn, usedIn}]
+        let res = [upval,{GBtype, fn, usedIn}]
+        return res
     }else{
         let cols = getValue([base,'props',tval,'props'], gb)
         let res = []
@@ -495,13 +570,32 @@ function findLinkingCol(gb, fromPath, usedInPath){
             const {GBtype,linksTo,linkMultiple} = cols[p];
             //console.log(GBtype, linksTo)
             if(['prev','next'].includes(GBtype)){
-                let [tbase,ttval,tpval] = linksTo.split('/')
+                let [tbase,ttval] = linksTo.split('/')
                 //console.log(ttval, utval)
                 if(ttval === utval){
                     res.push(p)
                     res.push({GBtype,linksTo,linkMultiple,fn})
                     return res
                 }
+            }
+        }
+    }
+}
+function findAssociatedCol(gb, fromPath, toPath){
+    let [base,tval] = fromPath.split('/')
+    let [ubase,utval] = toPath.split('/')
+    let toCols = getValue([ubase,'props',utval,'props'], gb)
+    let res = []
+    for (const p in toCols) {
+        const {GBtype, associatedWith} = toCols[p];
+        //console.log(GBtype, linksTo)
+        if(GBtype === 'association'){
+            let [tbase,ttval] = associatedWith.split('/')
+            //console.log(ttval, utval)
+            if(tbase === base && ttval === tval){
+                res.push(p)
+                res.push(associatedWith)
+                return res
             }
         }
     }
@@ -524,6 +618,190 @@ function hasColumnType(gb, tPathOrPpath, type){
         return false
     }
 }
+
+
+function handleStaticDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, newAlias, fromCascade, editObj, cb){
+    newRow = (newRow) ? true : false
+    let [base,tval] = path.split('/')
+    let validatedObj = validateStaticData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
+    //console.log(validatedObj)
+    let timeIndices = {}
+    for (const key in validatedObj) {
+        let colSoul = base + '/' + tval + '/' + key
+        const value = validatedObj[key];
+
+        let {GBtype} = getValue([base,'props',tval,'props',key],gb)
+        if(GBtype === 'date'){
+            timeIndices[[base,tval,key].join('/')] = [path, value]
+        }
+
+        if(key !== 'p0'){//put non-row name changes
+            gun.get(colSoul).get(path).put(value)
+            setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
+        }else if(key === 'p0' && !newRow){
+            //check uniqueness
+            let rowpath = configPathFromChainPath(path)
+            checkUniqueAlias(gb,rowpath, alias)
+            gun.get(colSoul).get(path).put(value)
+        }else if(newRow && newAlias){
+            let rowpath = configPathFromChainPath(path)
+            checkUniqueAlias(gb,rowpath,newAlias)
+            gun.get(colSoul).get(path).put(newAlias)
+        }else{
+            throw new Error('Must specifiy at least a row alias for a new row.')
+        }      
+    }
+
+    for (const key in timeIndices) {
+        const [rowID, dateString] = timeIndices[key];
+        let date = new Date(dateString)
+        if(date.toString() === 'Invalid Date'){
+            throw new Error ('Cannot understand the date string in value, data saved, but cannot be indexed, try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyy, hh:mm:ss"')
+        }
+        timeIndex(key,rowID,date)
+    }
+    cb.call(this, false, path)
+
+    timeLog(path,validatedObj)
+}
+function handleInteractionDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, fromCascade, editObj, cb){
+    //soul = path
+    let validatedObj = validateInteractionData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
+
+    if(!Object.values(validatedObj).length){
+        throw new Error('Must specify at least one (non-special) property.')
+    }
+    let timeIndices = {}
+    for (const key in validatedObj) {
+        const value = validatedObj[key];
+        let [base,tval] = path.split('/')
+        let {GBtype} = getValue([base,'props',tval,'props',key],gb)
+        
+        if(GBtype === 'date'){
+            timeIndices[[base,tval,key].join('/')] = [path, value]
+        }
+
+        gun.get(path).get(key).put(value)
+        setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
+        
+        
+        
+    }
+
+    for (const key in timeIndices) {
+        const [rowID, dateString] = timeIndices[key];
+        let date = new Date(dateString)
+        if(date.toString() === 'Invalid Date'){
+            throw new Error ('Cannot understand the date string in value, data saved, but cannot be indexed, try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyy, hh:mm:ss"')
+        }
+        timeIndex(key,rowID,date)
+    }
+    cb.call(this, false, path)
+    timeLog(path,validatedObj)
+}
+function handleLIDataEdit(gun, gb, cascade, timeLog, path, newRow, fromCascade, editObj, cb){
+    //soul = path
+    let validatedObj = validateLIData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
+
+    if(!Object.values(validatedObj).length){
+        throw new Error('Must specify at least one (non-association) property.')
+    }
+    for (const key in validatedObj) {
+        const value = validatedObj[key];
+        gun.get(path).get(key).put(value)
+        setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
+    }
+    cb.call(this, false, path)
+    timeLog(path,validatedObj)
+}
+function addContext(gun,gb,txPath, contextPath, newRowRval, subContext){
+    //newLI: from should base/tval/rval/li to should be cbase/ctval/crowid (ctval must match context tval)
+    let root = gun.back(-1)
+    let [base,tval,r,li,lir] = txPath.split('/')
+    let [cbase,ctval,cr] = contextPath.split('/')
+    if(lir){throw new Error('Cannot add more associations to a specific list items row')}
+    let subRequired = false, subCcol
+    if(li && newRowRval){
+        let {context} = getValue([base,'props',tval], gb)
+        let [sbase,stval] = context.split('/')
+        if(cbase !== sbase || ctval !== stval){
+            throw new Error('You cannot associate a list item with a different table than what is specified in "context"')
+        }
+        let neededCols = []
+        let licols = getValue([base,'props',tval,'li','props'], gb)
+        for (const liPval in licols) {
+            const {GBtype, fn} = licols[liPval];//repurposed fn config for contextLink columns
+            if(GBtype === 'contextData'){
+                neededCols.push(fn)
+            }else if(GBtype === 'subContext'){
+                subRequired = true
+                subCcol = fn // should be 'pn' and must be linkCol(that was already checked on the way in.)
+            }
+        }
+
+        if(subRequired && subContext){
+            //check to make sure subContext matches what is available on this context node
+            let [subbase,subtval,subr] = subContext.split('/')
+            let cCols = getValue([cbase,'props',ctval,'props'],gb)
+            let cpval
+            for (const p in cCols) {
+                const {GBtype, linksTo} = cCols[p];
+                let [testbase,testtval] = linksTo.split('/')
+                if(GBtype === 'prev' && testbase === subbase && testtval === subtval){
+                    cpval = p
+                }
+            }
+            if(!cpval){throw new Error('Could not find sub-context linking column to the context')}
+            let ctxSoul = [cbase,ctval,cr,cpval,'links'].join('/')
+            root.get(ctxSoul).get(function(msg, ev) {
+                var links = msg.put
+                ev.off()
+                let valid = []
+                for (const link in links) {
+                    if(link === '_'){
+                        continue
+                    }
+                    const value = links[link];
+                    if (value) {
+                        valid.push(link)
+                    }
+                }
+                if(valid.includes(subContext)){
+                    //put special association on contextPath/context
+                    //directly put data on to transaction li row 
+
+
+                }else{
+                    throw new Error('Invalid Sub-Context link')
+                }
+
+            })
+        }else if(subRequired && !subContext){
+            throw new Error('Must specify a sub-context in order to create a list item so the transaction can be performed')
+        }
+
+    }else if (li && !newRowRval){
+        throw new Error ('Must specify a new row ID for a new li')
+    }
+}
+function addAssociation(gun,gb,fromRow, toRow, newRowRval){
+    //from is path where this is was called, to should be the link
+    //newInteraction/Tr: from should be interaction, to can be any associated table
+    if(!r && newRowRval){//non LI new interaction/tr. 
+
+
+
+
+    }else if(!r && !newRowRval){
+        throw new Error ('Must specify a new row ID for a new interaction/transaction')
+    }else{//add to existing set or associations
+
+    }
+    //if transaction, and li, this is special association
+    //else any other can be many to many, completely dif logic
+
+}
+
 function watchObj(){
 }
 Object.defineProperty(watchObj.prototype, "watch", {
@@ -571,7 +849,7 @@ module.exports = {
     setValue,
     setMergeValue,
     getValue,
-    validateData,
+    validateStaticData,
     handleRowEditUndo,
     checkUniqueAlias,
     checkUniqueSortval,
@@ -585,5 +863,8 @@ module.exports = {
     allUsedIn,
     removeFromArr,
     findLinkingCol,
-    hasColumnType
+    hasColumnType,
+    handleStaticDataEdit,
+    handleInteractionDataEdit,
+    handleLIDataEdit
 }
