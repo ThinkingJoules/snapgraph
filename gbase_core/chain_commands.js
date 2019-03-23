@@ -1,3 +1,4 @@
+
 const{newBaseConfig,
     newTableConfig,
     newInteractionTableConfig,
@@ -12,6 +13,7 @@ const{newBaseConfig,
 const{newQueryObj,
     query
 } = require('./query')
+
 const{getValue,
     configPathFromChainPath,
     findID,
@@ -141,7 +143,9 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
         for (const p in ltPs) {
             let ltpconfig = ltPs[p]
             const type = ltpconfig.GBtype;
-            if(type === 'next'){
+            const a = ltpconfig.archived;
+            const d = ltpconfig.deleted;
+            if(type === 'next' && !a && !d){
                 let err = 'Can only have one "next" link column per table. Column: '+ ltpconfig.alias + ' is already a next column.'
                 throw new Error(err)
             }

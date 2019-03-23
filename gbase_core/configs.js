@@ -899,7 +899,7 @@ const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newCo
                 putObj[GBID] = {}
                 let linkArr = linkStr.split(', ')
                 for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
-                    const HID = linkArr[i];
+                    const HID = String(linkArr[i]);
                     linkGBID = findRowID(linkHIDs,HID)
                     if(linkGBID){
                         if(!nextObj[linkGBID]){nextObj[linkGBID] = {}}
