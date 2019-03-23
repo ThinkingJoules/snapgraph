@@ -33,7 +33,7 @@ function newQueryObj(cb,from,to,items,order){
     }
     for (let i = 0; i < order.length; i++) {
       const ts = order[i];
-      out.push(this.result[ts])
+      out = out.concat(this.result[ts])
     }
     this.done(out)
   },
@@ -61,8 +61,13 @@ const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
 
   // Working example of original modified slightly. Will later work this into a loop.
   let milliStr = t.join(':')
-  let milli = ify({}, milliStr)
-  milli[idxData] = true// put data in
+  let milli, objData
+  if(typeof idxData === 'object' && !Array.isArray(idxData)){
+    objData = true
+    milli = ify(idxData, milliStr)
+  }else{
+    milli = ify({[idxData]: true}, milliStr)
+  }
   let tmp = t.pop()
 
   let sec = ify({}, t.join(':'))
@@ -92,16 +97,26 @@ const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
   let node = ify({}, t.join(':'))
   node[tmp] = year
 
-  root.get(lastindexsoul).get(idxData).get(function(msg, ev) {
-    let prevSoul = msg.put
-    ev.off()
-    if (prevSoul !== undefined){//false old index
-      root.put.call(root, {[idxData]: false}, prevSoul)
+  if(objData){
+    root.put.call(root, node, tsoul) //true new indices
+    let last = {}
+    for (const soul in idxData) {
+      last[soul] = milliStr
     }
-    root.put.call(root, node, tsoul) //true new index
-    root.put.call(root,{[idxData] : milliStr}, lastindexsoul)//update last index soul
-
-  })
+    root.put.call(root,last,lastindexsoul)
+  }else{
+    root.get(lastindexsoul).get(idxData).get(function(msg, ev) {
+      let prevSoul = msg.put
+      ev.off()
+      if (prevSoul !== undefined){//false old index
+        root.put.call(root, {[idxData]: false}, prevSoul)
+      }
+      root.put.call(root, node, tsoul) //true new index
+      root.put.call(root,{[idxData] : milliStr}, lastindexsoul)//update last index soul
+  
+    })
+  }
+  
 
 }
 
@@ -182,7 +197,7 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,index
     let correctedDate = granularDate(stopDate)
     correctedDate[4] += dateShift
     end = newDate(granularToUnix(correctedDate))
-  }else if (startDate){ 
+  }else if (stopDate){ 
     console.warn('Warning: Improper start Date used for .range()')
   }
 
@@ -265,7 +280,12 @@ function traverse(gun, soul, qObj, depth) {
       }else{//keys will be data and values are t/f
         if(type === 'timeIndex'){
           if(timepoint[key]){//if not falsy
-            qObj.result[unix] = key
+            if(!Array.isArray(qObj.result[unix]))qObj.result[unix] = []
+            qObj.result[unix].push(key)
+            // if (Object.values(qObj.result).length >= qObj.max) {
+            //   //this branch has more keys than what was requested
+            //   break
+            // }
           }
         }else{
           qObj.result[unix][key] = timepoint[key]

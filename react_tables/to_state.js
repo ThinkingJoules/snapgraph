@@ -1,53 +1,51 @@
 const {setMergeValue, getValue, setValue, gbByAlias,gbForUI,findRowAlias, linkColPvals} = require('../gbase_core/util')
-const maketableToState = (gb, vTable, subscribe) => (base, tval, thisReact)=>{
+const maketableToState = (gb, vTable, subscribeQuery) => (path) => (thisReact, colArr, queryArr)=>{
+    let [base,tval] = path.split('/')
+    let subID = path+'toState'
     let oldData = getValue([base,tval,'last'], vTable)
     let flaggedCols = linkColIdxs(gb,base,tval)
     if(thisReact.state && thisReact.state.vTable && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.vTable)){
         thisReact.setState({vTable: oldData, linkColumns: flaggedCols})
         return
     }
-
-
-    let _path = base + '/' + tval
-    let subID = base + '+' + tval
-    let call = subscribe(_path)
+    let call = subscribeQuery(path)
     call(function(data){
+        console.log(data)
         let flaggedCols = linkColIdxs(gb,base,tval)
         let links = linkColPvals(gb,base,tval)
-        let rows = getValue([base, 'props', tval, 'rows'], gb)     
-        if(!rows){return}
         let [headers, headerValues] = generateHeaderRow(gb, base, tval)
-        let newTable = [headerValues]
+        let newTable = [['headers', headerValues]]
         for (const rowid in data) {// put data in
             const rowObj = data[rowid];
             setMergeValue([base,tval,rowid],rowObj,vTable)
         }
         //build new output array, first, could sort rows
-        let tableData = getValue([base,tval], vTable)
-        let sortedRows = Object.values(rows)
-        let rowsbyalias = {}
-        if(String(typeof sortedRows[0] * 1) === 'NaN'){
-            sortedRows.sort()
-        }else{
-            sortedRows.sort(function(a, b){return a - b});
-        }
-        for (const rowID in rows) {
-            const rowAlias = rows[rowID]
-            rowsbyalias[rowAlias] = rowID
-        }
-        for (let i = 0; i < sortedRows.length; i++) {
-            const rowAlias = sortedRows[i];
-            const rowID = rowsbyalias[rowAlias]
-            const rowObj = tableData[rowID]
-            let rowArr = xformRowObjToArr(gb, rowObj, headers, links)
-            newTable.push(rowArr)
-        }
+        //let tableData = getValue([base,tval], vTable)
+        // let sortedRows = Object.values(rows)
+        // let rowsbyalias = {}
+        // if(isNaN(sortedRows[0] * 1)){
+        //     sortedRows.sort()
+        // }else{
+        //     sortedRows.sort(function(a, b){return a - b});
+        // }
+        // for (const rowID in rows) {
+        //     const rowAlias = rows[rowID]
+        //     rowsbyalias[rowAlias] = rowID
+        // }
+        // for (let i = 0; i < sortedRows.length; i++) {
+        //     const rowAlias = sortedRows[i];
+        //     const rowID = rowsbyalias[rowAlias]
+        //     const rowObj = tableData[rowID]
+        //     let rowArr = xformRowObjToArr(gb, rowObj, headers, links)
+        //     newTable.push(rowArr)
+        // }
+        newTable = newTable.concat(data)
         if(thisReact.state && JSON.stringify(getValue([base,tval,'last'],vTable)) !== JSON.stringify(newTable) || !thisReact.state.linkColumns || JSON.stringify(thisReact.state.linkColumns) !== JSON.stringify(flaggedCols)){
             setValue([base, tval, 'last'], newTable, vTable)
             thisReact.setState({vTable: newTable,linkColumns: flaggedCols})
         }
         
-    }, undefined, true, true, subID)
+    }, colArr, queryArr, subID)
 }
 const makerowToState = (gb,vTable, subscribe) => (rowID, thisReact)=>{
     let [base, tval, rval] = rowID.split('/')

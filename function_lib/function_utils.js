@@ -1,5 +1,5 @@
 const gfn = require('./functions')
-const {convertValueToType,getValue,isLinkMulti,getColumnType} = require('../gbase_core/util')
+const {convertValueToType,getValue,isMulti,getColumnType} = require('../gbase_core/util')
 //FUNCTION STUFF
 const makesolve = getLinks =>function solve(rowID, eq, tries){
     let linksResolved
@@ -477,11 +477,13 @@ function findFNArgs(str){
   
     return args
 }
-function findTruth(ifFirstArg){
-    let r = /IF\(/
-    let match = r.exec(ifFirstArg)
-    if(match !== null){
-        throw new Error('Cannot have an IF statement as the first argument in an IF Statement')
+function findTruth(ifFirstArg,FILTERtruth){
+    if(!FILTERtruth){
+        let r = /IF\(/
+        let match = r.exec(ifFirstArg)
+        if(match !== null){
+            throw new Error('Cannot have an IF statement as the first argument in an IF Statement')
+        }
     }
     let containsInvalidChars = /[^()+\-*/0-9.\s<>=!]/g.test(ifFirstArg)
     if(containsInvalidChars){
@@ -524,13 +526,13 @@ function parseTruthStr(TFstr, compType){
                     found['<'] = r
                 }
             }
-            }else{
-                r = new RegExp(op,'g')
-                let match = r.exec(TFstr)
-                if(match){
-                    found[op] = match.index
-                }
+        }else{
+            r = new RegExp(op,'g')
+            let match = r.exec(TFstr)
+            if(match){
+                found[op] = match.index
             }
+        }
     }
     let tok = Object.keys(found)
     if(tok.length !== 1){
@@ -586,17 +588,25 @@ const verifyLinksAndFNs = (gb, path, fnString)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split('.')
-        let linkMulti = isLinkMulti(gb,links[0])
+
+        let [lb,lt] = links[0].split('/')
+        let {type} = getValue([lb,'props',lt], gb)
+
+        let linkMulti = isMulti(gb,links[0])
         let valueType = getColumnType(gb,links[0])
         let summation = false
         if(valueType === 'next'){nextUsed = true}
-        if(linkMulti){
+        if(linkMulti || type !== 'static'){
             let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
             try{
                 summation = fnPattern.exec(fnString)[0]                
             }catch(e){
-                let err = 'Cannot find summation function on link multiple field: '+ links[0]
-                throw new Error(err)
+                if(linkMulti){
+                    let err = 'Cannot find summation function on multiple field: '+ links[0]
+                    throw new Error(err)
+                }else{
+                    throw new Error('Cannot find summation function for an interaction field')
+                }
             }
             if(valueType === 'next' && summation !== 'JOIN'){
                 throw new Error('"next" Column can only be summarized with a "JOIN()" function')
@@ -641,14 +651,39 @@ const verifyLinksAndFNs = (gb, path, fnString)=>{
         if(badFN && nextUsed){
             let err = 'Cannot do math if a next column is referenced in the equation, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed'
             throw new Error(err)
-        }else{
+        }else if (badFN){
             let err = 'Cannot do math in the first column, only: '+nextLinkFNs.join(', ')+ ' Functions are allowed'
             throw new Error(err)
         }
     }
     return true
 }
-const initialParseLinks = (gb, fnString, rowID)=>{
+
+const verifyLILinksAndFNs = (gb, path, fnString)=>{
+    let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
+    let match
+    let [b,t,li] = path.split('/')
+    while (match = allLinkPattern.exec(fnString)) {
+        let path = match[1]
+        let links = path.split('.')
+        let valueType = getColumnType(gb,links[0])
+        let [lb,lt,lli,lp] = links[0].split('/')
+        if([lb,lt,lli].join('/') !== [b,t,li].join('/')){
+            throw new Error('List items functions can only reference other list item columns')
+        }
+        if(valueType === 'context' && links[1]){
+            let subType = getColumnType(gb,links[1])
+            if(!['string','number','boolean'].includes(subType)){
+                throw new Error('Context column can only reference a "string", "number", or "boolean" property')
+            }
+        }else if(valueType === 'contextLink'){
+            throw new Error('Cannot use a "contextLink" column in an equation')
+        }
+    }
+    
+    return true
+}
+const initialParseLinks = (gb, fnString, rowID, toLi)=>{
     let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
     let out = {}
     let match
@@ -656,7 +691,7 @@ const initialParseLinks = (gb, fnString, rowID)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split('.')
-        let linkMulti = isLinkMulti(gb,links[0])
+        let linkMulti = isMulti(gb,links[0],toLi)
         let valueType = getColumnType(gb,links[0])
         let summation = false
         let summationargs = false
@@ -680,9 +715,9 @@ const initialParseLinks = (gb, fnString, rowID)=>{
     } 
     return out
 }
-const makegetLinks = (gb, getCell) => function getlinks(rowID, fnString, linksObj, tries){
+const makegetLinks = (gb, getCell) => function getlinks(rowID, fnString, toLi, linksObj, tries){
     if(linksObj === undefined){
-        linksObj = initialParseLinks(gb, fnString, rowID)
+        linksObj = initialParseLinks(gb, fnString, rowID, toLi)
     }
     tries = tries || 0
     let done = 0
@@ -716,7 +751,7 @@ const makegetLinks = (gb, getCell) => function getlinks(rowID, fnString, linksOb
                 }else{//getting data do nothing??
                     changes.data = false
                 }
-            }else if(pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be stringified link Obj with one or more keys
+            }else if(pathInfo.linkMulti && pathInfo.links.length === 2){//getCell should be arr w/ one or more keys
                 let request = getCell(pathInfo.currentRow, pval)
                 changes.valueType = getColumnType(gb,pathInfo.links[0])
                 if(request !== undefined && (request === "" || request === null || request.length === 0)){//null data
@@ -815,7 +850,7 @@ const makegetLinks = (gb, getCell) => function getlinks(rowID, fnString, linksOb
         tries++
         //console.log(dataMissing)
         if(tries < 2){
-            setTimeout(getlinks,50,rowID,fnString, dataLinks, tries)
+            setTimeout(getlinks,50,rowID,fnString,toLi, dataLinks, tries)
             return
         }
     }
@@ -847,5 +882,7 @@ module.exports = {
     makesolve,
     initialParseLinks,
     makegetLinks,
-    verifyLinksAndFNs
+    verifyLinksAndFNs,
+    verifyLILinksAndFNs,
+    regexVar
 }
