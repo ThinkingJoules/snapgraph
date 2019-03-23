@@ -74,7 +74,8 @@ const {
     setRowPropCacheValue,
     bufferPathFromSoul,
     getAllColumns,
-    watchObj
+    watchObj,
+    formatQueryResults
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -1393,43 +1394,7 @@ const parseFilter = (obj,colArr) =>{
     if(!colArr.includes(found[0])) throw new Error('Must include column in your return if you are using it in FILTER')
     return obj
 }
-const parseSort = (obj,colArr) =>{
-    //obj = {SORT: [pval, asc || dsc]}
-    let [pval, dir] = obj.SORT
-    let out = []
-    if(pval){
-        if(colArr.includes(pval)){
-            out.push(pval)
-        }else{
-            throw new Error('Must include the column used in SORT in the result')
-        }
-    }else{
-        throw new Error('Must specifiy a column with SORT parameter')
-    }
-    if(dir && (dir === 'asc' || dir === 'dsc')){
-        out.push(dir)
-    }else{
-        dir = 'asc'
-        out.push(dir)
-    }
-    return {FILTER: out}
-}
-const parseGroup = (obj,colArr) =>{
-    //obj = {GROUP: [pval]}
-    let pval = obj.GROUP[0]
-    let out = []
-    if(pval){
-        if(colArr.includes(pval)){
-            out.push(pval)
-        }else{
-            throw new Error('Must include the column used in GROUP in the result')
-        }
-    }else{
-        throw new Error('Must specifiy a column with GROUP parameter')
-    }
 
-    return {GROUP: out}
-}
 const parseRange = (obj,path) =>{
     //obj = {RANGE: [tIndex,from,to,items,relativeTime,__toDate,last__,firstDayOfWeek]}
     //MUST have some sort of timeIndex
@@ -1620,10 +1585,6 @@ function parseQuery(qArr,path,colArr){
             out.push(parseSearch(qArgObj))
         }else if(qArgObj.FILTER){
             out.push(parseFilter(qArgObj,colArr))
-        }else if(qArgObj.SORT){
-            out.push(parseSort(qArgObj,colArr))
-        }else if(qArgObj.GROUP){
-            out.push(parseGroup(qArgObj,colArr))
         }else if(qArgObj.RANGE){
             t = parseRange(qArgObj,path)
         }
@@ -1645,7 +1606,12 @@ function gatherData(qObj){
         }else{
             if(reQuery)console.log(propArr, propArr.length, allColumns.length)
             for (const pval of allColumns) {
-                getRowProp(qObj,rowID,pval)
+                if (pval !== null){
+                    getRowProp(qObj,rowID,pval)
+                }else{
+                    addDataToQobj(rowID,pval,null,qObj)//fill archived or deleted indices with non-undefined value
+                }
+                
             }
         }
     }
@@ -1655,6 +1621,8 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
     let table = [base,tval].join('/')
     let type
     let hasSearch = (qArr.filter(o => o.SEARCH).length) ? true : false
+    let needCols = (!colArr) ? true : false
+    colArr = colArr || getAllColumns(gb,[base,tval].join('/'),true)
     let allCols = getAllColumns(gb,[base,tval].join('/'))
     if(!r){
         type = 'table'
@@ -1662,12 +1630,13 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
         type = 'row'
         if(li){
             allCols = getAllColumns(gb,[base,tval,'li'].join('/'))
+            if(needCols) colArr = getAllColumns(gb,[base,tval,'li'].join('/'),true)
         }
     }else{ //(r && li && !lir)
         type = 'li'
         allCols = getAllColumns(gb,[base,tval,'li'].join('/'))
+        if(needCols) colArr = getAllColumns(gb,[base,tval,'li'].join('/'),true)
     }
-    allCols.sort((a,b)=>a.slice(1)-b.slice(1))
     let subID
     if(sVal){
         subID = path + '-' + sVal
@@ -1751,7 +1720,7 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
             }
             if(this.type === 'row' || added || removed){
                 console.log('Returning query to cb on subID: '+subID)
-                this.userCB.call(this,this.output)
+                this.userCB.call(this,this.output,this.columns)
             }
             
         },
@@ -1781,7 +1750,6 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
 }
 function addDataToQobj(rowID, pval, data, qObj){
     let idx = pval.slice(1)
-    let arrProp = qObj.data[rowID]
     if(!Array.isArray(qObj.data[rowID]))qObj.data[rowID] = []
     if(!Array.isArray(qObj.retrievedCols[rowID]))qObj.retrievedCols[rowID] = []
     qObj.data[rowID][idx] = data
@@ -2175,5 +2143,6 @@ module.exports = {
     gbase,
     gunToGbase,
     linkOptions,
-    fnOptions
+    fnOptions,
+    formatQueryResults
 }

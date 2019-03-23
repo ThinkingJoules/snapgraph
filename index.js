@@ -8,7 +8,8 @@ const {
         gbase,
         gunToGbase,
         linkOptions,
-        fnOptions
+        fnOptions,
+        formatQueryResults
         }=require('./gbase_core/core')
 const { fnHelp }=require('./function_lib/functions')
 
@@ -39,4 +40,5 @@ module.exports = {
     linkOptions,
     fnOptions,
     fnHelp,
+    formatQueryResults
 }

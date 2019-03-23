@@ -741,19 +741,40 @@ function hasColumnType(gb, tPathOrPpath, type){
         return false
     }
 }
-function getAllColumns(gb, tpath){
+function getAllColumns(gb, tpath,bySortval){
     let [base,tval] = tpath.split('/')
     let tPath = [base,tval].join('/')
     let cpath = configPathFromChainPath(tPath)
     let {props} = getValue(cpath, gb)
     let out = []
-    for (const p in props) {
-        const config = props[p];
-        if (!config.archived && !config.deleted) {
-            out.push(p)
+    if(!bySortval){
+        for (const p in props) {
+            const config = props[p];
+            let idx = p.slice(1)
+            if (!config.archived && !config.deleted) {
+                out[idx] = p
+            }else{
+                out[idx] = null //need to prevent empty indices
+            }
         }
+        return out.sort((a,b)=>a.slice(1)-b.slice(1))
+    }else{
+        let svals = {}
+        for (const p in props) {
+            const config = props[p];
+            if (!config.archived && !config.deleted) {
+                svals[config.sortval] = p
+            }else{
+                //don't include
+            }
+        }
+        let order = Object.keys(svals).sort((a,b)=>a-b)
+        for (const sv of order) {
+            out.push(svals[sv])
+        }
+        return out
     }
-    return out
+    
 }
 
 function handleStaticDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, newAlias, fromCascade, editObj, cb){
@@ -1149,6 +1170,101 @@ function getRetrieve(gun,gb,path,colObj,pval,callBack){
     }
 }
 
+function parseSort(obj,colArr){
+    //obj = {SORT: [pval, asc || dsc]}
+    let [pval, dir] = obj.SORT
+    let out = []
+    if(pval){
+        if(colArr.includes(pval)){
+            out.push(pval)
+        }else{
+            throw new Error('Must include the column used in SORT in the result')
+        }
+    }else{
+        throw new Error('Must specifiy a column with SORT parameter')
+    }
+    if(dir && (dir === 'asc' || dir === 'dsc')){
+        out.push(dir)
+    }else{
+        dir = 'asc'
+        out.push(dir)
+    }
+    return {FILTER: out}
+}
+function parseGroup(obj,colArr){
+    //obj = {GROUP: [pval]}
+    let pval = obj.GROUP[0]
+    let out = []
+    if(pval){
+        if(colArr.includes(pval)){
+            out.push(pval)
+        }else{
+            throw new Error('Must include the column used in GROUP in the result')
+        }
+    }else{
+        throw new Error('Must specifiy a column with GROUP parameter')
+    }
+
+    return {GROUP: out}
+}
+const multiCompare = (sortQueries,colKey, a, b)=>{
+    let [pval,order] = sortQueries[0].SORT
+    let idx = colKey.indexOf(pval)
+    const varA = (typeof a[1][idx] === 'string') ?
+        a[1][idx].toUpperCase() : a[1][idx];
+    const varB = (typeof b[1][idx] === 'string') ?
+        b[1][idx].toUpperCase() : b[1][idx];
+
+    let comparison = 0;
+    if (varA > varB) {
+        comparison = 1;
+    } else if (varA < varB) {
+        comparison = -1;
+    } else {
+        comparison = multiCompare(sortQueries.slice(1), colKey,a,b)
+    }
+    return (
+        (order == 'dsc') ? (comparison * -1) : comparison
+        );
+}
+const compareSubArr = (sortQueries, colKey) => (a,b) => {
+    //a and b should be [id, [p0Val,p1Val, etc..]]
+    //sortQueries = [{SORT:['p0']}, {SORT:['p1']}]
+    return multiCompare(sortQueries,colKey,a,b)
+}
+function formatQueryResults(results, qArr, colArr){//will export this for as a dev helper fn
+    //results = [rowID [val,val,val]]
+    let sorts = []
+    let group = [] //can only have one???
+    for (const argObj of qArr) {
+        if(argObj.SORT){
+            sorts.push(parseSort(argObj))
+        }else if(argObj.GROUP){
+            if(group.length > 1)throw new Error('Can only group by one columns? Could change this...')
+            group.push(parseGroup(argObj))
+        }
+        
+    }
+    if(sorts.length === 0){
+        sorts.push({SORT:[colArr[0]]})
+    }
+    results.sort(compareSubArr(sorts,colArr))
+    if(group.length){
+        let out = {}
+        let groupPval = group[0].GROUP[0]
+        let idx = colArr.indexOf(groupPval)
+        for (const el of results) {
+            let [rowID, propArr] = el
+            let gVal = propArr[idx]
+            if(!Array.isArray(out[gVal])) out[gVal] = []
+            out[gVal].push(el)
+        }
+        return out
+    }else{
+        return results
+    }
+}
+
 function watchObj(){
 }
 Object.defineProperty(watchObj.prototype, "watch", {
@@ -1223,5 +1339,8 @@ module.exports = {
     cachePathFromRowID,
     setRowPropCacheValue,
     bufferPathFromSoul,
-    getAllColumns
+    getAllColumns,
+    parseSort,
+    parseGroup,
+    formatQueryResults
 }
