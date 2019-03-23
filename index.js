@@ -38,5 +38,5 @@ module.exports = {
     gbase,
     linkOptions,
     fnOptions,
-    fnHelp
+    fnHelp,
 }
