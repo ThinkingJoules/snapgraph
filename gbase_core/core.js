@@ -567,7 +567,7 @@ function interactionColumnChainOpt(_path){
     return {_path, config: config(_path)}
 }
 function columnChainOpt(_path, GBtype){
-    let out = {_path, config: config(_path), subscribe: subscribe(_path), clearColumn: clearColumn(_path)}
+    let out = {_path, config: config(_path), clearColumn: clearColumn(_path)}
     if(['string','number'].includes(GBtype)){
         out = Object.assign(out,{linkColumnTo: linkColumnTo(_path)})
     }
@@ -1514,7 +1514,7 @@ const parseRange = (obj,path) =>{
         let num = relativeTime.slice(0,relativeTime.length-1)*1
         let unit = relativeTime[relativeTime.length-1]
         if(isNaN(num))throw new Error('If you are specifiying a relative time it should be some number with a single letter specifying units')
-        if(!valid.includes(unit))throw new Error('Invalid unit. Must be one of: y, m, w, d, h. (year, month, week, day, hour)')
+        if(!valid.includes(unit.toLowerCase()))throw new Error('Invalid unit. Must be one of: y, m, w, d, h. (year, month, week, day, hour)')
         let now = new Date()
         let year = now.getFullYear()
         let month = now.getMonth()

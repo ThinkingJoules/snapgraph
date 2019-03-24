@@ -1221,7 +1221,9 @@ const multiCompare = (sortQueries,colKey, a, b)=>{
     } else if (varA < varB) {
         comparison = -1;
     } else {
-        comparison = multiCompare(sortQueries.slice(1), colKey,a,b)
+        if(sortQueries.lenth > 1){
+            comparison = multiCompare(sortQueries.slice(1), colKey,a,b)
+        }
     }
     return (
         (order == 'dsc') ? (comparison * -1) : comparison
