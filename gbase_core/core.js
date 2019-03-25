@@ -1604,7 +1604,6 @@ function gatherData(qObj){
             qObj.data[rowID] = Array.from(propArr)
             qObj.isRowDone(rowID,true)
         }else{
-            if(reQuery)console.log(propArr, propArr.length, allColumns.length)
             for (const pval of allColumns) {
                 if (pval !== null){
                     getRowProp(qObj,rowID,pval)

@@ -519,7 +519,7 @@ const checkUniqueSortval = (gb,pathArr, sortval)=>{
     let configPath = pathArr.slice()
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
-    if(configPath.length === 1){
+    if(pathArr.length === 1){
         return true //base alias, those are not unique
     }
     if(things !== undefined){

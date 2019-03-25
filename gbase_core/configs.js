@@ -202,8 +202,6 @@ const makehandleConfigChange = (gun,gb,cache,gunSubs,loadColDataToCache,newColum
                     handleLinkColumn(path,typeStuff,backLinkCol,cb)
                 }
                 
-            }else{
-                throw new Error('GBtype is already type specified')
             }
         }
         if(Object.keys(configObj).length !== 0){
