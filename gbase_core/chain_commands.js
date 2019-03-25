@@ -54,15 +54,12 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
         return e
     }
 }
-const makenewStaticTable = (gun, gb) => (path) => (tname, pname, tableType)=>{
+const makenewStaticTable = (gun, gb) => (path) => (tname, pname)=>{
     try{
         let cpath = configPathFromChainPath(path)
         let nextT = findNextID(gb,path)
         checkAliasName(nextT,tname)
         checkAliasName('p0',pname)
-        if(tableType && tableType !== 'static' && tableType !== 'asset'){
-            throw new Error('Type must be either "static" or "asset".')
-        }
         let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path), type:tableType})
         checkConfig(newTableConfig(), tconfig)
         checkUniqueAlias(gb, cpath, tconfig.alias)
@@ -167,7 +164,7 @@ const makeconfig = (gb, handleConfigChange, handleInteractionConfigChange) => (p
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let [base,tval] = path.split('/')
-
+        console.log(base,tval,gb)
         let {type} = (tval) ? getValue([base,'props',tval],gb) : {type: "static"}
         if(type === 'static'){//static tables, or base config
             handleConfigChange(configObj, path, backLinkCol,cb)
@@ -963,7 +960,7 @@ const makenewInteraction = (gb, edit) => path => (rowObj, liArr, cb) =>{//like n
         let{type} = getValue([base,'props',tval],gb)
         let id = 'r' + Gun.text.random(6)
         let fullpath = tpath + '/' + id
-        let call = edit(fullpath,true,alias)
+        let call = edit(fullpath,true)
         call(rowObj, cb)
         if(type === 'transaction' && Array.isArray(liArr) && liArr.length){
             const addListItems = makeaddListItems(edit)

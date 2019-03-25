@@ -14,7 +14,7 @@ const maketableToState = (gb, vTable, subscribeQuery) => (path) => (thisReact, c
         console.log(data)
         let flaggedCols = linkColIdxs(gb,base,tval)
         let links = linkColPvals(gb,base,tval)
-        let headerValues = generateHeaderRow(gb, base, tval)
+        let headerValues = generateHeaderRow(gb, base, tval,colArr)
         let newTable = [['headers', headerValues]]
         let output = formatQueryResults(data,queryArr,colArr)
         newTable = newTable.concat(output)
