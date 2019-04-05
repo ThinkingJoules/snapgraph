@@ -37,7 +37,7 @@ const makerowToState = (gb,subscribeQuery) => (path) => (thisReact, colArr)=>{
     let call = subscribeQuery(path)
     call(function(data, retColArr){
         console.log(data,retColArr)
-        let flaggedCols = linkColIdxs(gb,base,tval,colArr)
+        let flaggedCols = linkColIdxs(gb,base,tval,retColArr)
         //let links = linkColPvals(gb,base,tval)
         //let headerValues = generateHeaderRow(gb, base, tval,colArr)
         //let newTable = [['headers', headerValues]]

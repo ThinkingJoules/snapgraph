@@ -192,8 +192,8 @@ componentDidMount() {
     let alias = this.props.match.params.alias;
     let tval = GB.byAlias[baseID].props[alias].alias;
 
-    tableToState(baseID, tval, self);
-    //2D array of [row][column] in this.state.vTable
+    gbase.base(baseID).table(tval).toState(self);
+    //array of [rowID,[columnValArr]] in this.state.vTable
 
   }
 componentDidUpdate(prevProps, prevState) {
@@ -220,8 +220,8 @@ componentDidMount() {
     let alias = this.props.match.params.alias;
     let tval = GB.byAlias[baseID].props[alias].alias;
 
-    tableToState(baseID, tval, self);
-    //2D array of [row][column] in this.state.vTable
+    gbase.base(baseID).table(tval).row(rowID).toState(self);
+    //array of [columnValArr] in this.state.row
 
   }
 componentDidUpdate(prevProps, prevState) {
@@ -232,7 +232,8 @@ componentDidUpdate(prevProps, prevState) {
     let curHID = this.props.match.params.hid;
     let rowID = GB.byAlias[baseID].props[curTable].rows[curHID]
 
-    rowToState(rowID, self)
+    gbase.base(baseID).table(tval).row(rowID).toState(self);
+    //array of [columnValArr] in this.state.row
 }
 ```
 ### React Helper Functions
@@ -460,9 +461,10 @@ gbase.B123.newTable('Items','Part Number')
 [baseID, tval? Read here](#gbase-vocab)
 _________
 ### newColumn
-**newColumn(*firstColumnName*)**  
+**newColumn(*firstColumnName*, *type*)**  
 All arguments are optional. Defaults are:  
-`firstColumnName = 'New Column'`  
+`firstColumnName = 'New Column'`   
+`type = 'string'`
 Note: An error will be thrown if the firstColumnName is not unique for the base.
 Example usage:
 ```
