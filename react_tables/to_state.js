@@ -25,68 +25,92 @@ const maketableToState = (gb, vTable, subscribeQuery) => (path) => (thisReact, c
         
     }, colArr, queryArr, subID)
 }
-const makerowToState = (gb,vTable, subscribe) => (rowID, thisReact)=>{
-    let [base, tval, rval] = rowID.split('/')
-    let oldData = getValue([base,tval,rowID], vTable)
-    if(oldData !== undefined){
-        let links = linkColPvals(gb,base,tval)
-        let [headers, headerValues] = generateHeaderRow(gb, base, tval)
-        let oldRow = [headerValues]
-        let rowArr = xformRowObjToArr(oldData, headers,links)
-        oldRow.push(rowArr)
-        if(thisReact.state && thisReact.state.rowObj && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.rowObj)){
-            thisReact.setState({vRow: newRow})
-            for (const pval in oldData) {
-                const value = oldData[pval];
-                thisReact.setState({[pval]: value})
-            }
-            return
-        }
-
-    }
-    let _path = rowID
-    let subID = base + '+' + tval + '+' + rval
-    let call = subscribe(_path)
-    call(function(data){
-        let links = linkColPvals(base,tval)
-        let [headers, headerValues] = generateHeaderRow(gb, base, tval)
-        let newRow = [headerValues]
-        let rowObj
-        for (const rowid in data) {// put data in
-            rowObj = data[rowid];
-            setMergeValue([base,tval,rowid],rowObj,vTable)
-        }
-        let rowArr = xformRowObjToArr(gb,rowObj, headers, links)
-        newRow.push(rowArr)
-        let rowValue = getValue([base,tval,rowID], vTable)
-        if(!thisReact.state.vRow || thisReact.state.vRow && rowValue && JSON.stringify(rowValue) !== JSON.stringify(thisReact.state.vRow)){
-            thisReact.setState({vRow: newRow})
-            for (const pval in rowValue) {
-                if(links[pval]){//value is link
-                    let cellValue = []
-                    let linksObj
-                    try{
-                        linksObj = JSON.parse(rowObj[pval])
-                    }catch (err){
-                        rowArr.push(rowObj[pval])
-                    }
-                    for (const linkRowID in linksObj) {
-                        const value = linksObj[linkRowID];
-                        if (value) {
-                            cellValue.push(findRowAlias(linkRowID))
-                        }
-                    }
-                    thisReact.setState({[pval]: cellValue})
-    
-                }else{
-                    const value = rowValue[pval];
-                    thisReact.setState({[pval]: value})
-                }
-                
-            }
+const makerowToState = (gb,subscribeQuery) => (path) => (thisReact, colArr)=>{
+    let [base,tval] = path.split('/')
+    let subID = path+'toState'
+    // let oldData = getValue([base,tval,'last'], vTable)
+    // let flaggedCols = linkColIdxs(gb,base,tval)
+    // if(thisReact.state && thisReact.state.vTable && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.vTable)){
+    //     thisReact.setState({vTable: oldData, linkColumns: flaggedCols})
+    //     return
+    // }
+    let call = subscribeQuery(path)
+    call(function(data, retColArr){
+        console.log(data,retColArr)
+        let flaggedCols = linkColIdxs(gb,base,tval,colArr)
+        //let links = linkColPvals(gb,base,tval)
+        //let headerValues = generateHeaderRow(gb, base, tval,colArr)
+        //let newTable = [['headers', headerValues]]
+        //let output = formatQueryResults(data,queryArr,colArr)
+        //newTable = newTable.concat(output)
+        if(thisReact.state && (!thisReact.state.linkColumns || JSON.stringify(thisReact.state.linkColumns) !== JSON.stringify(flaggedCols))){
+            thisReact.setState({row: data,linkColumns: flaggedCols, columns: retColArr})
         }
         
-    }, undefined, true, true, subID)
+    }, colArr, [], subID)
+
+
+    // let [base, tval, rval] = rowID.split('/')
+    // let oldData = getValue([base,tval,rowID], vTable)
+    // if(oldData !== undefined){
+    //     let links = linkColPvals(gb,base,tval)
+    //     let [headers, headerValues] = generateHeaderRow(gb, base, tval)
+    //     let oldRow = [headerValues]
+    //     let rowArr = xformRowObjToArr(oldData, headers,links)
+    //     oldRow.push(rowArr)
+    //     if(thisReact.state && thisReact.state.rowObj && oldData !== undefined && JSON.stringify(oldData) !== JSON.stringify(thisReact.state.rowObj)){
+    //         thisReact.setState({vRow: newRow})
+    //         for (const pval in oldData) {
+    //             const value = oldData[pval];
+    //             thisReact.setState({[pval]: value})
+    //         }
+    //         return
+    //     }
+
+    // }
+    // let _path = rowID
+    // let subID = base + '+' + tval + '+' + rval
+    // let call = subscribe(_path)
+    // call(function(data){
+    //     let links = linkColPvals(base,tval)
+    //     let [headers, headerValues] = generateHeaderRow(gb, base, tval)
+    //     let newRow = [headerValues]
+    //     let rowObj
+    //     for (const rowid in data) {// put data in
+    //         rowObj = data[rowid];
+    //         setMergeValue([base,tval,rowid],rowObj,vTable)
+    //     }
+    //     let rowArr = xformRowObjToArr(gb,rowObj, headers, links)
+    //     newRow.push(rowArr)
+    //     let rowValue = getValue([base,tval,rowID], vTable)
+    //     if(!thisReact.state.vRow || thisReact.state.vRow && rowValue && JSON.stringify(rowValue) !== JSON.stringify(thisReact.state.vRow)){
+    //         thisReact.setState({vRow: newRow})
+    //         for (const pval in rowValue) {
+    //             if(links[pval]){//value is link
+    //                 let cellValue = []
+    //                 let linksObj
+    //                 try{
+    //                     linksObj = JSON.parse(rowObj[pval])
+    //                 }catch (err){
+    //                     rowArr.push(rowObj[pval])
+    //                 }
+    //                 for (const linkRowID in linksObj) {
+    //                     const value = linksObj[linkRowID];
+    //                     if (value) {
+    //                         cellValue.push(findRowAlias(linkRowID))
+    //                     }
+    //                 }
+    //                 thisReact.setState({[pval]: cellValue})
+    
+    //             }else{
+    //                 const value = rowValue[pval];
+    //                 thisReact.setState({[pval]: value})
+    //             }
+                
+    //         }
+    //     }
+        
+    // }, undefined, true, true, subID)
 }
 const makebuildRoutes = gb =>(thisReact, baseID)=>{
     let result = []

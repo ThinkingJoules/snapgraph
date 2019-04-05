@@ -188,7 +188,7 @@ const gunToGbase = gunInstance =>{
     subscribeQuery = makesubscribeQuery(gb,setupQuery)
     retrieveQuery = makeretrieveQuery(gb,setupQuery)
     tableToState = maketableToState(gb,vTable,subscribeQuery)
-    rowToState = makerowToState(gb,vTable,subscribeQuery)
+    rowToState = makerowToState(gb,subscribeQuery)
     gbase.newBase = newBase
     gbase.ti = tIndex
     gbase.tl = tLog
@@ -574,7 +574,7 @@ function columnChainOpt(_path, GBtype){
     return out
 }
 function rowChainOpt(_path, _alias){
-    return {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
+    return {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path),toState: rowToState(_path,_alias)}
 }
 function interactionRowChainOpt(_path, tType, _alias){
     let out = {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieve(_path), subscribe: subscribe(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
@@ -1706,10 +1706,14 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
                 }
             }else{//return row
                 this.output = []
-                for (const rowID in this.rows) {
+                for (const rowID of this.rows) {
                     let propArr = this.data[rowID]
+                    console.log(this.data,rowID)
+                    console.log(propArr)
                     for (const pval of this.columns) {
+                        console.log(pval)
                         let idx = pval.slice(1)
+                        console.log(propArr, idx)
                         this.output.push(propArr[idx])
                     }
                 }
