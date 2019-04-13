@@ -1,4 +1,11 @@
 "use strict";
+if(typeof window !== "undefined"){
+    var Gun = window.Gun;
+}else{
+    var Gun = global.Gun;
+}
+if (!Gun)
+throw new Error("gundb-gbase: Gun was not found globally!");
 let gun
 let gbase = {}
 let gb = {}
@@ -152,10 +159,9 @@ let qIndex,tIndex,tLog
 
 
 
-startGunConfigSubs()
-
-const gunToGbase = gunInstance =>{
+const gunToGbase = (gunInstance,baseID) =>{
     gun = gunInstance
+    startGunConfigSubs(baseID)
     //DI after gunInstance is received from outside
     newBase = makenewBase(gun)
     newStaticTable = makenewStaticTable(gun,gb)
@@ -232,14 +238,14 @@ base/tval/rval/'context' <only transactions, stores a stringified obj of li inst
 
 
 */
-function startGunConfigSubs(){
+function startGunConfigSubs(baseID){
     if(gun){
         gun.get('GBase').on(function(gundata, id){
             let data = Gun.obj.copy(gundata)
             delete data['_']
             for (const key in data) {
                 const value = data[key];
-                if (value) {
+                if (key === baseID) {
                     let baseconfig = key + '/config'
                     gun.get(baseconfig).on(function(gundata, id){
                         gunSubs[baseconfig] = true
@@ -251,20 +257,20 @@ function startGunConfigSubs(){
                         //setupPropSubs(key)
                         triggerConfigUpdate(id)
                     })
-                    let basestate = key + '/state'
-                    gun.get(basestate).on(function(gundata, id){
-                        gunSubs[basestate] = true
-                        let data = Gun.obj.copy(gundata)
-                        delete data['_']
-                        let histpath = [key,'history']
-                        let hist = (data.history) ? data.history : "{}"
-                        setMergeValue(histpath,JSON.parse(hist),gb)
-                    })
+                    // let basestate = key + '/state'
+                    // gun.get(basestate).on(function(gundata, id){
+                    //     gunSubs[basestate] = true
+                    //     let data = Gun.obj.copy(gundata)
+                    //     delete data['_']
+                    //     let histpath = [key,'history']
+                    //     let hist = (data.history) ? data.history : "{}"
+                    //     setMergeValue(histpath,JSON.parse(hist),gb)
+                    // })
                 }
             }
         })    }
     else{
-        setTimeout(startGunConfigSubs, 50);
+        setTimeout(startGunConfigSubs, 3000);
     }
 }
 function setupTableSubs(baseID){
@@ -1868,6 +1874,210 @@ function getRowProp(qObj, rowID, pval){
 }
 
 
+//PERMISSIONS
+function addHeader(ctx,msg,to){
+    let pair = ctx.opt.creds
+    let type = (msg.get) ? 'get' : (msg.put) ? 'put' : false
+    msg.header = {type,pub:false,sig:false}
+    if(pair && type){
+        let pub = pair.pub
+        let toSign = msg['#'] || msg['@']
+        Gun.SEA.sign(toSign,pair,function(sig){
+            if(sig !== undefined){
+                msg.header = {pub:pub,sig,alias:pair.alias}
+                to.next(msg)
+            }else{
+                to.next(msg)
+            }
+        })
+    }else if(type){
+        to.next(msg)
+    }else{
+        to.next(msg)
+    }
+}
+
+function verifyPermissions(ctx,msg,to){
+    if(msg.get && msg.get['#']){// get
+        verifyOp(ctx,msg,to,'get')
+    }else if (msg.put && Object.keys(msg.put).length){// put
+        verifyOp(ctx,msg,to,'put')
+    }else{
+        to.next(msg)
+    }
+}
+
+function isRestricted(soul,op){
+    let getWhiteList = [/~/,/GBase/,/config/,/permissions/,/super/,/\/t$/,/\/t\d*\/p/]
+    if(op === 'get'){
+        let pass = false
+        for (const t of getWhiteList) {
+            let p = t.test(soul)
+            if(p){
+                pass = true
+                break
+            }
+        }
+        if(pass)return false
+        console.log('not on whiteList:', soul)
+        let isGBase = /\/t\d+/g.test(soul) //looks for anything that has = '/t' + Number() (that didn't pass the whiteList)
+        if(isGBase)return true
+        if(soul === 'something')return true
+        return false
+    }else{
+        if(/~/.test(soul))return false //allow user puts
+        if(/GBase/.test(soul))return false //allow additions to list of bases
+        
+        return true
+    }
+}
+
+function verifyOp(ctx,msg,to,op){
+    let gun = ctx.root.gun
+    let pobj = {msg,to,op}
+    pobj.pub = false
+    pobj.verified = false
+    pobj.soul = (op==='put') ? Object.keys(msg.put)[0] : msg.get['#']
+    pobj.prop = (op==='put') ? msg.put[pobj.soul] : msg.get['.']
+    if(!isRestricted(pobj.soul,pobj.op)){//no auth needed
+        console.log('no auth needed: ',pobj.soul)
+        to.next(msg)
+        return
+    }
+    if(msg.header && msg.header.sig && msg.header.pub){
+        console.log('Checking ' + pobj.op +': ', pobj.soul)
+        let {pub,sig} = msg.header
+        Gun.SEA.verify(sig,pub,function(data){
+            let toCheck = msg['#'] || msg['@']
+            if(data !== undefined && data === toCheck){
+                pobj.verified = true
+                pobj.pub = pub 
+            }
+            testRequest(gun,pobj)
+        })
+    }else{//not logged in, could potentially have permissions?
+        testRequest(gun,pobj)
+    }
+}
+
+function testRequest(gun, permObj){
+    let {pub,msg,to,verified,soul,prop} = permObj
+    //console.log(verified,soul)
+    if(!gb)throw new Error('Cannot find GBase config file') //change to fail silent for production
+    //figure out what sort of table config this row is on
+    //if static and has 'next', then will need to traverse
+
+
+    
+    gun.get(soul+'/permissions').get(function(message,eve){
+        eve.off()
+        if(message.put){
+            let {owner,group,permissions} = message.put
+            if(verified && pub && pub === owner){
+                console.log('MESSAGE IS VERIFIED')
+                to.next(msg)
+            }
+        }else{//no permission node created yet
+            let baseConfig = soul.split('/') //must check to see if it is a 'baseID/config'
+            if(baseConfig.length === 2 && baseConfig.includes('config')){//if 'baseID/config' soul doesn't exist, then this user can create it.
+                to.next(msg)
+                gun.get(soul+'/permissions').put({owner:pub,group:'admin',permissions:770})
+                gun.get(soul+'/super').put({[pub]:true})
+            }
+        }
+    })
+    
+
+}
+
+
+
+
+
+
+
+function verifyGet(ctx,msg,to){
+    let gun = ctx.root.gun
+    if(!isGetRestricted(msg)){//no auth needed
+        console.log('no auth needed: ',msg.get['#'])
+        to.next(msg)
+        return
+    }
+    let pobj = {msg,to}
+    pobj.pub = false
+    pobj.op = 'get'
+    pobj.verified = false
+    pobj.soul = msg.get['#']
+    pobj.prop = msg.get['.']
+    if(msg.header && msg.header.sig && msg.header.pub){
+        console.log('Checking GET ',msg.get['#'])
+        let {pub,sig} = msg.header
+        Gun.SEA.verify(sig,pub,function(data){
+            let toCheck = msg['#'] || msg['@']
+            if(data !== undefined && data === toCheck){
+                pobj.verified = true
+                pobj.pub = pub 
+            }
+            testRequest(gun,pobj)
+        })
+    }else{//not logged in, could potentially have permissions
+        testRequest(gun,pobj)
+    }
+}
+
+function isGetRestricted(msg){
+    let soul = msg.get['#']
+    let pass = false
+    for (const t of getWhiteList) {
+        let p = t.test(soul)
+        if(p){
+            pass = true
+            break
+        }
+    }
+    if(pass)return false
+    console.log('not on whiteList:', soul)
+    let isGBase = /\/t\d+/g.test(soul) //looks for anything that has = '/t' + Number() (that didn't pass the whiteList)
+    if(isGBase)return true
+    if(soul === 'something')return true
+    return false
+}
+
+function isPutRestricted(soul){
+    if(/~/.test(soul))return false //allow user puts
+    if(/GBase/.test(soul))return false //allow additions to list of bases
+    
+    return true
+}
+
+function verifyPut(ctx,msg,to){
+    let gun = ctx.root.gun
+    let pobj = {msg,to}
+    pobj.pub = false
+    pobj.op = 'put'
+    pobj.verified = false
+    pobj.soul = Object.keys(msg.put)[0]
+    pobj.prop = msg.put[pobj.soul]
+    if(!isPutRestricted(pobj.soul)){//no auth needed
+        console.log('no auth needed: ',pobj.soul)
+        to.next(msg)
+        return
+    }
+    if(msg.header && msg.header.sig && msg.header.pub){
+        console.log('Checking PUT ', pobj.soul)
+        let {pub,sig} = msg.header
+        Gun.SEA.verify(sig,pub,function(data){
+            let toCheck = msg['#'] || msg['@']
+            if(data !== undefined && data === toCheck){
+                pobj.verified = true
+                pobj.pub = pub 
+            }
+            testRequest(gun,pobj)
+        })
+    }else{//not logged in, could potentially have permissions?
+        testRequest(gun,pobj)
+    }
+}
 
 
 //REACT STUFF
@@ -2147,5 +2357,7 @@ module.exports = {
     gunToGbase,
     linkOptions,
     fnOptions,
-    formatQueryResults
+    formatQueryResults,
+    addHeader,
+    verifyPermissions
 }

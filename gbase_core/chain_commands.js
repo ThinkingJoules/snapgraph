@@ -44,10 +44,6 @@ const makenewBase = gun => (alias, tname, pname, baseID) =>{
         checkAliasName('p0',pname)
         gun.get('GBase').put({[baseID]: true})
         gun.get(baseID + '/config').put(newBaseConfig({alias}))
-        gun.get(baseID + '/t0/config').put(newTableConfig({alias: tname}))
-        gun.get(baseID + '/t0/p0/config').put(newColumnConfig({alias: pname}))   
-        gun.get(baseID + '/t0/p').put({p0: true})
-        gun.get(baseID + '/t').put({t0: 'static'})
         return baseID
     }catch(e){
         console.log(e)
