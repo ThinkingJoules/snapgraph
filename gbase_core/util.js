@@ -727,7 +727,7 @@ function hasColumnType(gb, tPathOrPpath, type){
     let [base,tval] = tPathOrPpath.split('/')
     let tPath = [base,tval].join('/')
     let cpath = configPathFromChainPath(tPath)
-    let {props} = getValue(cpath, gb)
+    let {props} = getValue(cpath, gb) || {}
     let cols = []
     for (const pval in props) {
         const {GBtype} = props[pval];

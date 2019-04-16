@@ -37,13 +37,17 @@ const{getValue,
 } = require('./util')
 
 //GBASE CHAIN COMMANDS
-const makenewBase = gun => (alias, tname, pname, baseID) =>{
+const makenewBase = gun => (alias, baseID) =>{
     try{
+        let pub = gun.user().is.pub
         baseID = baseID || 'B' + Gun.text.random(8)
         checkAliasName('t0',tname)
         checkAliasName('p0',pname)
+        gun.get(baseID + '|super').put({[pub]:true})
+        gun.get(baseID + '|group/admin|permissions').put({owner:pub,group:'admin',ownerP:7,groupP:7,anyP:0})
         gun.get('GBase').put({[baseID]: true})
         gun.get(baseID + '/config').put(newBaseConfig({alias}))
+        
         return baseID
     }catch(e){
         console.log(e)

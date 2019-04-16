@@ -82,7 +82,8 @@ const {
     bufferPathFromSoul,
     getAllColumns,
     watchObj,
-    formatQueryResults
+    formatQueryResults,
+    hasColumnType
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -1881,7 +1882,7 @@ function addHeader(ctx,msg,to){
     msg.header = {type,pub:false,sig:false}
     if(pair && type){
         let pub = pair.pub
-        let toSign = msg['#'] || msg['@']
+        let toSign = msg['#'] || msg['@'] //msg ID as entropy
         Gun.SEA.sign(toSign,pair,function(sig){
             if(sig !== undefined){
                 msg.header = {pub:pub,sig,alias:pair.alias}
@@ -1908,27 +1909,23 @@ function verifyPermissions(ctx,msg,to){
 }
 
 function isRestricted(soul,op){
-    let getWhiteList = [/~/,/GBase/,/config/,/permissions/,/super/,/\/t$/,/\/t\d*\/p/]
+    let getWhiteList = [/~/,/\|/,/GBase/,/config/,/\/t$/,/\/t\d*\/p/]
     if(op === 'get'){
-        let pass = false
         for (const t of getWhiteList) {
             let p = t.test(soul)
             if(p){
-                pass = true
-                break
+                return false
             }
         }
-        if(pass)return false
         console.log('not on whiteList:', soul)
         let isGBase = /\/t\d+/g.test(soul) //looks for anything that has = '/t' + Number() (that didn't pass the whiteList)
         if(isGBase)return true
-        if(soul === 'something')return true
-        return false
+        return false //default everything else to read w/o login
     }else{
         if(/~/.test(soul))return false //allow user puts
         if(/GBase/.test(soul))return false //allow additions to list of bases
         
-        return true
+        return true //default all other puts to needing permission
     }
 }
 
@@ -1948,51 +1945,399 @@ function verifyOp(ctx,msg,to,op){
         console.log('Checking ' + pobj.op +': ', pobj.soul)
         let {pub,sig} = msg.header
         Gun.SEA.verify(sig,pub,function(data){
-            let toCheck = msg['#'] || msg['@']
+            let toCheck = msg['#'] || msg['@'] //check against msg ID
             if(data !== undefined && data === toCheck){
                 pobj.verified = true
                 pobj.pub = pub 
             }
-            testRequest(gun,pobj)
+            testRequest(gun,pobj,pobj.soul)
         })
     }else{//not logged in, could potentially have permissions?
-        testRequest(gun,pobj)
+        testRequest(gun,pobj,pobj.soul)
     }
 }
 
-function testRequest(gun, permObj){
-    let {pub,msg,to,verified,soul,prop} = permObj
+function testRequest(gun, request, testSoul){
+    let {pub,msg,to,verified,soul,prop,op} = request
     //console.log(verified,soul)
     if(!gb)throw new Error('Cannot find GBase config file') //change to fail silent for production
-    //figure out what sort of table config this row is on
-    //if static and has 'next', then will need to traverse
-
-
+    let [path,...perm] = soul.split('|')
+    let [base,tval,...rest] = testSoul.split('/')
     
-    gun.get(soul+'/permissions').get(function(message,eve){
-        eve.off()
-        if(message.put){
-            let {owner,group,permissions} = message.put
-            if(verified && pub && pub === owner){
-                console.log('MESSAGE IS VERIFIED')
-                to.next(msg)
+    if(soul.includes('|')){//permission change (put),(get is whitelisted)
+        if(soul.includes('super') && testSoul.split('/').length === 1){//attempt to modify 'baseID|super' node
+            gun.get(soul).get(function(message,eve){
+                eve.off()
+                if(message.put){
+                    if(verified && message.put[pub]){// a super is adding another super
+                        let aFalsy = false
+                        for (const soul in msg.put) {
+                            const soulPut = msg.put[soul];
+                            for (const key in soulPut) {
+                                const value = soulPut[key];
+                                if(!value){//can only truthy a super, (can never remove a super, reasoning being that a malicous super could take over a db)
+                                    aFalsy = true
+                                }
+                            }
+                        }
+                        if(!aFalsy){//if want to remove a super, will have to add them to a blacklist of pubkeys and check the key against that on every message.
+                            to.next(msg)
+                        }
+                    }
+                }else if(verified && pub){//if no 'super node', then anyone with a valid pubkey can become the first super (new base creation)
+                    to.next(msg)
+                    console.log('creating a new base/super!')
+                }
+            })
+        }else if(soul.includes('group') && testSoul.split('/').length === 1){//group or group permission options
+            let firstNode
+            if(soul.includes(permissions)){
+                firstNode = soul
+            }else{
+                firstNode = soul + '|permissions'
             }
-        }else{//no permission node created yet
-            let baseConfig = soul.split('/') //must check to see if it is a 'baseID/config'
-            if(baseConfig.length === 2 && baseConfig.includes('config')){//if 'baseID/config' soul doesn't exist, then this user can create it.
-                to.next(msg)
-                gun.get(soul+'/permissions').put({owner:pub,group:'admin',permissions:770})
-                gun.get(soul+'/super').put({[pub]:true})
+            gun.get(firstNode).get(function(message,eve){
+                eve.off()
+                if(message.put){
+                    let {owner,group,ownerP,groupP,anyP} = message.put
+                    let [ownerCan,groupCan,anyCan] = findAbility(message,op)
+                    if(soul.includes(permissions)){//editing permissions of group
+                        ownerCan = (ownerP === 7)
+                        groupCan = (groupP === 7)
+                        anyCan = (anyP === 7)
+                    }
+                    if(pub === owner && ownerCan && verified){
+                        console.log('Group Owner editing group or group permissions')
+                        to.next(msg)
+                    }else if(groupCan){//check to see if pubkey is in this permission group
+                        let groupSoul
+                        if(soul.includes('|UDgroup/')){//UD group
+                            groupSoul = base+'|UDgroup/'+owner+'/'+group
+                        }else{//db group
+                            groupSoul = base+'|group/'+group
+                        }
+                        gun.get(groupSoul).get(function(group,eve){//Group can reference itself (or any other addressable group) for permission membership
+                            eve.off()
+                            if(group.put && group.put[pub] && verified){//is on list, can edit
+                                if(soul.includes('permissions')){//change permission
+                                    let invalidCHP = false
+                                    for (const soul in msg.put) {
+                                        const putObj = msg.put[soul];
+                                        for (const putKey in putObj) {
+                                            if(putKey === '_')continue
+                                            if(['owner','ownerP'].includes(putKey)){//group can't edit owner or ownerP
+                                                invalidCHP = true
+                                            }
+                                        }
+                                    }
+                                    if(!invalidCHP){
+                                        console.log('Valid Group Member editing permissions')
+                                        to.next(msg)
+                                    }else{
+                                        console.log('Invalid permission change, group cannot edit owner permission settings')
+                                    }
+                                }else{//editing membership
+                                    to.next(msg)
+                                }
+                            }else if(anyCan){//anyone can add anyone to a group? Not sure use case
+                                if(soul.includes('permissions')){//change permission
+                                    let invalidCHP = false
+                                    for (const soul in msg.put) {
+                                        const putObj = msg.put[soul];
+                                        for (const putKey in putObj) {
+                                            if(putKey === '_')continue
+                                            if(['owner','ownerP','group','groupP'].includes(putKey)){//any can only edit it's own permission
+                                                invalidCHP = true
+                                            }
+                                        }
+                                    }
+                                    if(!invalidCHP){
+                                        to.next(msg)
+                                    }else{
+                                        console.log('Invalid permission change, `any` cannot edit owner or group permission settings')
+                                    }
+                                }else{
+                                    to.next(msg)
+                                }
+                            }
+                        })
+
+                    }
+                }else if(verified){//only admin group or super can create a new group
+                    gun.get(base+'|group/admin').get(function(group,eve){
+                        eve.off()
+                        if(group.put && group.put[pub]){//is on list, can edit
+                            to.next(msg)
+                        }else{//anyone can add anyone to a group? Not sure use case
+                            gun.get(base+'|super').get(function(data,eve){
+                                eve.off()
+                                if(data.put && data.put[pub]){//is on list, can edit
+                                    to.next(msg)
+                                }
+                            })
+                        }
+                    })
+                }
+            })
+        }else if(soul.includes('permissions')){//for permission nodes themselves, sould be either base, table, or row permissions
+            if(testSoul.split('/').length < 3){// baseID|permissions || baseID/tval|permissions : must be admin or super
+                gun.get(base+'|group/admin').get(function(group,eve){
+                    eve.off()
+                    if(group.put && group.put[pub]){//is on list, can edit
+                        to.next(msg)
+                    }else{
+                        gun.get(base+'|super').get(function(group,eve){
+                            eve.off()
+                            if(group.put && group.put[pub]){//is on list, can edit
+                                to.next(msg)
+                            }
+                        })
+                    }
+                })
+            }else{//row permission
+                gun.get(soul).get(function(perms,eve){
+                    eve.off()
+                    if(perms.put){//exists, follow rules for updating
+                        let {owner,group,ownerP,groupP,anyP} = perms.put
+                        if(verified && pub && owner === pub && ownerP === 7){
+                            to.next(msg)
+                        }else if(groupP === 7 && anyP !== 7){//if in group, can edit
+                            gun.get(base+'|group/'+group).get(function(group,eve){//Group can reference itself (or any other addressable group) for permission membership
+                                eve.off()
+                                if(group.put && group.put[pub] && verified){//is on list, can edit
+                                    let invalidCHP = false
+                                    for (const soul in msg.put) {
+                                        const putObj = msg.put[soul];
+                                        for (const putKey in putObj) {
+                                            if(putKey === '_')continue
+                                            if(['owner','ownerP'].includes(putKey)){//
+                                                invalidCHP = true
+                                            }
+                                        }
+                                    }
+                                    if(!invalidCHP){
+                                        to.next(msg)
+                                    }else{
+                                        console.log('Invalid permission change, `group` cannot edit owner permission settings')
+                                    }
+                                }
+                            })
+                        }else if(anyP === 7){//not sure when this would be... (can only change their own permissions once, to something other than 7...)
+                            let invalidCHP = false
+                                for (const soul in msg.put) {
+                                    const putObj = msg.put[soul];
+                                    for (const putKey in putObj) {
+                                        if(putKey === '_')continue
+                                        if(['owner','ownerP','group','groupP'].includes(putKey)){//any can only edit it's own permission
+                                            invalidCHP = true
+                                        }
+                                    }
+                                }
+                                if(!invalidCHP){
+                                    to.next(msg)
+                                }else{
+                                    console.log('Invalid permission change, `any` cannot edit owner or group permission settings')
+                                }
+                        }else{//admins or super can change row permissions regardless of permission settings
+                            gun.get(base+'|group/admin').get(function(group,eve){
+                                eve.off()
+                                if(group.put && group.put[pub]){//is on list, can edit
+                                    to.next(msg)
+                                }else{
+                                    gun.get(base+'|super').get(function(group,eve){
+                                        eve.off()
+                                        if(group.put && group.put[pub]){//is on list, can edit
+                                            to.next(msg)
+                                        }
+                                    })
+                                }
+                            })
+                        }
+                    }else{//first one to create it, becomes owner? Would simplify by not having a known signer online (admin on server, etc.)
+                        to.next(msg)
+                    }
+                })
             }
+
         }
-    })
-    
+    }else if(soul.includes('config') && pub && verified){//no permissions node on config, must be admin or super
+        gun.get(base+'|group/admin').get(function(group,eve){
+            eve.off()
+            if(group.put && group.put[pub]){//is on list, can edit
+                to.next(msg)
+            }else{
+                gun.get(base+'|super').get(function(group,eve){
+                    eve.off()
+                    if(group.put && group.put[pub]){//is on list, can edit
+                        to.next(msg)
+                    }
+                })
+            }
+        })
+    }else{//all other restricted nodes, should be rows
+        if(rest[0][0] === 'r'){// is some sort of row..
+            let path = [base,tval,rest[0]].join('/')
 
+            let permSoul, traverse = true
+            let inherit = gb[base].inherit_permissions || true
+            let own = gb[base].props[tval].owner || false
+            let hasNext = hasColumnType(gb,soul,'next') //false || [pval] 
+            if(own || !hasNext || !inherit){ //permissions should not need a lookup, should be at this `soul` + '|permissions'
+                permSoul = path +'|permissions'
+                traverse = false
+            }
+            gun.get(permSoul).get(function(message,eve){
+                eve.off()
+                if(message.put){
+                    checkPermNode(gun,message.put,request,path)
+                }else if(inherit){//find inherited soul
+                    let bPerm = base+'|pemrissions'
+                    let tPerm = [base,tval].join('/') +'|permissions'
+                    gun.get(tPerm).get(function(message,eve){
+                        eve.off()
+                        if(message.put){
+                            checkPermNode(gun,message.put,request,path)
+                        }else{
+                            gun.get(bPerm).get(function(message,eve){
+                                eve.off()
+                                if(message.put){
+                                    checkPermNode(gun,message.put,request,path)
+                                }else{
+                                    console.log('ERROR: NO PERMISSIONS TO INHERIT!!')
+                                }
+                            })
+                        }
+                    })
+                }else{
+                    console.log('ERROR: NO PERMISSIONS SPECIFIED!') 
+                }
+            })
+        }else if(rest[0][0] === 'p'){
+            //going to deprecate these nodes in gbase soon.
+            to.next(msg)
+            //column soul base/tval/pval
+        }else if(!rest){
+            //currently nothing on these nodes
+            //base or base/tval
+            to.next(msg)
+        }
+    } 
 }
 
+function findAbility(putObj,op){
+    let {ownerP,groupP,anyP} = putObj
 
+    if(op === 'put'){// rwx || rw || w 
+        ownerCan = (ownerP === 7 || ownerP === 6 || ownerP === 2)
+        groupCan = (groupP === 7 || groupP === 6 || groupP === 2)
+        anyCan = (anyP === 7 || anyP === 6 || anyP === 2)
+    }else{//get rwx || rw || r
+        ownerCan = (ownerP === 7 || ownerP === 6 || ownerP === 4)
+        groupCan = (groupP === 7 || groupP === 6 || groupP === 4)
+        anyCan = (anyP === 7 || anyP === 6 || anyP === 4)
+    }
+    return [ownerCan,groupCan,anyCan]
+}
+function isAdmin(gun,request){
+    let {pub,msg,to,verified,soul,prop,op} = request
+    if(!verified){
+        console.log('PERMISSION DENIED')
+        gun._.on('in',{'@': msg['#'], '#':Gun.text.random(9), err: 'PERMISSION DENIED!'})
+    }
+    let [base] = soul.split('/')
+    gun.get(base+'|group/admin').get(pub).get(function(message,eve){
+        eve.off()
+        if(message.put){
+            to.next(msg)
+            console.log('admin is performing action')
+        }else{
+            gun.get(base+'|super').get(pub).get(function(message,eve){
+                eve.off()
+                if(message.put){
+                    to.next(msg)
+                    console.log('super is performing action')
+                }
+            })
+        }
+    })
+}
 
+function checkPermNode(gun,putObj,request,currentPath){
+    let {owner,group,ownerP,groupP,anyP} = putObj
+    let {pub,msg,to,verified,soul,prop,op} = request
+    let permReq
+    if(currentPath !== soul){
+        permReq = 'get'
+    }else{
+        permReq = op
+    }
+    let [ownerCan,groupCan,anyCan] = findAbility(putObj,permReq)
+    let can = false
+    if(anyCan){//check most general first
+        if(traverse){
+            can = true
+        }else{
+            to.next(msg)
+            console.log('anyone can/is performing this action')
+        }
+    }else if(verified && pub && pub === owner && ownerCan){//check ifOwner, does not require lookup
+        if(traverse){
+            can = true
+        }else{
+            to.next(msg)
+            console.log('Owner is performing this action')
 
+        }
+    }else if(verified && groupCan){//check ifInGroup
+        let groupSoul
+        if(own){
+            groupSoul = base+'|UDgroup/'+owner+'/'+group
+        }else{
+            groupSoul = base+'|group/'+group
+        }
+        gun.get(groupSoul).get(pub).get(function(message,eve){
+            eve.off()
+            if(message.put && traverse){
+                let pval = hasNext[0] //should be single 'next' column
+                let links = path + '/links/'+ pval
+                gun.get(links).get(function(message,eve){
+                    eve.off()
+                    if(message.put){
+                        for (const nextLink in msg.put) {
+                            const valid = msg.put[nextLink];
+                            if(valid){//take first valid link, should only be one
+                                testRequest(gun,request,nextLink)
+                            }
+                        }
+                    }
+                })
+            }else if(message.put){
+                to.next(msg)
+                console.log('Group member is performing this action')
+            }else{
+                isAdmin(gun,request)
+            }
+        })
+        return        
+    }
+    if(traverse && can){
+        let pval = hasNext[0] //should be single 'next' column
+        let links = path + '/links/'+ pval
+        gun.get(links).get(function(message,eve){
+            eve.off()
+            if(message.put){
+                for (const nextLink in msg.put) {
+                    const valid = msg.put[nextLink];
+                    if(valid){//take first valid link, should only be one
+                        testRequest(gun,request,nextLink)
+                    }
+                }
+            }
+        })
+    }else{
+        isAdmin(gun,request)
+    }
+}
 
 
 
