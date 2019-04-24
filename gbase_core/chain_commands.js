@@ -33,21 +33,42 @@ const{getValue,
     removeAssociation,
     getRetrieve,
     checkAliasName,
-    getAllColumns
+    getAllColumns,
+    buildPermObj
 } = require('./util')
 
 //GBASE CHAIN COMMANDS
-const makenewBase = gun => (alias, baseID) =>{
+const makenewBase = gun => (alias, basePermissions, baseID) =>{
     try{
-        let pub = gun.user().is.pub
+        let user = gun.user()
+        let pub = user && user.is && user.is.pub || false
+        if(!pub){
+            throw new Error('Must be signed in to perform this action')
+        }
+        let perms = buildPermObj('base',pub,basePermissions)
+
         baseID = baseID || 'B' + Gun.text.random(8)
-        checkAliasName('t0',tname)
-        checkAliasName('p0',pname)
-        gun.get(baseID + '|super').put({[pub]:true})
-        gun.get(baseID + '|group/admin|permissions').put({owner:pub,group:'admin',ownerP:7,groupP:7,anyP:0})
-        gun.get('GBase').put({[baseID]: true})
-        gun.get(baseID + '/config').put(newBaseConfig({alias}))
-        
+
+        gun.get(baseID + '|super').put({[pub]:true},function(ack){
+            if(ack.err){
+                console.log(ack.err)
+            }else{
+                gun.get(baseID + '|group/admin|permissions').put(buildPermObj('group'))
+                
+                
+            }
+        })
+        const putRest = () =>{
+            gun.get(baseID + '|group/admin').put({[pub]:true})
+
+            let grpsSoul = baseID + '|groups'
+            gun.get(baseID + '|permissions').put(perms)
+            gun.get(grpsSoul).put({'admin': true, 'ANY': true})
+            gun.get(baseID + '|group/ANY|permissions').put(buildPermObj('group',false,{add: 'ANY'}))
+            gun.get('GBase').put({[baseID]: true})
+            gun.get(baseID + '/config').put(newBaseConfig({alias}))
+        }
+        setTimeout(putRest,1000)
         return baseID
     }catch(e){
         console.log(e)
@@ -994,6 +1015,106 @@ const makeremoveListItems = (gun,timeLog) => path => (arr) =>{//remove one or mo
 }
 
 
+//PERMISSION APIs
+const makesetAdmin = gun => path => (pubkey, value)=>{
+    let [base] = path.split('/')
+    let soul = base + '|group/admin'
+    gun.get(soul).get(pubkey).put(value)
+}
+const makenewGroup = gun => path => (groupName,perms)=>{
+    let permObj = buildPermObj('group',false,perms)
+    let [base] = path.split('/')
+    let soul1 = base + '|groups'
+    let soul2 = base + '|group/' + groupName + '|permissions'
+    gun.get(soul1).get(groupName).put(true)
+    gun.get(soul2).put(permObj)
+}
+const makeaddUser = gun => path => (userPub,groupNames)=>{//signup for app, not signup for gun.user()
+    let [base] = path.split('/')
+    let soul1 = base + '|groups'
+    if(groupNames && !Array.isArray(groupNames)){
+        groupNames = [groupNames]
+    }else{
+        groupNames = []
+    }
+    groupNames.push('ANY')
+    gun.get(soul1).get(function(msg,eve){
+        eve.off()
+        if(msg.put){
+            let invalid = []
+            for (const group of groupNames) {
+                if(!msg.put[group]){
+                    invalid.push(group)
+                }
+            }
+            if(!invalid.length){//add user to groups
+                for (const group of groupNames) {
+                    let gSoul = base + '|group/' +group
+                    gun.get(gSoul).get(userPub).put(true, function(ack){
+                        if(ack.err){
+                            console.log('You do not have permission to add user to group: '+ group)
+                        }
+                    })
+                }
+            }else{//abort?
+                throw new Error('Invalid Group(s) specified: '+invalid.join(', '))
+            }
+        }else{
+            throw new Error('Could not find "groups" for this database')
+        }
+    })
+}
+const makeuserAndGroup = gun => (path,group,val) => (userPubs)=>{//signup for app, not signup for gun.user()
+    let [base] = path.split('/')
+    let soul1 = base + '|groups'
+    let gSoul = base + '|group/' +group
+    if(userPubs && !Array.isArray(userPubs)){
+        userPubs = [userPubs]
+    }else{
+        console.log('Must specify at least one user to add!')
+        return
+    }
+    gun.get(soul1).get(group).get(function(msg,eve){
+        eve.off()
+        if(msg.put){
+            let putObj = {}
+            for (const pub of userPubs) {
+                putObj[pub] = val
+            }
+            gun.get(gSoul).put(putObj, function(ack){
+                if(ack.err){
+                    console.log('ERROR: ' + ack.err)
+                }
+            })
+        }else{
+            throw new Error('Invalid Group specified: '+ group)
+        }
+    })
+}
+const makechp = gun => (path, group) => chpObj =>{
+    let pathArr = path.split('/')
+    if(group){
+        let soul = pathArr[0]+'|group/'+group+'|permissions'
+        let putObj = buildPermObj('group',false,chpObj,true)//should only remove invalid keys
+        gun.get(soul).put(putObj,function(ack){
+            if(ack.err){
+                console.log('ERROR: ' + ack.err)
+            }
+        })
+    }else{//base, table or row
+        let is = ['base','table','row']
+        let type = is[pathArr.length]
+        let soul = path + '|permissions'
+        let putObj = buildPermObj(type,false,chpObj,true)//should only remove invalid keys
+        gun.get(soul).put(putObj,function(ack){
+            if(ack.err){
+                console.log('ERROR: ' + ack.err)
+            }
+        })
+    }
+}
+
+
 //DEBUG APIs
 const makeshowgb = (gb) => () =>{
     console.log(gb)
@@ -1038,5 +1159,10 @@ module.exports = {
     makeremoveListItems,
     makeunassociate,
     makesubscribeQuery,
-    makeretrieveQuery
+    makeretrieveQuery,
+    makesetAdmin,
+    makenewGroup,
+    makeaddUser,
+    makeuserAndGroup,
+    makechp
 }

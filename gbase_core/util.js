@@ -337,6 +337,7 @@ function setRowPropCacheValue(properties, value, obj){
 }
 
 function getValue(propertyPath, obj){
+    if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
     let properties = Array.isArray(propertyPath) ? propertyPath : propertyPath.split("/")
     if (properties.length > 1) {// Not yet at the last property so keep digging
       if (!obj.hasOwnProperty(properties[0])){
@@ -544,11 +545,17 @@ const findNextID = (gb,path)=>{
     let curIDsPath = configPathFromChainPath(path)
     curIDsPath.push('props')
     let curIDs = getValue(curIDsPath, gb)
-    let tOrP = Object.keys(curIDs)[0][0]
     if(curIDs !== undefined){
+        let tOrP = Object.keys(curIDs)[0][0]
         let ids = Object.keys(curIDs).map(id=>id.slice(1)*1)
         let nextid = tOrP + (Math.max(...ids)+1)
         return nextid
+    }else{
+        if(curIDsPath.length === 2){
+            return 't0'
+        }else{
+            return 'p0'
+        }
     }
 }
 const nextSortval = (gb,path)=>{
@@ -1266,6 +1273,35 @@ function formatQueryResults(results, qArr, colArr){//will export this for as a d
         return results
     }
 }
+function buildPermObj(type, curPubKey, usersObj,checkOnly){
+    let types = ['base','table','row','group']
+    usersObj = usersObj || {}
+    if(!types.includes(type)){
+        throw new Error('First Argument must be one of: '+types.join(', '))
+    }
+    if(typeof usersObj !== 'object')usersObj = {}
+    let defaults = {}
+    defaults.base = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
+    defaults.table = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
+    defaults.row = {owner:curPubKey,create:null,read:null,update:null,destroy:null,chp:null}
+    defaults.group = {add: 'admin', remove: 'admin', chp: 'admin'}
+    let valid = Object.keys(defaults[type])
+    for (const key in usersObj) {
+        const putKey = usersObj[key];
+        if(!valid.includes(putKey)){
+            delete usersObj[putKey]
+        }
+
+    }
+    let out
+    if(!checkOnly){//add missing properties
+        out = Object.assign({},defaults[type],usersObj)
+    }else{
+        out = usersObj
+    }
+    return out
+}
+
 
 function watchObj(){
 }
@@ -1344,5 +1380,6 @@ module.exports = {
     getAllColumns,
     parseSort,
     parseGroup,
-    formatQueryResults
+    formatQueryResults,
+    buildPermObj
 }

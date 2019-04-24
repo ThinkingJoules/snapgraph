@@ -11,7 +11,10 @@ const {
         fnOptions,
         formatQueryResults,
         addHeader,
-        verifyPermissions
+        verifyPermissions,
+        clientAuth,
+        verifyClientConn,
+        clientLeft
         }=require('./gbase_core/core')
 const { fnHelp }=require('./function_lib/functions')
 
@@ -31,5 +34,8 @@ module.exports = {
     formatQueryResults,
     gunToGbase,
     addHeader,
-    verifyPermissions
+    verifyPermissions,
+    clientAuth,
+    verifyClientConn,
+    clientLeft
 }

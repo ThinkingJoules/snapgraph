@@ -1,11 +1,26 @@
 "use strict";
+let isNode
 if(typeof window !== "undefined"){
     var Gun = window.Gun;
+    isNode = false
 }else{
     var Gun = global.Gun;
+    isNode = true
 }
 if (!Gun)
 throw new Error("gundb-gbase: Gun was not found globally!");
+let sea = Gun.SEA
+let Radisk
+let Radix
+let radata
+const esc = String.fromCharCode(27)
+const process = require('process');
+if(typeof window === "undefined"){//if this is running on a server
+    Radisk = (Gun.window && Gun.window.Radisk) || require('gun/lib/radisk');
+    Radix = Radisk.Radix;
+    const RFS = require('gun/lib/rfs')({file: 'radata'})
+    radata = Radisk({store: RFS})
+}
 let gun
 let gbase = {}
 let gb = {}
@@ -18,51 +33,6 @@ let bufferState = false
 let vTable = {}
 let reactConfigCB
 let gbChainState = true
-/*
-cache = {baseID: 
-            {tval:
-                {rowID: [arr Props],
-                'li': {rowID: {liRowID: [arr Props]}}
-                }
-            }
-        } //arr index will be the number in the pval; p0 = arr[0]
-
-*/
-/*
-subBuffer = {baseID: 
-                {tval:
-                    {rowID: {p0:'a',p1:'b', ...etc},
-                    'li': {rowID: {liRowID: {p0:'a',p1:'b', ...etc}}}
-                    }
-                }
-            } //arr index will be the number in the pval; p0 = arr[0]
-
-*/
-/*
-gsubs = {baseID: 
-                {tval:
-                    {subID: queryArr}
-                }
-            }
-*/
-/*
-gsubsParams = {baseID: 
-                {tval:
-                    {subID: {columns: {p0:true,p2:true,...etc},
-                            type: table || row || li
-                            range: {idx: base/tval/..., from: unix, to: unix} || false,
-                            query: [
-                                {search:[args]},
-                                {filter:[args]},
-                                {sort:[args]}]
-                                ] || false,
-                            userCB: cb,
-                            arrMap: {}
-                            }
-                    }
-                }
-            }
-*/
 
 const {
     cachePathFromChainPath,
@@ -120,12 +90,17 @@ const {makenewBase,
     makeaddListItems,
     makeremoveListItems,
     makesubscribeQuery,
-    makeretrieveQuery
+    makeretrieveQuery,
+    makesetAdmin,
+    makenewGroup,
+    makeaddUser,
+    makeuserAndGroup,
+    makechp
 } = require('./chain_commands')
 let newBase,newStaticTable,newITtable,newIColumn,newColumn,newRow,linkColumnTo,config,edit
 const subscribe = makesubscribe(gb,gsubs,requestInitialData)//like a .on()
 let retrieve,linkRowTo,unlinkRow,clearColumn,importData,importNewTable,associateTables,newLIcolumn,addContextLinkColumn,associateWith,unassociate
-let newInteraction,addListItems,removeListItems,subscribeQuery,retrieveQuery
+let newInteraction,addListItems,removeListItems,subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubsParams)
@@ -196,15 +171,52 @@ const gunToGbase = (gunInstance,baseID) =>{
     retrieveQuery = makeretrieveQuery(gb,setupQuery)
     tableToState = maketableToState(gb,vTable,subscribeQuery)
     rowToState = makerowToState(gb,subscribeQuery)
+    setAdmin = makesetAdmin(gun)
+    newGroup = makenewGroup(gun)
+    addUser = makeaddUser(gun)
+    userAndGroup = makeuserAndGroup(gun)
+    chp = makechp(gun)
     gbase.newBase = newBase
     gbase.ti = tIndex
     gbase.tl = tLog
     gbase.qi = qIndex
+    
 
     gbase = Object.assign(gbase,gbaseChainOpt())
+    //random test command to fire after start
+    // const testPut = ()=>{
+    //     gunInstance.get('test').put({data:true})
+        
+    // }
+    // let msg = {
+    //     put: {
+    //         test: {_:
+    //                 {'#':'test','>':{data:Date.now()}},
+    //               data: true
+    //         }
+    //     },
+    //     '#':Gun.text.random(9)
+    // }
+    // let to = {}
+    // to.next = (messg) => {
+    //     gun._.on('in',messg)
+    // }
+    // addHeader(gun._,msg,to)
+
+    // const testGet = () =>{
+    //     gun.get('test').get(function(data,eve){
+    //         eve.off()
+    //         console.log('gun.get("test")`: ',data.put)
+    //     })
+    // }
+    // if(typeof window === "undefined"){
+    //     addHeader(gun._,msg,to)
+    // }
+    //testPut()
+    //setTimeout(testGet,50000)
+
 
 }
-
 //GBASE INITIALIZATION
 /*
 ---GUN SOULS---
@@ -237,6 +249,14 @@ base/tval/rval/'li' <List of line items, {[rowID]: alias}  see next soul VVV
 base/tval/rval/'li'/rowid <rowid is for the instance linked to this row that is being transacted {p0: contextInstance, p1: 1, ...}
 base/tval/rval/'context' <only transactions, stores a stringified obj of li instance at time of addition {[contextRowid]: JSON.stringify({p0: 'A row instance', p1:  2, ...})}
 
+PERMISSIONS soul + ..:
+|super <super admin of base (who created it)
+|permissions <op type: group with those capabilities
+|groups <groupName: t/f
+|group/admin <admin group, created at time of base creation
+|group/ANY <default group where all new 'users' of database are added.
+|group/ + groupName <pubkey: t/f
+|group/ + groupName + |permissions <add, remove, chp and groups with those capabilities
 
 */
 function startGunConfigSubs(baseID){
@@ -258,15 +278,14 @@ function startGunConfigSubs(baseID){
                         //setupPropSubs(key)
                         triggerConfigUpdate(id)
                     })
-                    // let basestate = key + '/state'
-                    // gun.get(basestate).on(function(gundata, id){
-                    //     gunSubs[basestate] = true
-                    //     let data = Gun.obj.copy(gundata)
-                    //     delete data['_']
-                    //     let histpath = [key,'history']
-                    //     let hist = (data.history) ? data.history : "{}"
-                    //     setMergeValue(histpath,JSON.parse(hist),gb)
-                    // })
+
+                    let baseGrps = key + '|groups'
+                    gun.get(baseGrps).on(function(gundata, id){
+                        gunSubs[baseGrps] = true
+                        let data = Gun.obj.copy(gundata)
+                        delete data['_']
+                        setMergeValue([baseID,'groups'],data,gb)
+                    })
                 }
             }
         })    }
@@ -452,6 +471,15 @@ function table(table){
     }
     return out
 }
+function group(group){
+    let base = this._path
+    let check = getValue([base,'groups'],gb)
+    if(check === undefined || !(check && check[group])){
+        throw new Error('Cannot find group specified')
+    }
+    let out = groupChainOpt(base,group)
+    return out
+}
 function column(column){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct columnChainOpt
@@ -558,7 +586,10 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: row}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), newStaticTable: newStaticTable(_path), newInteractionTable: newITtable(_path), importNewTable: importNewTable(_path), table}
+    return {_path, config: config(_path), newStaticTable: newStaticTable(_path), newInteractionTable: newITtable(_path), importNewTable: importNewTable(_path), table,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+}
+function groupChainOpt(base, group){
+    return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
 function staticTableChainOpt(_path){
     return {_path, toState: tableToState(_path), config: config(_path), newRow: newRow(_path), newColumn: newColumn(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path), column, row}
@@ -1876,26 +1907,76 @@ function getRowProp(qObj, rowID, pval){
 
 
 //PERMISSIONS
-function addHeader(ctx,msg,to){
+let authdConns = {}
+function clientAuth(ctx){
+    let root = ctx.root
+    let msg = {}
+    msg.creds = Object.assign({},root.user.is)
+    msg['#'] = Gun.text.random(9)
+    Gun.SEA.sign(msg['#'],root.opt.creds,function(sig){
+        Gun.SEA.encrypt(sig,root.opt.pid,function(data){
+            msg.secureConn = data
+            root.on('out',msg)
+        })
+    })
+}
+function verifyClientConn(ctx,msg){
+    let root = ctx.root
+    let ack = {'@':msg['#']}
+    let{secureConn,creds} = msg
+    let pid = msg._ && msg._.via && msg._.via.id || false
+    if(!pid){console.log('No PID'); return;}
+    Gun.SEA.decrypt(secureConn,pid,function(data){
+        if(data){
+            Gun.SEA.verify(data,creds.pub,function(sig){
+                if(sig !== undefined && sig === msg['#']){
+                    //success
+                    authdConns[pid] = creds.pub
+                    console.log("AUTH'd Connections: ",authdConns)
+                    root.on('in',ack)
+                }else{
+                    ack.err = 'Could not verify signature'
+                    root.on('in', ack)
+                    //failure
+                }
+            })
+        }else{
+            console.log('decrypting failed')
+        }
+    })
+}
+function clientLeft(msg){
+    let pid = msg && msg.id || false
+    if(pid){
+        delete authdConns[pid]
+        console.log('Removed: ',pid, ' from: ',authdConns)
+    }
+}
+function addHeader(ctx,msg,to){//no longer needed?
     let pair = ctx.opt.creds
     let type = (msg.get) ? 'get' : (msg.put) ? 'put' : false
     msg.header = {type,pub:false,sig:false}
     if(pair && type){
         let pub = pair.pub
-        let toSign = msg['#'] || msg['@'] //msg ID as entropy
-        Gun.SEA.sign(toSign,pair,function(sig){
-            if(sig !== undefined){
-                msg.header = {pub:pub,sig,alias:pair.alias}
-                to.next(msg)
-            }else{
-                to.next(msg)
-            }
-        })
-    }else if(type){
+        msg.header.pub = pub
+        msg.header.token = token
+        msg.header.sig = tokenSig
+        
         to.next(msg)
+        // let toSign = msg['#'] || msg['@'] //msg ID as entropy
+        // Gun.SEA.sign(toSign,pair,function(sig){
+        //     if(sig !== undefined){
+        //         msg.header = {pub:pub,sig,alias:pair.alias}
+        //         //console.log('HEADER ADDED: ',msg)
+        //         to.next(msg)
+        //     }else{
+        //         to.next(msg)
+        //     }
+        // })
     }else{
         to.next(msg)
     }
+    //console.log('OUT: ',msg)
 }
 
 function verifyPermissions(ctx,msg,to){
@@ -1917,7 +1998,7 @@ function isRestricted(soul,op){
                 return false
             }
         }
-        console.log('not on whiteList:', soul)
+        //console.log('not on whiteList:', soul)
         let isGBase = /\/t\d+/g.test(soul) //looks for anything that has = '/t' + Number() (that didn't pass the whiteList)
         if(isGBase)return true
         return false //default everything else to read w/o login
@@ -1928,501 +2009,522 @@ function isRestricted(soul,op){
         return true //default all other puts to needing permission
     }
 }
-
+// let validTokens = {}
+// const expireTok = (tok) =>{
+//     delete validTokens[tok]
+// }
 function verifyOp(ctx,msg,to,op){
-    let gun = ctx.root.gun
+    let root = ctx.root
     let pobj = {msg,to,op}
     pobj.pub = false
     pobj.verified = false
     pobj.soul = (op==='put') ? Object.keys(msg.put)[0] : msg.get['#']
     pobj.prop = (op==='put') ? msg.put[pobj.soul] : msg.get['.']
+    pobj.who = msg._ && msg._.via && msg._.via.id || false
     if(!isRestricted(pobj.soul,pobj.op)){//no auth needed
-        console.log('no auth needed: ',pobj.soul)
+        //console.log('No auth needed: ',pobj.soul)
         to.next(msg)
         return
     }
-    if(msg.header && msg.header.sig && msg.header.pub){
-        console.log('Checking ' + pobj.op +': ', pobj.soul)
-        let {pub,sig} = msg.header
-        Gun.SEA.verify(sig,pub,function(data){
-            let toCheck = msg['#'] || msg['@'] //check against msg ID
-            if(data !== undefined && data === toCheck){
-                pobj.verified = true
-                pobj.pub = pub 
-            }
-            testRequest(gun,pobj,pobj.soul)
-        })
-    }else{//not logged in, could potentially have permissions?
-        testRequest(gun,pobj,pobj.soul)
+    let authdPub = authdConns[pobj.who]
+    //console.log('MSG FROM: ',pobj.who,' PUB: ',authdPub)
+    if(pobj.who && authdPub){
+        //console.log('Valid Connection')
+        pobj.verified = true
+        pobj.pub = authdConns[pobj.who]
+        testRequest(root,pobj,pobj.soul)
+    }
+    // if(msg.header && msg.header.sig && msg.header.pub && msg.header.token){
+    //     if(msg.header.token !== 0 && validTokens[msg.header.token] && validTokens[msg.header.token] === msg.header.pub){
+    //         console.log('Valid Token!')
+    //         pobj.verified = true
+    //         pobj.pub = msg.header.pub
+    //         testRequest(root,pobj,pobj.soul)
+    //     }else{
+    //         let {pub,sig,token} = msg.header
+    //         Gun.SEA.verify(sig,pub,function(data){
+    //             if(data !== undefined && data === token){
+    //                 console.log('Valid Sig!')
+    //                 pobj.verified = true
+    //                 pobj.pub = pub 
+    //                 validTokens[token] = pub
+    //                 setTimeout(expireTok,20000,token)
+    //             }
+    //             if(pobj.verified){
+    //                 console.log('Message Sender Verified ', pobj.soul)
+    //             }else{
+    //                 //console.log('NOT VERIFIED: Sig/Pub mismatch',msg)
+    //             }
+    //             testRequest(root,pobj,pobj.soul)
+    //         })
+    //     }
+    //     console.log('Checking ', pobj.op,': ', pobj.soul)
+        
+    // }
+    else{//not logged in, could potentially have permissions?
+        console.log('No/Empty message header! Attempting access to soul: ',pobj.soul)
+        testRequest(root,pobj,pobj.soul)
     }
 }
-
-function testRequest(gun, request, testSoul){
+let permCache = {}
+function testRequest(root, request, testSoul){
     let {pub,msg,to,verified,soul,prop,op} = request
-    //console.log(verified,soul)
     if(!gb)throw new Error('Cannot find GBase config file') //change to fail silent for production
     let [path,...perm] = soul.split('|')
-    let [base,tval,...rest] = testSoul.split('/')
+    let [base,tval,...rest] = testSoul.split('|')[0].split('/') //path === testSoul if not a nested property
+    if(soul.includes('timeLog') || soul.includes('timeIndex')){
+        path = path.split('>')[1]
+        let[b,t,...r] = testSoul.split(':')[0].split('>')[1].split('/')
+        base = b
+        tval = t
+        rest = (r) ? r[0].split('/') : r
+    }
+    let own = getValue([base,'props',tval,'owner'],gb) || false //false === row perms will be overridden by table perms
+    let inherit = getValue([base,'inherit_permissions'],gb) || true // true === row will inherit table perms which will inherit base perms if missing
+    let traverse = true
+    let reqType
     
     if(soul.includes('|')){//permission change (put),(get is whitelisted)
-        if(soul.includes('super') && testSoul.split('/').length === 1){//attempt to modify 'baseID|super' node
-            gun.get(soul).get(function(message,eve){
-                eve.off()
-                if(message.put){
-                    if(verified && message.put[pub]){// a super is adding another super
-                        let aFalsy = false
-                        for (const soul in msg.put) {
-                            const soulPut = msg.put[soul];
-                            for (const key in soulPut) {
-                                const value = soulPut[key];
-                                if(!value){//can only truthy a super, (can never remove a super, reasoning being that a malicous super could take over a db)
-                                    aFalsy = true
-                                }
-                            }
-                        }
-                        if(!aFalsy){//if want to remove a super, will have to add them to a blacklist of pubkeys and check the key against that on every message.
-                            to.next(msg)
-                        }
-                    }
-                }else if(verified && pub){//if no 'super node', then anyone with a valid pubkey can become the first super (new base creation)
+        //console.log('Permission msg: ',msg)
+        if((soul.includes('|super') || soul.includes('|group/admin|permissions')) && pub && verified){//attempt to modify 'baseID|super' node
+            console.log('Attempting to create a Super Admin or Admin group')
+            getSoul(soul,pub,true,function(data){
+                //console.log(soul, ' IS: ',data)
+                if(data && soul.includes('|super')){
+                    console.log('Already exists! ',data)
+                    root.on('in',{'@': msg['#'],  err: 'There is already a Super Admin for this base'})
+                }else if(!data && soul.includes('|super')) {
+                    //console.log('Creating new super node for new base')
                     to.next(msg)
-                    console.log('creating a new base/super!')
+                }else if(!data){
+                    isSuper()
+                }else{
+                    attemptCHP(data,'group')
                 }
             })
-        }else if(soul.includes('group') && testSoul.split('/').length === 1){//group or group permission options
-            let firstNode
-            if(soul.includes(permissions)){
-                firstNode = soul
-            }else{
-                firstNode = soul + '|permissions'
+        }else if(soul.includes('|group/')){//group or group permission options
+            if(soul.includes('permissions')){
+                // console.log('CREATING GROUP PERMISSIONS')
+                getSoul(soul,false, true ,function(data){
+                    if(data){
+                        attemptCHP(data,'group')
+                    }else{//if node doesn't exist
+                        isGrpOwner()//must have rowID|permission node created before creating group/...|permissions
+                    }
+                })
+            }else{//changing membership
+                //console.log('CHANGING MEMBERSHIP')
+                let perms = soul + '|permissions'
+                getSoul(perms,false,true,function(val){
+                    //console.log('GROUP CHANGE, pubVerified: ', verified, 'pub: ', pub)
+                    if(val){
+                        addRemoveMember(val)
+                    }else{// no permissions node for group. Must be admin?
+                        isGrpOwner()
+                    }
+                })
             }
-            gun.get(firstNode).get(function(message,eve){
-                eve.off()
-                if(message.put){
-                    let {owner,group,ownerP,groupP,anyP} = message.put
-                    let [ownerCan,groupCan,anyCan] = findAbility(message,op)
-                    if(soul.includes(permissions)){//editing permissions of group
-                        ownerCan = (ownerP === 7)
-                        groupCan = (groupP === 7)
-                        anyCan = (anyP === 7)
-                    }
-                    if(pub === owner && ownerCan && verified){
-                        console.log('Group Owner editing group or group permissions')
-                        to.next(msg)
-                    }else if(groupCan){//check to see if pubkey is in this permission group
-                        let groupSoul
-                        if(soul.includes('|UDgroup/')){//UD group
-                            groupSoul = base+'|UDgroup/'+owner+'/'+group
-                        }else{//db group
-                            groupSoul = base+'|group/'+group
-                        }
-                        gun.get(groupSoul).get(function(group,eve){//Group can reference itself (or any other addressable group) for permission membership
-                            eve.off()
-                            if(group.put && group.put[pub] && verified){//is on list, can edit
-                                if(soul.includes('permissions')){//change permission
-                                    let invalidCHP = false
-                                    for (const soul in msg.put) {
-                                        const putObj = msg.put[soul];
-                                        for (const putKey in putObj) {
-                                            if(putKey === '_')continue
-                                            if(['owner','ownerP'].includes(putKey)){//group can't edit owner or ownerP
-                                                invalidCHP = true
-                                            }
-                                        }
-                                    }
-                                    if(!invalidCHP){
-                                        console.log('Valid Group Member editing permissions')
-                                        to.next(msg)
-                                    }else{
-                                        console.log('Invalid permission change, group cannot edit owner permission settings')
-                                    }
-                                }else{//editing membership
-                                    to.next(msg)
-                                }
-                            }else if(anyCan){//anyone can add anyone to a group? Not sure use case
-                                if(soul.includes('permissions')){//change permission
-                                    let invalidCHP = false
-                                    for (const soul in msg.put) {
-                                        const putObj = msg.put[soul];
-                                        for (const putKey in putObj) {
-                                            if(putKey === '_')continue
-                                            if(['owner','ownerP','group','groupP'].includes(putKey)){//any can only edit it's own permission
-                                                invalidCHP = true
-                                            }
-                                        }
-                                    }
-                                    if(!invalidCHP){
-                                        to.next(msg)
-                                    }else{
-                                        console.log('Invalid permission change, `any` cannot edit owner or group permission settings')
-                                    }
-                                }else{
-                                    to.next(msg)
-                                }
-                            }
-                        })
-
-                    }
-                }else if(verified){//only admin group or super can create a new group
-                    gun.get(base+'|group/admin').get(function(group,eve){
-                        eve.off()
-                        if(group.put && group.put[pub]){//is on list, can edit
-                            to.next(msg)
-                        }else{//anyone can add anyone to a group? Not sure use case
-                            gun.get(base+'|super').get(function(data,eve){
-                                eve.off()
-                                if(data.put && data.put[pub]){//is on list, can edit
-                                    to.next(msg)
-                                }
-                            })
-                        }
-                    })
-                }
-            })
+            
         }else if(soul.includes('permissions')){//for permission nodes themselves, sould be either base, table, or row permissions
-            if(testSoul.split('/').length < 3){// baseID|permissions || baseID/tval|permissions : must be admin or super
-                gun.get(base+'|group/admin').get(function(group,eve){
-                    eve.off()
-                    if(group.put && group.put[pub]){//is on list, can edit
-                        to.next(msg)
-                    }else{
-                        gun.get(base+'|super').get(function(group,eve){
-                            eve.off()
-                            if(group.put && group.put[pub]){//is on list, can edit
-                                to.next(msg)
-                            }
-                        })
-                    }
-                })
+            if(rest[0] === undefined){// baseID|permissions || baseID/tval|permissions : must be admin or super
+                isAdmin()
             }else{//row permission
-                gun.get(soul).get(function(perms,eve){
-                    eve.off()
-                    if(perms.put){//exists, follow rules for updating
-                        let {owner,group,ownerP,groupP,anyP} = perms.put
-                        if(verified && pub && owner === pub && ownerP === 7){
-                            to.next(msg)
-                        }else if(groupP === 7 && anyP !== 7){//if in group, can edit
-                            gun.get(base+'|group/'+group).get(function(group,eve){//Group can reference itself (or any other addressable group) for permission membership
-                                eve.off()
-                                if(group.put && group.put[pub] && verified){//is on list, can edit
-                                    let invalidCHP = false
-                                    for (const soul in msg.put) {
-                                        const putObj = msg.put[soul];
-                                        for (const putKey in putObj) {
-                                            if(putKey === '_')continue
-                                            if(['owner','ownerP'].includes(putKey)){//
-                                                invalidCHP = true
-                                            }
-                                        }
-                                    }
-                                    if(!invalidCHP){
-                                        to.next(msg)
-                                    }else{
-                                        console.log('Invalid permission change, `group` cannot edit owner permission settings')
-                                    }
-                                }
-                            })
-                        }else if(anyP === 7){//not sure when this would be... (can only change their own permissions once, to something other than 7...)
-                            let invalidCHP = false
-                                for (const soul in msg.put) {
-                                    const putObj = msg.put[soul];
-                                    for (const putKey in putObj) {
-                                        if(putKey === '_')continue
-                                        if(['owner','ownerP','group','groupP'].includes(putKey)){//any can only edit it's own permission
-                                            invalidCHP = true
-                                        }
-                                    }
-                                }
-                                if(!invalidCHP){
-                                    to.next(msg)
-                                }else{
-                                    console.log('Invalid permission change, `any` cannot edit owner or group permission settings')
-                                }
-                        }else{//admins or super can change row permissions regardless of permission settings
-                            gun.get(base+'|group/admin').get(function(group,eve){
-                                eve.off()
-                                if(group.put && group.put[pub]){//is on list, can edit
-                                    to.next(msg)
-                                }else{
-                                    gun.get(base+'|super').get(function(group,eve){
-                                        eve.off()
-                                        if(group.put && group.put[pub]){//is on list, can edit
-                                            to.next(msg)
-                                        }
-                                    })
-                                }
-                            })
-                        }
-                    }else{//first one to create it, becomes owner? Would simplify by not having a known signer online (admin on server, etc.)
-                        to.next(msg)
+                //soul = baseID/tval/rval|permissions
+                getSoul(soul,false, true, function(data){
+                    if(data){
+                        attemptCHP(data,'row') //editing existing soul
+                    }else{//if node doesn't exist
+                        //find 'create' permissions
+                        checkScope('create') //creating this node
                     }
                 })
             }
-
+            
+        }else if(soul.includes('|groups')){
+            isAdmin()
         }
     }else if(soul.includes('config') && pub && verified){//no permissions node on config, must be admin or super
-        gun.get(base+'|group/admin').get(function(group,eve){
-            eve.off()
-            if(group.put && group.put[pub]){//is on list, can edit
-                to.next(msg)
+        isAdmin()
+    }else{//all other restricted nodes, should be rows, can be 'get' or 'put'
+        if(rest && rest[0] && rest[0][0] && rest[0][0] === 'r' || rest[0] === 'created'){// is some sort of row..
+            let path
+            if(rest[0] === 'created'){
+                path = [base,tval].join('/')
             }else{
-                gun.get(base+'|super').get(function(group,eve){
-                    eve.off()
-                    if(group.put && group.put[pub]){//is on list, can edit
-                        to.next(msg)
+                path = [base,tval,rest[0]].join('/')
+                reqType = 'row'
+            }
+            let permSoul = path +'|permissions'
+            let hasNext = hasColumnType(gb,[base,tval].join('/'),'next') //false || [pval]
+            let opAs = (soul !== testSoul) ? 'get' : op
+            if(!hasNext)traverse = false
+            if(inherit || !own){
+                checkScope(isOp(false, opAs))///read || create
+            }else{
+                getSoul(permSoul,false,true,function(val){
+                    if(val){
+                        testPermissions(val,isOp(true, opAs))
+                    }else{
+                        isAdmin('ERROR: NO PERMISSIONS FOUND!') 
                     }
                 })
             }
-        })
-    }else{//all other restricted nodes, should be rows
-        if(rest[0][0] === 'r'){// is some sort of row..
-            let path = [base,tval,rest[0]].join('/')
-
-            let permSoul, traverse = true
-            let inherit = gb[base].inherit_permissions || true
-            let own = gb[base].props[tval].owner || false
-            let hasNext = hasColumnType(gb,soul,'next') //false || [pval] 
-            if(own || !hasNext || !inherit){ //permissions should not need a lookup, should be at this `soul` + '|permissions'
-                permSoul = path +'|permissions'
-                traverse = false
-            }
-            gun.get(permSoul).get(function(message,eve){
-                eve.off()
-                if(message.put){
-                    checkPermNode(gun,message.put,request,path)
-                }else if(inherit){//find inherited soul
-                    let bPerm = base+'|pemrissions'
-                    let tPerm = [base,tval].join('/') +'|permissions'
-                    gun.get(tPerm).get(function(message,eve){
-                        eve.off()
-                        if(message.put){
-                            checkPermNode(gun,message.put,request,path)
-                        }else{
-                            gun.get(bPerm).get(function(message,eve){
-                                eve.off()
-                                if(message.put){
-                                    checkPermNode(gun,message.put,request,path)
-                                }else{
-                                    console.log('ERROR: NO PERMISSIONS TO INHERIT!!')
-                                }
-                            })
-                        }
-                    })
-                }else{
-                    console.log('ERROR: NO PERMISSIONS SPECIFIED!') 
-                }
-            })
-        }else if(rest[0][0] === 'p'){
+            
+        }else if(rest && rest[0] && rest[0][0] && rest[0][0] === 'p'){
             //going to deprecate these nodes in gbase soon.
             to.next(msg)
             //column soul base/tval/pval
         }else if(!rest){
-            //currently nothing on these nodes
             //base or base/tval
             to.next(msg)
-        }
-    } 
-}
-
-function findAbility(putObj,op){
-    let {ownerP,groupP,anyP} = putObj
-
-    if(op === 'put'){// rwx || rw || w 
-        ownerCan = (ownerP === 7 || ownerP === 6 || ownerP === 2)
-        groupCan = (groupP === 7 || groupP === 6 || groupP === 2)
-        anyCan = (anyP === 7 || anyP === 6 || anyP === 2)
-    }else{//get rwx || rw || r
-        ownerCan = (ownerP === 7 || ownerP === 6 || ownerP === 4)
-        groupCan = (groupP === 7 || groupP === 6 || groupP === 4)
-        anyCan = (anyP === 7 || anyP === 6 || anyP === 4)
-    }
-    return [ownerCan,groupCan,anyCan]
-}
-function isAdmin(gun,request){
-    let {pub,msg,to,verified,soul,prop,op} = request
-    if(!verified){
-        console.log('PERMISSION DENIED')
-        gun._.on('in',{'@': msg['#'], '#':Gun.text.random(9), err: 'PERMISSION DENIED!'})
-    }
-    let [base] = soul.split('/')
-    gun.get(base+'|group/admin').get(pub).get(function(message,eve){
-        eve.off()
-        if(message.put){
-            to.next(msg)
-            console.log('admin is performing action')
         }else{
-            gun.get(base+'|super').get(pub).get(function(message,eve){
-                eve.off()
-                if(message.put){
+            //doesn't match anything in gbase
+            isAdmin('Invalid Soul')
+        }
+        function isOp(exists, opAs){
+            let tryOp = opAs || op
+            if(tryOp === 'get'){
+                return 'read'
+            }
+            if(exists){
+                return 'update'
+            }else{
+                return 'create'
+            }
+        }
+    }
+    function checkScope(operation){
+        let bPerm = base+'|permissions'
+        let tPerm = [base,tval].join('/') +'|permissions'
+        getSoul(tPerm,false,true,function(val){
+            if(val){
+                testPermissions(val,operation)
+            }else if(inherit){
+                getSoul(bPerm,false,true,function(val){
+                    if(val){
+                        testPermissions(val,operation)
+                    }else{
+                        isAdmin('ERROR: NO PERMISSIONS TO INHERIT!!')
+                    }
+                })
+            }else{
+                isAdmin('ERROR: NO PERMISSIONS TO INHERIT!!')  
+            }
+        })
+    }
+    function lookLocal(soul,prop,cb) {
+        //console.log('lookLocal, ',soul,prop)
+        if(!isNode){
+            return undefined
+        }
+        prop = prop || ''
+        cb = (cb instanceof Function && cb) || console.log
+        var id = msg['#'], has = prop, opt = {}, graph, lex, key, tmp;
+        if(typeof soul == 'string'){
+            key = soul;
+        } 
+        //else 
+        // if(soul){
+        //     if(tmp = soul['*']){ opt.limit = 1 }
+        //     key = tmp || soul['='];
+        // }
+        if(key && !opt.limit){ // a soul.has must be on a soul, and not during soul*
+            if(typeof has == 'string'){
+                key = key+esc+(opt.atom = has);
+            }
+            // else 
+            // if(has){
+            //     if(tmp = has['*']){ opt.limit = 1 }
+            //     if(key){ key = key+esc + (tmp || (opt.atom = has['='])) }
+            // }
+        }
+        // if((tmp = get['%']) || opt.limit){
+        //     opt.limit = (tmp <= (opt.pack || (1000 * 100)))? tmp : 1;
+        // }
+        radata(key, function(err, data, o){
+            if(err)console.log('ERROR: ',err)
+            if(data){
+                if(typeof data !== 'string'){
+                    if(opt.atom){
+                        data = u;
+                    } else {
+                        Radix.map(data, each) 
+                    }
+                }
+                if(!graph && data){ each(data, '') }
+            }
+            cb.call(this,graph)
+            //gun._.on('in', {'@': id, put: graph, err: err? err : u, rad: Radix});
+        }, opt);
+        function each(val, has, a,b){
+            if(!val){ return }
+            has = (key+has).split(esc);
+            var soul = has.slice(0,1)[0];
+            has = has.slice(-1)[0];
+            opt.count = (opt.count || 0) + val.length;
+            tmp = val.lastIndexOf('>');
+            var state = Radisk.decode(val.slice(tmp+1), null, esc);
+            val = Radisk.decode(val.slice(0,tmp), null, esc);
+            (graph = graph || {})[soul] = Gun.state.ify(graph[soul], has, state, val, soul);
+            if(opt.limit && opt.limit <= opt.count){ return true }
+        }
+        
+    }
+    function testPermissions(permsObj,opType){
+        let {owner,create,read,update,destroy,chp} = permsObj
+        //opType should be one of ['create','read','update','destroy']
+        let grp = permsObj[opType]
+        if(grp === undefined)isAdmin('Cannot find permissions for this operation!')
+        if(grp === null && owner === pub && verified){
+            to.next(msg)
+        }else if(reqType === 'row' && traverse){
+            isMember(grp,function(valid){
+                if(valid){
+                    traverseNext()
+                }else if(owner === pub && verified){
+                    traverseNext()
+                }else{//admin can do whatever, no need to recur, if not admin, acks err
+                    isAdmin()
+                }
+            })
+        }else{
+            isMember(grp,function(valid){
+                if(valid){
                     to.next(msg)
-                    console.log('super is performing action')
+                }else if(owner === pub && verified){
+                    to.next(msg)
+                }else{
+                    isAdmin()
                 }
             })
         }
-    })
-}
 
-function checkPermNode(gun,putObj,request,currentPath){
-    let {owner,group,ownerP,groupP,anyP} = putObj
-    let {pub,msg,to,verified,soul,prop,op} = request
-    let permReq
-    if(currentPath !== soul){
-        permReq = 'get'
-    }else{
-        permReq = op
     }
-    let [ownerCan,groupCan,anyCan] = findAbility(putObj,permReq)
-    let can = false
-    if(anyCan){//check most general first
-        if(traverse){
-            can = true
-        }else{
-            to.next(msg)
-            console.log('anyone can/is performing this action')
-        }
-    }else if(verified && pub && pub === owner && ownerCan){//check ifOwner, does not require lookup
-        if(traverse){
-            can = true
-        }else{
-            to.next(msg)
-            console.log('Owner is performing this action')
-
-        }
-    }else if(verified && groupCan){//check ifInGroup
-        let groupSoul
-        if(own){
-            groupSoul = base+'|UDgroup/'+owner+'/'+group
-        }else{
-            groupSoul = base+'|group/'+group
-        }
-        gun.get(groupSoul).get(pub).get(function(message,eve){
-            eve.off()
-            if(message.put && traverse){
-                let pval = hasNext[0] //should be single 'next' column
-                let links = path + '/links/'+ pval
-                gun.get(links).get(function(message,eve){
-                    eve.off()
-                    if(message.put){
-                        for (const nextLink in msg.put) {
-                            const valid = msg.put[nextLink];
-                            if(valid){//take first valid link, should only be one
-                                testRequest(gun,request,nextLink)
-                            }
-                        }
+    function isGrpOwner(){
+        let groupName = soul.split('|')[1].split('group/')[1]
+        let isRow = /[^\/]+\/t[0-9]+\/r[^|]*/.test(groupName)
+        if(isRow){
+            let rowPermSoul = groupName + '|permissions'
+            getSoul(rowPermSoul,'owner',false,function(message,eve){
+                eve.off()
+                if(message.put){
+                    if(message.put === pub){//is Owner
+                        to.next(msg)
+                    }else{
+                        isAdmin()
                     }
-                })
-            }else if(message.put){
+                }else{
+                    isAdmin('No permission node found!')
+                }
+            })
+        }else{
+            isAdmin('Must be admin to make change to this group')
+        }
+        
+    }
+    function isMember(groupName,cb){
+        if(groupName === 'ANY'){
+            cb.call(this,true)
+            return
+        }
+        let gsoul = base+'|group/'+groupName
+        getSoul(gsoul,pub,false,function(val){
+            cb.call(this,val)
+        })
+    }
+    function isAdmin(errMsg){
+        errMsg = errMsg || op+' PERMISSION DENIED on: '+JSON.stringify(msg)
+        if(!verified){
+            console.log('PERMISSION DENIED User not verified! OP: ',op,' ON SOUL: ',soul)
+            root.on('in',{'@': msg['#']||msg['@'], err: errMsg})
+            return
+        }
+        let [base] = path.split('/')
+        getSoul(base+'|group/admin',pub,true, function(val){
+            if(val){
                 to.next(msg)
-                console.log('Group member is performing this action')
+                //console.log('An Admin is performing action')
             }else{
-                isAdmin(gun,request)
+                isSuper(errMsg)
             }
         })
-        return        
+
     }
-    if(traverse && can){
+    function isSuper(errMsg){
+        errMsg = errMsg || op+' PERMISSION DENIED on: '+JSON.stringify(msg)
+        getSoul(base+'|super',pub,true, function(val){
+            if(val){
+                to.next(msg)
+                //console.log('Super is performing action')
+            }else{
+                console.log(errMsg)
+                root.on('in',{'@': msg['#']||msg['@'], err: errMsg})
+            }
+        })
+    }
+    function addRemoveMember(put){
+        let {add,remove} = put
+        let ops = Object.values(msg.put[soul])
+        let adding = ops.includes(true)
+        let removing = ops.includes(false)
+        if(adding && removing){
+            isMember(add,function(valid){
+                if(valid){
+                    isMember(remove,function(valid){
+                        if(valid){
+                            to.next(msg)
+                        }else{
+                            isGrpOwner()
+                        }
+                    })
+                }else{
+                    isGrpOwner()
+                }
+            })
+
+        }else if(removing){
+            isMember(remove,function(valid){
+                if(valid){
+                    to.next(msg)
+                }else{
+                    isGrpOwner()
+                }
+            })
+        }else if(adding){
+            isMember(add,function(valid){
+                if(valid){
+                    to.next(msg)
+                }else{
+                    isGrpOwner()
+                }
+            })
+        }
+    }
+    function attemptCHP(perms, type){
+        console.log('ATTEMPTING TO CHANGE PERMISSIONS')
+        let {owner,chp} = perms
+        let putKeys = Object.keys(msg.put[soul])
+        let needsOwner = putKeys.includes('chp')
+        let row = false
+        if(type ==='row'){
+            needsOwner = (putKeys.includes('chp') || putKeys.includes('owner')) //changing ownership or chp
+            row = true
+        }
+        if(chp === 'ANY'){//not sure when this would be... Anyone could change who could CRUD.
+            if(!needsOwner){//cannot change 'chp' unless you own the row (if not row, need admin)
+                console.log('`ANY` is editing permissions')
+                to.next(msg)
+            }else if(needsOwner){
+                isOwner()
+            }else{
+                isAdmin('Invalid permission change, `any` cannot edit owner or group permission settings')
+            }
+        }else if(verified && pub && chp !== null){//if in group, can edit
+            let groupSoul = base+'|group/'+chp
+            getSoul(groupSoul,false, true, function(data){//must do lookLocal in case group is referencing itself.
+                if(data[pub]){
+                    if(!needsOwner){//is on list, can edit
+                        to.next(msg)
+                    }else if(needsOwner){
+                       isOwner()
+                    }
+                }else{
+                    isOwner()
+                    //isAdmin('Cannot find a list of group members for group specified in permissions!') //if no group list? or emit a different error message?
+                }
+            })
+        }else if(verified && pub && chp === null){
+            isOwner()
+        }else{//admins or super can change permissions regardless of permission settings
+            isAdmin()
+        }
+        function isOwner(){
+            if(row && pub === owner){//is this the owner of the row
+                to.next(msg)
+            }else if(!row){
+                isGrpOwner()
+            }else{
+                isAdmin()
+            }
+        }
+    }
+    function traverseNext(){
         let pval = hasNext[0] //should be single 'next' column
         let links = path + '/links/'+ pval
-        gun.get(links).get(function(message,eve){
-            eve.off()
-            if(message.put){
-                for (const nextLink in msg.put) {
-                    const valid = msg.put[nextLink];
+        getSoul(links,false,false,function(val){
+            if(val){
+                for (const nextLink in val) {
+                    const valid = val[nextLink];
                     if(valid){//take first valid link, should only be one
-                        testRequest(gun,request,nextLink)
+                        testRequest(root,request,nextLink)
                     }
                 }
             }
         })
-    }else{
-        isAdmin(gun,request)
     }
-}
-
-
-
-function verifyGet(ctx,msg,to){
-    let gun = ctx.root.gun
-    if(!isGetRestricted(msg)){//no auth needed
-        console.log('no auth needed: ',msg.get['#'])
-        to.next(msg)
-        return
-    }
-    let pobj = {msg,to}
-    pobj.pub = false
-    pobj.op = 'get'
-    pobj.verified = false
-    pobj.soul = msg.get['#']
-    pobj.prop = msg.get['.']
-    if(msg.header && msg.header.sig && msg.header.pub){
-        console.log('Checking GET ',msg.get['#'])
-        let {pub,sig} = msg.header
-        Gun.SEA.verify(sig,pub,function(data){
-            let toCheck = msg['#'] || msg['@']
-            if(data !== undefined && data === toCheck){
-                pobj.verified = true
-                pobj.pub = pub 
+    function getSoul(soul,prop,local,cb){
+        //local = true; Will ignore cache and always get from disk? Maybe always check cache first?
+        //console.log('GETTING SOUL ', soul, prop ,local,permCache[soul])
+        //console.log('getting ', soul,' from...')
+        if(!(cb instanceof Function)) cb = function(){}
+        if(permCache[soul] !== undefined){//null if node does not exist, but has been queried and sub is set
+            //console.log('cache')
+            if(prop){
+                cb.call(this, getValue([soul,prop],permCache)) 
+            }else{
+                cb.call(this, permCache[soul]) 
             }
-            testRequest(gun,pobj)
-        })
-    }else{//not logged in, could potentially have permissions
-        testRequest(gun,pobj)
-    }
-}
-
-function isGetRestricted(msg){
-    let soul = msg.get['#']
-    let pass = false
-    for (const t of getWhiteList) {
-        let p = t.test(soul)
-        if(p){
-            pass = true
-            break
+        }else if(local){//local could have been cached from a previous local:false get
+            //do no setup sub or ask gun, because we might need to know if it is a 'create' vs 'update', ie: super
+            //console.log('disk')
+            lookLocal(soul,prop||false,function(node){
+                let obj = node || {}
+                let out
+                if(prop){
+                    out = getValue([soul,prop],obj)
+                }else{
+                    out = getValue([soul],obj)
+                }
+                if(!node){//no data, null to avoid a disk read next time.
+                    permCache[soul] = null
+                }else{
+                    permCache[soul] = out
+                }
+                addSub(soul) //add sub to update cache to avoid a slow disk read
+                cb.call(this,out) 
+            })
+        }else{
+            //console.log('gun')
+            let get = {'#':soul}
+            if(prop){
+                get['.'] = prop
+            }
+            gun._.on('in', {//faster than .get(function(msg,eve){...????
+                get,
+                '#': gun._.ask(function(msg){
+                    cb.call(this,msg.put && msg.put[soul] || undefined)
+                    permCache[soul] = msg.put && msg.put[soul] || null //non-undefined in case no data, but still falsy
+                })
+            })
+            // gun.get(soul).get(function(messg,eve){//check existence
+            //     eve.off()
+            //     cb.call(this,messg.put)
+            //     permCache[soul] = messg.put || null //non-undefined in case no data, but still falsy
+            // })
+            addSub(soul)
         }
     }
-    if(pass)return false
-    console.log('not on whiteList:', soul)
-    let isGBase = /\/t\d+/g.test(soul) //looks for anything that has = '/t' + Number() (that didn't pass the whiteList)
-    if(isGBase)return true
-    if(soul === 'something')return true
-    return false
-}
-
-function isPutRestricted(soul){
-    if(/~/.test(soul))return false //allow user puts
-    if(/GBase/.test(soul))return false //allow additions to list of bases
-    
-    return true
-}
-
-function verifyPut(ctx,msg,to){
-    let gun = ctx.root.gun
-    let pobj = {msg,to}
-    pobj.pub = false
-    pobj.op = 'put'
-    pobj.verified = false
-    pobj.soul = Object.keys(msg.put)[0]
-    pobj.prop = msg.put[pobj.soul]
-    if(!isPutRestricted(pobj.soul)){//no auth needed
-        console.log('no auth needed: ',pobj.soul)
-        to.next(msg)
-        return
-    }
-    if(msg.header && msg.header.sig && msg.header.pub){
-        console.log('Checking PUT ', pobj.soul)
-        let {pub,sig} = msg.header
-        Gun.SEA.verify(sig,pub,function(data){
-            let toCheck = msg['#'] || msg['@']
-            if(data !== undefined && data === toCheck){
-                pobj.verified = true
-                pobj.pub = pub 
-            }
-            testRequest(gun,pobj)
+    function addSub(soul){//if you get a local, and it already exists, subscribe and put it in the cache
+        gun.get(soul).on(function(data){//setup sub to keep cache accurate
+            permCache[soul] = data
         })
-    }else{//not logged in, could potentially have permissions?
-        testRequest(gun,pobj)
     }
 }
+
+
+
+
+
 
 
 //REACT STUFF
@@ -2704,5 +2806,8 @@ module.exports = {
     fnOptions,
     formatQueryResults,
     addHeader,
-    verifyPermissions
+    verifyPermissions,
+    clientAuth,
+    verifyClientConn,
+    clientLeft
 }

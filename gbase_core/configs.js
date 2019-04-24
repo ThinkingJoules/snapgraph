@@ -21,7 +21,8 @@ const newBaseConfig = (config) =>{
     let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
-    return {alias, sortval, vis, archived, deleted}
+    let inherit_permissions = config.inherit_permissions || true
+    return {alias, sortval, vis, archived, deleted,inherit_permissions}
 }
 const newTableConfig = (config) =>{
     config = config || {}
@@ -31,7 +32,8 @@ const newTableConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let type = config.type || 'static'
-    return {alias, type, sortval, vis, archived, deleted}
+    let owner = config.owner || false
+    return {alias, type, sortval, vis, archived, deleted, owner}
 }
 const newColumnConfig = (config) =>{
     config = config || {}

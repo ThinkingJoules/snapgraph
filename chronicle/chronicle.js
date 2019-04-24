@@ -245,7 +245,7 @@ function withinRange(checkRange, startRange, stopRange) {
 function traverse(gun, soul, qObj, depth) {
   var root = gun.back(-1)
   let type = soul.split('>')[0]
-  //console.log('traverse', soul)
+  console.log('traverse', soul)
 
   root.get(soul).get(function(msg, ev) {
     var timepoint = msg.put
