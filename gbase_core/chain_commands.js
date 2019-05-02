@@ -36,6 +36,36 @@ const{getValue,
     getAllColumns,
     buildPermObj
 } = require('./util')
+/*
+ID Length (using A-Za-z0-9)
+Base: 10
+nodeType: 6
+relation: 6
+nodeID: 10
+column: 6
+group: 5
+
+Appx name space with 99.999% no collision:
+Base: 10mil
+nodeType: 1000
+relation: 1000
+nodeID: 10mil
+column: 1000
+group: 100
+
+*/
+/* legend
+    {!: base id
+    #: label/table/nodeType id
+    >: relation id
+    .: prop id
+    $: instance id
+    ^: group name
+    *: pubkey
+    /: scope
+    ?: scope string}
+
+    */
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, basePermissions, baseID) =>{

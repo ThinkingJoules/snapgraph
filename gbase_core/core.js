@@ -14,7 +14,6 @@ let Radisk
 let Radix
 let radata
 const esc = String.fromCharCode(27)
-const process = require('process');
 if(typeof window === "undefined"){//if this is running on a server
     Radisk = (Gun.window && Gun.window.Radisk) || require('gun/lib/radisk');
     Radix = Radisk.Radix;
@@ -1703,6 +1702,7 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
         data: {},
         output: last,
         done: function(){
+            console.log('Query Done, returning data')
             let added = false, removed = false
             if(this.type !== 'row'){
                 if(this.reQuery){
@@ -1719,6 +1719,9 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
                             let i = this.arrMap[rowID]
                             this.output.splice(i,1)
                             delete this.arrMap[rowID]
+                        }else if(pass){//not added or removed, updated
+                            let i = this.arrMap[rowID]
+                            this.output[i][1] = pass
                         }
                     }
                     if(removed){
@@ -1759,7 +1762,7 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
             if(this.subscribe){
                 this.setupSub(this)
             }
-            if(this.type === 'row' || added || removed){
+            if(this.type === 'row' || added || removed || this.reQuery){
                 console.log('Returning query to cb on subID: '+subID)
                 this.userCB.call(this,this.output,this.columns)
             }
@@ -1915,7 +1918,7 @@ function clientAuth(ctx){
     msg['#'] = Gun.text.random(9)
     Gun.SEA.sign(msg['#'],root.opt.creds,function(sig){
         Gun.SEA.encrypt(sig,root.opt.pid,function(data){
-            msg.secureConn = data
+            msg.authConn = data
             root.on('out',msg)
         })
     })
@@ -1923,10 +1926,10 @@ function clientAuth(ctx){
 function verifyClientConn(ctx,msg){
     let root = ctx.root
     let ack = {'@':msg['#']}
-    let{secureConn,creds} = msg
+    let{authConn,creds} = msg
     let pid = msg._ && msg._.via && msg._.via.id || false
     if(!pid){console.log('No PID'); return;}
-    Gun.SEA.decrypt(secureConn,pid,function(data){
+    Gun.SEA.decrypt(authConn,pid,function(data){
         if(data){
             Gun.SEA.verify(data,creds.pub,function(sig){
                 if(sig !== undefined && sig === msg['#']){
@@ -2032,7 +2035,7 @@ function verifyOp(ctx,msg,to,op){
         //console.log('Valid Connection')
         pobj.verified = true
         pobj.pub = authdConns[pobj.who]
-        testRequest(root,pobj,pobj.soul)
+        testRequest(root,pobj)
     }
     // if(msg.header && msg.header.sig && msg.header.pub && msg.header.token){
     //     if(msg.header.token !== 0 && validTokens[msg.header.token] && validTokens[msg.header.token] === msg.header.pub){
@@ -2063,12 +2066,13 @@ function verifyOp(ctx,msg,to,op){
     // }
     else{//not logged in, could potentially have permissions?
         console.log('No/Empty message header! Attempting access to soul: ',pobj.soul)
-        testRequest(root,pobj,pobj.soul)
+        testRequest(root,pobj)
     }
 }
 let permCache = {}
 function testRequest(root, request, testSoul){
     let {pub,msg,to,verified,soul,prop,op} = request
+    testSoul = testSoul || soul
     if(!gb)throw new Error('Cannot find GBase config file') //change to fail silent for production
     let [path,...perm] = soul.split('|')
     let [base,tval,...rest] = testSoul.split('|')[0].split('/') //path === testSoul if not a nested property

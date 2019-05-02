@@ -8,7 +8,8 @@ const {convertValueToType,
     handleRowEditUndo,
     checkUniqueAlias,
     checkUniqueSortval,
-    findNextID
+    findNextID,
+    rand
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, verifyLILinksAndFNs} = require('../function_lib/function_utils')
@@ -26,20 +27,16 @@ const newBaseConfig = (config) =>{
 }
 const newTableConfig = (config) =>{
     config = config || {}
-    let sortval = config.sortval || 0
-    let alias = config.alias || 'New Table ' + sortval
-    let vis = config.vis || true
+    let alias = config.alias || 'New Node Type ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let type = config.type || 'static'
+    let type = 'node'
     let owner = config.owner || false
-    return {alias, type, sortval, vis, archived, deleted, owner}
+    return {alias, type, archived, deleted, owner}
 }
 const newColumnConfig = (config) =>{
     config = config || {}
-    let sortval = config.sortval || 0
-    let alias = config.alias || 'New Column ' + sortval
-    let vis = config.vis || true
+    let alias = config.alias || 'New Column ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
     let GBtype = config.GBtype || 'string' 
@@ -47,40 +44,25 @@ const newColumnConfig = (config) =>{
     let defaultval = config.defaultval || null 
     let fn = config.fn || "" 
     let usedIn = JSON.stringify([])
-    let linksTo = config.linksTo || ""
-    let linkMultiple = config.linkMultiple || false
-    let associatedWith = config.associatedWith || ""
-    let associateMultiple = config.associateMultiple || true
-    let loadAssociated = config.loadAssociated || "15i"
-    let associatedIndex = config.associatedIndex || ""
     let format = config.format || ""
     let dateFormat = config.dateFormat || ""
-    let result = config.result || ""
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn, linksTo, linkMultiple, associatedWith, associateMultiple, loadAssociated, associatedIndex,dateFormat, format, result}
+    return {alias, archived, deleted, GBtype, required, defaultval, fn, usedIn, dateFormat, format}
 }
-const newInteractionTableConfig = (config) =>{
+const newRelationshipConfig = (config) =>{
     config = config || {}
-    let sortval = config.sortval || 0
-    let alias = config.alias || 'New Interaction Table ' + sortval
-    let vis = config.vis || true
+    let source = config.source || ""
+    let alias = config.alias || 'New Relationship ' + rand(2)
+    let target = config.target || ""
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let type = config.type || 'interaction'
-    let transactions = (config.transactions && JSON.stringify(config.transactions)) || JSON.stringify({}) // {resultColPath1: inc || dec}, must have an instance column in li with same tval
-    let reference = config.reference || "" //only for transactions, could be any table path that has the same context
-    let completed = config.completed || "" //column on table that shows whether record is complete.
-    let context = config.context || "" //only for transactions, this is a static table path
-    let loadInteractions = config.loadInteractions || "100i"
-    /*reference and context will be tPaths, and there will be 'association' columns made on this transaction for each
-    basically the reference and context will treat those association columns with special rules.
-    */
-    return {alias, type, sortval, vis, transactions, completed, context, reference, loadInteractions,archived, deleted}
+    let type = 'relation'
+    //can't link more than one
+
+    return {alias, type, source, target, archived, deleted}
 }
-const newInteractionColumnConfig = (config) =>{
+const newRelationshipPropConfig = (config) =>{
     config = config || {}
-    let sortval = config.sortval || 0
-    let alias = config.alias || 'New Interaction Column ' + sortval
-    let vis = config.vis || true
+    let alias = config.alias || 'New Relationship Prop ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
     let GBtype = config.GBtype || 'string' 
@@ -88,35 +70,10 @@ const newInteractionColumnConfig = (config) =>{
     let defaultval = config.defaultval || null 
     let fn = config.fn || "" 
     let usedIn = (config.usedIn && JSON.stringify(config.usedIn)) || JSON.stringify([])
-    let associatedWith = config.associatedWith || ""
-    let associateMultiple = config.associateMultiple || false
-    let loadAssociated = config.loadAssociated || ""
-    let associatedIndex = config.associatedIndex || ""
+    let ref = config.ref || ""
     let format = config.format || ""
     let dateFormat = config.dateFormat || ""
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn,  associatedWith, associateMultiple, loadAssociated, associatedIndex, dateFormat, format}
-}
-const newListItemsConfig = (config) =>{
-    config = config || {}
-    let type = 'li'
-    let total_AU = config.total_AU || ""
-    let total = config.total || ""
-    let completed = config.completed || "" //column on li that should show that row as being completed
-    return {total_AU, total, completed, type}
-}
-const newListItemColumnConfig = (config) =>{
-    config = config || {}
-    let sortval = config.sortval || 0
-    let alias = config.alias || 'New Line Item Column ' + sortval
-    let vis = config.vis || true
-    let archived = config.archived || false
-    let deleted = config.deleted || false
-    let GBtype = config.GBtype || 'string' 
-    let required = config.required || false 
-    let defaultval = config.defaultval || null 
-    let fn = config.fn || "" 
-    let usedIn = (config.usedIn && Array.isArray(config.usedIn) && JSON.stringify(config.usedIn)) || JSON.stringify([])
-    return {alias, sortval, vis, archived, deleted, GBtype, required, defaultval, fn, usedIn}
+    return {alias, archived, deleted, GBtype, required, defaultval, fn, usedIn, ref, dateFormat, format}
 }
 const validGBtypes = ["string", "number", "boolean", "date", "list", "null", "prev", "next", "function", "tag", "association", "result", "cumulative", "link"] //link is not really valid, but is always handled
 const validTableTypes = ['static', 'transaction', 'interaction']
@@ -1089,8 +1046,8 @@ const handleTableImportPuts = (gun, path, resultObj, cb)=>{
 module.exports = {
     newBaseConfig,
     newTableConfig,
-    newInteractionTableConfig,
-    newInteractionColumnConfig,
+    newRelationshipConfig,
+    newRelationshipPropConfig,
     newColumnConfig,
     makehandleConfigChange,
     makehandleInteractionConfigChange,
@@ -1101,8 +1058,6 @@ module.exports = {
     handleImportColCreation,
     handleTableImportPuts,
     makehandleFNColumn,
-    newListItemsConfig,
-    newListItemColumnConfig,
     checkConfig,
     basicFNvalidity
 }

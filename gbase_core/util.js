@@ -1301,6 +1301,135 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
     }
     return out
 }
+function rand(len, charSet){
+    var s = '';
+    len = len || 24; // you are not going to make a 0 length random number, so no need to check type
+    charSet = charSet || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
+    while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
+    return s;
+}
+function makeSoul(argObj){
+    /* argObj
+    {!: base id
+    #: label/table/nodeType id
+    >: relation id
+    .: prop id
+    $: instance id
+    ^: group name
+    *: pubkey
+    /: scope
+    ?: scope string}
+
+    */
+
+
+
+}
+function parseSoul(soul){
+    /* legend
+    !: base id
+    #: label/table/nodeType id
+    -: relation id
+    .: prop id
+    $: instance id
+    ^: group name (symbol followed by text string of name)
+    *: pubkey (symbol followed by a pubkey)
+    |: permissions (just has to be present, nothing follows symbol)
+    %: config (just has to be present, nothing follows symbol)
+    :: timeBlock (followed by unix timestamp of beginning of block (if no timestamp, then this node contains first and last block and 'last' times for all nodeIDs))
+    [: Array/List node. Can be followed with a certain name for the type of list
+    &: expansion
+    ;: expansion
+    @: expansion
+    /: scope (symbol followed by a string (allows for extention of soul name spacing)) always second to last
+    ?: args (symbol followed by a string. This string is additional arguments or parameters to be used with any symbol) Must be last in soul (can contain any char)
+    */
+   //above is the correct order. If they are present then push a 1 to the array, else push 0. [1,1,0,0,1,0,0,0,0,0].join() > parseInt..
+   //this will give you a decimal 'number' that we will use as a 'soulType'
+   //array needs to have length in multiple of 4, so if there ends up being 10 possible, need to prepend 2 '0' to front of array
+
+    //first go char by char, left to right and pull out variable and put their values in an object as well as create bit array
+    //once through the string, find the 'soulType' and return this info
+
+/* What is valid?
+    ! : just a base ID, no data at this node? Maybe just all table/relation IDs?
+
+    !#: base and table, list of prop IDs?
+    !-: base and relation, list of prop IDs?
+    !% : base config
+    !^ : group in base (contains the list of pubkeys)
+    !| : base level permissions
+    
+    !%: : base config timelog of changes??
+    !#. : base, table, column. no data at this soul, but could be?
+    !-. : base, relation, column. no data at this soul, but could be?
+    !#% : nodeType config
+    !-% : relation config
+    !#$ : dataNode
+    !-$ : relationNode (required keys of '_src' & '_trgt', optional '@' if target is snapshotted)
+    !#| : table permissions
+    !#- : base table relation, (if no relation ID after '>', then this soul contains a list of all connected/outgoing relations for this tableID)
+    !^| : group permissions (who can add/remove/chp)
+    !#: : table time index for node 'created' (also considered 'active' list (if deleted this is falsy on list))
+    !^* : user defined group list (pubkeys : t/f)
+
+
+    //4 symbol souls
+    !#%: : timelog of nodeType CONFIG changes??
+    !-%: : timelog of relation CONFIG changes??
+    !#.% : node prop config
+    !-.% : relation prop config
+    !#.: : nodes indexed by a 'Date' property
+    !-.: : relations indexed by a 'Date' property (not sure use case, I don't think this should be valid. How/when would you query based on relation?)
+    !#$: : timelog (history of edits to this node) Need to include relationship edits here, since they 'define' this node
+    !^*| : user defined group permissions (add, remove, chp)
+    !#$| : permissions on node itself (owner, create, read, update, destroy, chp)
+    !#.$ : specific prop on soul, ONLY USED FOR NESTED NODES. (contains {[souls of sub-nodes]: true/false})
+    !#$- : contains keys of ('<' || '>') + [relationship ID] + [!-$ realtionSoul] and values of (t/f)
+
+    //5
+    !#.%: : timelog of prop config changes??
+    !-.%: : timelog of relation prop config changes??
+    
+    
+    //,6,etc symbol souls...
+
+    
+    */
+
+
+    let sym = '!#-.$^*|/?'
+    let bit = [0,0]
+    let offset = bit.length //2
+    let out = {}
+    let i
+    let last
+    let curSym = []
+    for (const char of sym) {
+        let idx = soul.indexOf(char)
+        if(idx === -1){
+            bit[i+offset] = 0
+        }else{
+            bit[i+offset] = 1
+            if(char === '@'){
+                last = i
+                curSym.push(char)
+            }else{
+                let s = curSym.pop()
+                out[s] = soul.slice(last+1,idx)
+                last = idx
+                curSym.push(char)
+            }
+        }
+        i++
+    }
+    //get last segment out, since the end of string will not find add last arg to info
+    let s = curSym.pop()
+    out[s] = soul.slice(last+1,idx)
+    
+    let dec = parseInt(bit.join(), 2)
+    console.log(out, dec)
+}
 
 
 function watchObj(){
@@ -1381,5 +1510,6 @@ module.exports = {
     parseSort,
     parseGroup,
     formatQueryResults,
-    buildPermObj
+    buildPermObj,
+    rand
 }
