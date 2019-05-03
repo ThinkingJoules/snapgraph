@@ -1,159 +1,76 @@
 //GBASE UTIL FUNCTIONS
-function cachePathFromSoul(gb,viaSoul, prop){
-    let [base,tval] = viaSoul.split('/')
-    let cpath
-    let {type} = getValue([base,'props',tval],gb)
-    if(type === 'static'){
-        let[base,tval,pval] = viaSoul.split('/') //cols soul, prop is rowid
-        pval = pval.slice(1)
-        cpath = [base,tval,prop,pval]
-    }else{
-        prop = (prop) ? prop.slice(1) : false
-        let [base,tval,r,li,lir] = viaSoul.split('/')
-        if(r && !li && !lir){//Int or Tr
-            cpath = [base,tval,viaSoul,prop]
-        }else if(r && li && lir){//lir
-            cpath = [base,tval,'li',[base,tval,r].join('/'),viaSoul,prop]
-        }
-    }
+function bufferPathFromSoul(rowID, pval){
+    //buffer is the same structure as cache
+    let cpath = cachePathFromRowID(rowID,pval)
+   
     return cpath
 }
-function bufferPathFromSoul(gb,rowID, pval){
-    let [base,tval,r,li,lir] = rowID.split('/')
-    let cpath
-    let {type} = getValue([base,'props',tval],gb)
-    if(type === 'static' || (r && !li && !lir)){
-        cpath = [base,tval,rowID,pval]
-    }else if(r && li && lir){
-        cpath = [base,tval,'li',[base,tval,r].join('/'),rowID,pval]
-    }
+function cachePathFromRowID(rowID, pval){
+    //rowID should be !#$ or !-$
+    //pval should be just an id
+    let node = parseSoul(rowID)
+    if(pval)Object.assign(node,{'p':pval})
+    let stringPath = makeSoul(node) //get format in to the right order
+    let cpath = cachePathFromChainPath(stringPath)
     return cpath
-}
-function cachePathFromRowID(gb,rowID, pval){
-    let [base,tval,r,li,lir] = rowID.split('/')
-    let idx
-    if(pval && pval[0] === 'p'){
-        idx = pval.slice(1)
-    }else if(pval && !isNaN(pval*1)){
-        idx = pval
-    }else if(pval){
-        throw new Error('Cannot decode pval passed in')
-    }else if(!pval && !(li && !lir)){
-        idx = null
-    }
-    let cpath
-    let cellsub
-    let {type} = getValue([base,'props',tval],gb)
-    if(li && lir){//lir
-        cpath = [base,tval,'li',[base,tval,r].join('/'),rowID,idx]
-    }else if(li && !lir){//static,int,tr path
-        cpath = [base,tval,'li',[base,tval,r].join('/')]  
-    }else{//static,int,tr path
-        cpath = [base,tval,rowID,idx]  
-    }
-    if(type === 'static'){
-        cellsub = [base,tval,pval].join('/')
-        cellsub += '+'+rowID
-    }else if(r || (li && lir)){
-        cellsub = rowID
-        cellsub += '+' + pval
-    }
-    if(idx === null){
-        cpath.pop()
-    }
-    return [cpath,cellsub]
-
 }
 function cachePathFromChainPath(thisPath){
-    let pathArgs = thisPath.split('/')
-    if(pathArgs.length === 3){//add .rows to path before rval
-        pathArgs.splice(2,0, 'rows')
-     }
-    if(pathArgs.length === 4){//move r in path
-       let rval = pathArgs.splice(2,1)
-        if(rval.length > 1){
-            pathArgs.push(rval)
+    //valid paths: !, !#, !-, !#.$, !-.$
+    if((thisPath.includes('.') && !thisPath.includes('$')))throw new Error('Must specify a row to get this prop')
+    let pathArgs = parseSoul(thisPath)
+    let order = ['b','t','tr','r','p']//put r before p
+    let depth = []
+    for (const arg of order) {
+        let hasID = pathArgs[arg]
+        if(hasID){
+            if(arg === 't'){
+                depth.push('nodeTypes')
+                depth.push(hasID)
+            }else if(arg === 'tr'){
+                depth.push('relations')
+                depth.push(hasID)
+            }else{
+                depth.push(hasID)
+            }
         }
     }
-    return pathArgs
-
+    return depth
 }
 function configPathFromSoul(soul){
-    let pathArgs = soul.split('/')
-    let config = false
-    if(pathArgs[pathArgs.length -1] === 'config'){
-        pathArgs.pop()
-        config = true
-    }
-    let configpath= []
-    
-    if(pathArgs.length > 1){
-        for (let i = 0; i < pathArgs.length; i++) {
-            const path = pathArgs[i];
-            if(i === pathArgs.length-1){//end of path, our config
-                if(config){
-                    configpath.push(path)
-                }else if(path === 'p0' && !config){//handle rows
-                    configpath.push('rows')
-                }
-            }else if (i === 1 && pathArgs[2] === 'li'){//path is tval, next path is 'li', don't push props
-                configpath.push(path)
-            }else if (i === 1 && pathArgs[2] === 'p0' && !config){//don't push 'props' for rows
-                configpath.push(path)
-            }else{//push path, then props
-                configpath.push(path)
-                configpath.push('props')
-            }
-            
-        }
-    }else{
-        configpath = pathArgs
-    }
+    //redundant now since chain path === soul (in this case)
+    //stubbing this so all code works
+    //TODO: remove
+    let configpath = configPathFromChainPath(soul)
     return configpath
 
 }
 function configPathFromChainPath(thisPath){
-    let pathArgs = thisPath.split('/')
-    let configpath= []
-    let rowPath = false
-    if(pathArgs.length > 1){//not base config
-        for (let i = 0; i < pathArgs.length; i++) {
-            let nextPath = pathArgs[i+1]
-            const path = pathArgs[i];
-            if(i === pathArgs.length-1 && !rowPath){//end of path, non row
-                configpath.push(path)
-            }else if(i === pathArgs.length-1 && rowPath){//end of path for a row
-                configpath.push(thisPath)
-            }else if (nextPath[0] === 'r' && !pathArgs.includes('li')){//if this path is a row push tval then 'rows'
-                rowPath = true
-                configpath.push(path)
-                configpath.push('rows')
-            }else if (nextPath === 'li'){//if this path is a list item push tval then 'li'
-                configpath.push(path)
-            }else if (path === 'li' && nextPath[0] === 'r'){//if this path is a list item push tval then 'li'
-                rowPath = true
-                configpath.push(path)
-                configpath.push('rows')
-            }else{
-                configpath.push(path)
-                configpath.push('props')
-            }
-        }
-    }else{
-        configpath = pathArgs
+    //valid paths: !, !#, !-, !^, !#., !-.
+    //group is always reference by alias, never by ID
+    let {b,t,tr,p,g} = parseSoul(thisPath)
+    let configpath = [b]
+    if(thisPath.includes('#')){//nodeType
+        configpath = [...configpath, 'props',t]
+    }else if(thisPath.includes('-')){
+        configpath = [...configpath, 'relations',tr]
     }
+    if(thisPath.includes('.')){//nodeType
+        configpath = [...configpath, 'props',p]
+    }else if(thisPath.includes('^')){
+        configpath = [...configpath, 'groups']
+        if(typeof g === 'string')configpath.push(g)
+    }
+
     return configpath
 
 }
 function configSoulFromChainPath(thisPath){
-    let pathArgs = thisPath.split('/')
-    
-    if(pathArgs[pathArgs.length -1][0] === 'r'){
-        pathArgs.splice(2,pathArgs.length, 'p0') //p0 soul for table
-    }else if(pathArgs[pathArgs.length -1] !== 'config'){
-        pathArgs.push('config')
-    }
-    return pathArgs.join('/')
+    //should just need to append % to end if they are in right order..
+    //should parse, then make soul to be safe
+    let parse = parseSoul(thisPath)
+    Object.assign(parse,{'%':true})
+    let soul = makeSoul(parse)
+    return soul
 
 }
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
@@ -285,12 +202,12 @@ const linkColPvals = (gb,base,tval)=>{
     return result
 }
 function setValue(propertyPath, value, obj){
-    let properties = Array.isArray(propertyPath) ? propertyPath : propertyPath.split("/")
-    if (properties.length > 1) {
-        if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "object") obj[properties[0]] = {}
-        return setValue(properties.slice(1), value, obj[properties[0]])
+    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
+    if (propertyPath.length > 1) {
+        if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
+        return setValue(propertyPath.slice(1), value, obj[propertyPath[0]])
     } else {
-        obj[properties[0]] = value
+        obj[propertyPath[0]] = value
         return true // this is the end
     }
 }
@@ -319,47 +236,43 @@ function setMergeValue(propertyPath, value, obj){
       return true // this is the end
     }
 }
-function setRowPropCacheValue(properties, value, obj){
-    if (properties.length > 2) {
-        if (!obj.hasOwnProperty(properties[0]) && properties.length > 2){
-            obj[properties[0]] = {}
-        }
-        return setRowPropCacheValue(properties.slice(1), value, obj[properties[0]])
-    } else if(properties.length === 2) {
-        if (!Array.isArray(obj[properties[0]])){
-            obj[properties[0]] = []
-        }
-        return setRowPropCacheValue(properties.slice(1), value, obj[properties[0]])
-    }else{
-        obj[properties[0]] = value
+function setRowPropCacheValue(propertyPath, value, obj){
+    //same as setValue currently
+    //TODO:remove
+    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
+    if (propertyPath.length > 1) {
+        if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
+        return setRowPropCacheValue(propertyPath.slice(1), value, obj[propertyPath[0]])
+    } else {
+        obj[propertyPath[0]] = value
         return true // this is the end
     }
 }
 
 function getValue(propertyPath, obj){
     if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
-    let properties = Array.isArray(propertyPath) ? propertyPath : propertyPath.split("/")
-    if (properties.length > 1) {// Not yet at the last property so keep digging
-      if (!obj.hasOwnProperty(properties[0])){
+    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
+    if (propertyPath.length > 1) {// Not yet at the last property so keep digging
+      if (!obj.hasOwnProperty(propertyPath[0])){
           return undefined
       }
-      return getValue(properties.slice(1), obj[properties[0]])
+      return getValue(propertyPath.slice(1), obj[propertyPath[0]])
     }else{
-        return obj[properties[0]]
+        return obj[propertyPath[0]]
     }
 }
 function getRowPropFromCache(propertyPath, obj){
-    if (propertyPath.length > 2) {
-        if (!obj.hasOwnProperty(propertyPath[0])){
-            return undefined
-        }
-        return getRowPropFromCache(propertyPath.slice(1), obj[propertyPath[0]])
+    //same as getValue currently
+    //TODO:remove
+    if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
+    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
+    if (propertyPath.length > 1) {// Not yet at the last property so keep digging
+      if (!obj.hasOwnProperty(propertyPath[0])){
+          return undefined
+      }
+      return getRowPropFromCache(propertyPath.slice(1), obj[propertyPath[0]])
     }else{
-        if(obj[propertyPath[0]] && Array.isArray(obj[propertyPath[0]])){
-            return obj[propertyPath[0]][propertyPath[1]]
-        }else{
-            return undefined
-        }
+        return obj[propertyPath[0]]
     }
 }
 
@@ -623,11 +536,19 @@ const isMulti = (gb,colStr,toLi)=>{
     }
     return false
 }
-const getColumnType = (gb,colStr)=>{
-    let cpath = configPathFromChainPath(colStr)
-    let config = getValue(cpath,gb) || {}
-    if(config.GBtype !== undefined){
-        return config.GBtype
+const getPropType = (gb,propPath)=>{
+    let cpath = configPathFromChainPath(propPath)
+    let {propType,dataType} = getValue(cpath,gb) || {}
+    if(propType !== undefined && dataType !== undefined){
+        return [propType,dataType]
+    }
+    return false
+}
+const getDataType = (gb,propPath)=>{
+    let cpath = configPathFromChainPath(propPath)
+    let {dataType} = getValue(cpath,gb) || {}
+    if(dataType !== undefined){
+        return dataType
     }
     return false
 }
@@ -1309,30 +1230,56 @@ function rand(len, charSet){
     return s;
 }
 function makeSoul(argObj){
-    /* argObj
-    {!: base id
-    #: label/table/nodeType id
-    >: relation id
-    .: prop id
-    $: instance id
-    ^: group name
-    *: pubkey
-    /: scope
-    ?: scope string}
-
-    */
-
-
-
+    let length = {'!':10,'#':6,'-':6,'$':10,'.':6,'^':5}
+    let soul = ''
+    let alias = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g'}
+    for (const sym of soulSymbolOrder) {
+        let val = argObj[sym] || argObj[alias[sym]]
+        if(val){
+            soul += sym
+            if(val === 'new' && length[sym])val=rand(length[sym])
+            if(typeof val === 'string'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
+                soul += val
+            }
+        }
+    }
+    return soul
 }
 function parseSoul(soul){
+    let alias = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g'}
+    let out = {}
+    let last = 0
+    let curSym = ['!']
+    let idx
+    for (const char of soulSymbolOrder) {
+        if(char === '!')continue
+        idx = soul.indexOf(char)
+        if(idx !== -1){
+            toOut()
+            last = idx
+            curSym.push(char)
+        }
+    }
+    //get last segment out, since the end of string will not find add last arg to info
+    toOut(soul.length)
+    function toOut (toIdx){
+        toIdx = toIdx || idx
+        let s = curSym.pop()
+        let al = alias[s]
+        if(al)s=al
+        out[s] = soul.slice(last+1,toIdx)
+    }
+    return out
+}
+
+const soulSchema = {
     /* legend
-    !: base id
-    #: label/table/nodeType id
-    -: relation id
-    .: prop id
-    $: instance id
-    ^: group name (symbol followed by text string of name)
+    !: [b] base id
+    #: [t] label/table/nodeType id
+    -: [rt] relation id
+    .: [p] prop id
+    $: [r] instance id
+    ^: [g] group id 
     *: pubkey (symbol followed by a pubkey)
     |: permissions (just has to be present, nothing follows symbol)
     %: config (just has to be present, nothing follows symbol)
@@ -1344,92 +1291,45 @@ function parseSoul(soul){
     /: scope (symbol followed by a string (allows for extention of soul name spacing)) always second to last
     ?: args (symbol followed by a string. This string is additional arguments or parameters to be used with any symbol) Must be last in soul (can contain any char)
     */
-   //above is the correct order. If they are present then push a 1 to the array, else push 0. [1,1,0,0,1,0,0,0,0,0].join() > parseInt..
-   //this will give you a decimal 'number' that we will use as a 'soulType'
-   //array needs to have length in multiple of 4, so if there ends up being 10 possible, need to prepend 2 '0' to front of array
+    "!" : "just a base ID, no data at this node? Maybe just all table/relation IDs?",
 
-    //first go char by char, left to right and pull out variable and put their values in an object as well as create bit array
-    //once through the string, find the 'soulType' and return this info
-
-/* What is valid?
-    ! : just a base ID, no data at this node? Maybe just all table/relation IDs?
-
-    !#: base and table, list of prop IDs?
-    !-: base and relation, list of prop IDs?
-    !% : base config
-    !^ : group in base (contains the list of pubkeys)
-    !| : base level permissions
+    "!#" : "base and table, list of prop IDs?",
+    "!-" : "base and relation, list of prop IDs?",
+    "!%" : "base config",
+    "!^" : "group in base (contains the list of pubkeys). If not followed by ID, then list of {ids:alias}",
+    "!|" : "base level permissions",
+    "!|super" : "super admin of this base",
     
-    !%: : base config timelog of changes??
-    !#. : base, table, column. no data at this soul, but could be?
-    !-. : base, relation, column. no data at this soul, but could be?
-    !#% : nodeType config
-    !-% : relation config
-    !#$ : dataNode
-    !-$ : relationNode (required keys of '_src' & '_trgt', optional '@' if target is snapshotted)
-    !#| : table permissions
-    !#- : base table relation, (if no relation ID after '>', then this soul contains a list of all connected/outgoing relations for this tableID)
-    !^| : group permissions (who can add/remove/chp)
-    !#: : table time index for node 'created' (also considered 'active' list (if deleted this is falsy on list))
-    !^* : user defined group list (pubkeys : t/f)
+    "!%:" : "base config timelog of changes??",
+    "!#." : "base, table, column. no data at this soul, but could be?",
+    "!-." : "base, relation, column. no data at this soul, but could be?",
+    "!#%" : "nodeType config",
+    "!-%" : "relation config",
+    "!#$" : "dataNode",
+    "!-$" : "relationNode (required keys of '_src' & '_trgt', optional '@' if target is snapshotted)",
+    "!#|" : "table permissions",
+    "!#-" : "base table relation, (if no relation ID after '>', then this soul contains a list of all connected/outgoing relations for this tableID)",
+    "!^|" : "group permissions (who can add/remove/chp)",
+    "!#:" : "table time index for node 'created' (also considered 'active' list (if deleted this is falsy on list))",
+    "!^*" : "user defined group list (pubkeys : t/f)",
 
 
-    //4 symbol souls
-    !#%: : timelog of nodeType CONFIG changes??
-    !-%: : timelog of relation CONFIG changes??
-    !#.% : node prop config
-    !-.% : relation prop config
-    !#.: : nodes indexed by a 'Date' property
-    !-.: : relations indexed by a 'Date' property (not sure use case, I don't think this should be valid. How/when would you query based on relation?)
-    !#$: : timelog (history of edits to this node) Need to include relationship edits here, since they 'define' this node
-    !^*| : user defined group permissions (add, remove, chp)
-    !#$| : permissions on node itself (owner, create, read, update, destroy, chp)
-    !#.$ : specific prop on soul, ONLY USED FOR NESTED NODES. (contains {[souls of sub-nodes]: true/false})
-    !#$- : contains keys of ('<' || '>') + [relationship ID] + [!-$ realtionSoul] and values of (t/f)
+    "!#%:" : "timelog of nodeType CONFIG changes??",
+    "!-%:" : "timelog of relation CONFIG changes??",
+    "!#.%" : "node prop config",
+    "!-.%" : "relation prop config",
+    "!#.:" : "nodes indexed by a 'Date' property",
+    "!-.:" : "relations indexed by a 'Date' property (not sure use case, I don't think this should be valid. How/when would you query based on relation?)",
+    "!#$:" : "timelog (history of edits to this node) Need to include relationship edits here, since they 'define' this node",
+    "!^*|" : "user defined group permissions (add, remove, chp)",
+    "!#$|" : "permissions on node itself (owner, create, read, update, destroy, chp)",
+    "!#.$" : "specific prop on soul, ONLY USED FOR NESTED NODES. (contains {[souls of sub-nodes]: true/false})",
+    "!#$-" : "contains keys of ('<' || '>') + [relationship ID] + [!-$ realtionSoul] and values of (t/f)",
 
-    //5
-    !#.%: : timelog of prop config changes??
-    !-.%: : timelog of relation prop config changes??
-    
-    
-    //,6,etc symbol souls...
-
-    
-    */
-
-
-    let sym = '!#-.$^*|/?'
-    let bit = [0,0]
-    let offset = bit.length //2
-    let out = {}
-    let i
-    let last
-    let curSym = []
-    for (const char of sym) {
-        let idx = soul.indexOf(char)
-        if(idx === -1){
-            bit[i+offset] = 0
-        }else{
-            bit[i+offset] = 1
-            if(char === '@'){
-                last = i
-                curSym.push(char)
-            }else{
-                let s = curSym.pop()
-                out[s] = soul.slice(last+1,idx)
-                last = idx
-                curSym.push(char)
-            }
-        }
-        i++
+    "!#.%:" : "timelog of prop config changes??",
+    "!-.%:" : "timelog of relation prop config changes??"
     }
-    //get last segment out, since the end of string will not find add last arg to info
-    let s = curSym.pop()
-    out[s] = soul.slice(last+1,idx)
-    
-    let dec = parseInt(bit.join(), 2)
-    console.log(out, dec)
-}
+const soulSymbolOrder = '!#-.$^*|%:[&;@/?'
 
 
 function watchObj(){
@@ -1466,7 +1366,6 @@ Object.defineProperty(watchObj.prototype, "watch", {
 
 module.exports = {
     cachePathFromChainPath,
-    cachePathFromSoul,
     configPathFromSoul,
     configPathFromChainPath,
     configSoulFromChainPath,
@@ -1487,7 +1386,8 @@ module.exports = {
     nextSortval,
     convertValueToType,
     isMulti,
-    getColumnType,
+    getPropType,
+    getDataType,
     tsvJSONgb,
     watchObj,
     allUsedIn,
@@ -1511,5 +1411,7 @@ module.exports = {
     parseGroup,
     formatQueryResults,
     buildPermObj,
-    rand
+    rand,
+    makeSoul,
+    parseSoul
 }

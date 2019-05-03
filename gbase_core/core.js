@@ -9,7 +9,6 @@ if(typeof window !== "undefined"){
 }
 if (!Gun)
 throw new Error("gundb-gbase: Gun was not found globally!");
-let sea = Gun.SEA
 let Radisk
 let Radix
 let radata
@@ -29,13 +28,11 @@ let gsubsParams = {}
 let gunSubs = {}
 let subBuffer = {}
 let bufferState = false
-let vTable = {}
 let reactConfigCB
 let gbChainState = true
 
 const {
     cachePathFromChainPath,
-    cachePathFromSoul,
     configPathFromSoul,
     configPathFromChainPath,
     gbForUI,
@@ -43,7 +40,8 @@ const {
     setValue,
     setMergeValue,
     getValue,
-    getColumnType,
+    getPropType,
+    getDataType,
     findLinkingCol,
     getRowPropFromCache,
     cachePathFromRowID,
@@ -52,7 +50,9 @@ const {
     getAllColumns,
     watchObj,
     formatQueryResults,
-    hasColumnType
+    hasColumnType,
+    makeSoul,
+    parseSoul
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -61,16 +61,12 @@ const {makehandleConfigChange,
 let handleConfigChange
 
 const {makenewBase,
-    makenewStaticTable,
-    makenewInteractionTable,
-    makenewInteractionColumn,
-    makenewColumn,
-    makenewRow,
+    makenewNodeType,
+    makeaddProp,
+    makenewNode,
     makelinkColumnTo,
     makeconfig,
     makeedit,
-    makesubscribe,
-    makeretrieve,
     makelinkRowTo,
     makeimportData,
     makeimportNewTable,
@@ -79,15 +75,9 @@ const {makenewBase,
     makeshowgsub,
     makeshowgunsub,
     makeunlinkRow,
-    makeclearColumn,
     makeassociateTables,
-    makenewLIcolumn,
-    makeaddContextLinkColumn,
     makeassociateWith,
     makeunassociate,
-    makenewInteraction,
-    makeaddListItems,
-    makeremoveListItems,
     makesubscribeQuery,
     makeretrieveQuery,
     makesetAdmin,
@@ -96,10 +86,9 @@ const {makenewBase,
     makeuserAndGroup,
     makechp
 } = require('./chain_commands')
-let newBase,newStaticTable,newITtable,newIColumn,newColumn,newRow,linkColumnTo,config,edit
-const subscribe = makesubscribe(gb,gsubs,requestInitialData)//like a .on()
-let retrieve,linkRowTo,unlinkRow,clearColumn,importData,importNewTable,associateTables,newLIcolumn,addContextLinkColumn,associateWith,unassociate
-let newInteraction,addListItems,removeListItems,subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
+let newBase,newNodeType,addProp,newNode,linkColumnTo,config,edit
+let linkRowTo,unlinkRow,clearColumn,importData,importNewTable,associateTables,associateWith,unassociate
+let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubsParams)
@@ -115,16 +104,6 @@ const {makesolve,
 const getLinks = makegetLinks(gb,getCell)
 const solve = makesolve(getLinks)
 
-const {maketableToState,
-    makerowToState,
-    makebuildRoutes,
-    makelinkOptions,
-    makefnOptions
-} = require('../react_tables/to_state')
-let tableToState, rowToState
-const buildRoutes = makebuildRoutes(gb)
-const linkOptions = makelinkOptions(gb)
-const fnOptions = makefnOptions(gb)
 
 const {timeIndex,
     queryIndex,
@@ -139,37 +118,26 @@ const gunToGbase = (gunInstance,baseID) =>{
     startGunConfigSubs(baseID)
     //DI after gunInstance is received from outside
     newBase = makenewBase(gun)
-    newStaticTable = makenewStaticTable(gun,gb)
-    newColumn = makenewColumn(gun,gb)
-    newITtable = makenewInteractionTable(gun,gb)
-    newIColumn = makenewInteractionColumn(gun,gb)
-    newLIcolumn = makenewLIcolumn(gun,gb)
+    newNodeType = makenewNodeType(gun,gb)
+    addProp = makeaddProp(gun,gb)
+
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
     edit = makeedit(gun,gb,cascade,tLog,tIndex)
-    newRow = makenewRow(edit)
+    newNode = makenewNode(edit)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
-    clearColumn = makeclearColumn(gun,gb,cache,gunSubs,loadColDataToCache)
     importData = makeimportData(gun, gb)
     importNewTable = makeimportNewTable(gun,gb,tLog,tIndex,triggerConfigUpdate)
     associateTables = makeassociateTables(gun,gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,loadColDataToCache,newColumn,cascade,solve,tLog)
+    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,loadColDataToCache,addProp,cascade,solve,tLog)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(gb,handleConfigChange)
     qIndex = queryIndex(gun)
-    retrieve = makeretrieve(gun,gb)
-    newLIcolumn = makenewLIcolumn(gun,gb)
-    addContextLinkColumn = makeaddContextLinkColumn(gun,gb)
     associateWith = makeassociateWith(gun,gb,getCell)
     unassociate = makeunassociate(gun,gb)
-    newInteraction = makenewInteraction(gb,edit)
-    addListItems = makeaddListItems(edit)
-    removeListItems = makeremoveListItems(gun,tLog)
     subscribeQuery = makesubscribeQuery(gb,setupQuery)
     retrieveQuery = makeretrieveQuery(gb,setupQuery)
-    tableToState = maketableToState(gb,vTable,subscribeQuery)
-    rowToState = makerowToState(gb,subscribeQuery)
     setAdmin = makesetAdmin(gun)
     newGroup = makenewGroup(gun)
     addUser = makeaddUser(gun)
@@ -219,44 +187,7 @@ const gunToGbase = (gunInstance,baseID) =>{
 //GBASE INITIALIZATION
 /*
 ---GUN SOULS---
-Gun Config Paths:
-base/'config'
-base/'state' <-- not using this at all
-base/tval/'config'
-base/tval/pval/'config'
-base/tval/'li'/'config'
-base/tval/'li'/pval/config
-
-Gun timeindex:
-'timeIndex>'base/tval/pval <any 'date' column on any table will have an index {[rowid]: true}
-'timeIndex>'base/tval/created <each table will have an index for each row, by 'created' date {[rowid]: true}
-'timeIndex>'base/tval/edited <each table will have an index for each row, by last 'edit' date {[rowid]: true}
-
-Gun changelog (time indexed, but instead of souls at timepoints, it is the fields changed on .edit()):
-{[pval]: value}
-'timeLog>'base/tval/rval/
-'timeLog>'base/tval/rval/'li'/rowid/
-
-Gun Data Paths:
-base/tval <row existence {[rowID]: alias} // false if row was deleted <<this is basically duplicate of p0 col, but that doesn't exist for Int/Tr tables
-base/tval/pval <only for 'static' table data {[rowid]: value}
-base/tval/rval <all rows this is 'rowid', transactions stores all root data here
-base/tval/rval/'history' <stores all edits, could index these by time (would work for my query check clearing as well...)
-base/tval/rval/'links'/pval <static data links {[linkpath]: true}
-base/tval/rval/'associations'/pval <valid on all tables {[assocpath]: true}
-base/tval/rval/'li' <List of line items, {[rowID]: alias}  see next soul VVV
-base/tval/rval/'li'/rowid <rowid is for the instance linked to this row that is being transacted {p0: contextInstance, p1: 1, ...}
-base/tval/rval/'context' <only transactions, stores a stringified obj of li instance at time of addition {[contextRowid]: JSON.stringify({p0: 'A row instance', p1:  2, ...})}
-
-PERMISSIONS soul + ..:
-|super <super admin of base (who created it)
-|permissions <op type: group with those capabilities
-|groups <groupName: t/f
-|group/admin <admin group, created at time of base creation
-|group/ANY <default group where all new 'users' of database are added.
-|group/ + groupName <pubkey: t/f
-|group/ + groupName + |permissions <add, remove, chp and groups with those capabilities
-
+see ./util soulSchema
 */
 function startGunConfigSubs(baseID){
     if(gun){
@@ -309,11 +240,6 @@ function setupTableSubs(baseID){
                 tconfig.push('config')
                 tsoul = tsoul.join('/')
                 handleGunSubConfig(tconfig.join('/'))//will sub if not already subed and merge in gb
-                if (value === 'static') {//setup static tables and column subs
-                    setupRowSubs(tsoul)
-                }else if(value === 'transaction'){
-                    setupLIsubs(tsoul)
-                }
                 setupColumnSubs(tsoul)
             }
         }
@@ -321,10 +247,7 @@ function setupTableSubs(baseID){
 
 
 }
-function setupRowSubs(tpath){
-    let [base,tval] = tpath.split('/')
-    //loadColDataToCache(base,tval,'p0')
-}
+
 function setupColumnSubs(tpath){
     let colPath = tpath.split('/')
     colPath.push('p')
@@ -344,30 +267,7 @@ function setupColumnSubs(tpath){
         }
     })
 }
-function setupLIsubs(tpath){
-    let liPath = tpath.split('/')
-    liPath.push('li')
-    let liconfig = liPath.slice()
-    liconfig.push('config')
-    handleGunSubConfig(liconfig.join('/'))
-    let s = liPath.join('/')
-    gun.get(s).on(function(gundata, id){
-        let data = Gun.obj.copy(gundata)
-        delete data['_']
-        for (const pval in data) {
-            const value = data[pval];
-            if (value) {
-                let psoul = tpath.split('/')
-                psoul.push('li')
-                psoul.push(pval)
-                psoul.push('config')
-                psoul = psoul.join('/')
-                console.log(psoul)
-                handleGunSubConfig(psoul)//will sub if not already subed
-            }
-        }
-    })
-}
+
 function handleGunSubConfig(subSoul){
     //will be table config, column config or p0 col for rows
     let configpath = configPathFromSoul(subSoul)
@@ -419,14 +319,14 @@ function updateConfig(){
 function base(base){
     //check base for name in gb to find ID, or base is already ID
     //return baseChainOpt
-    let path
+    let path = '!'
     if(gb[base] !== undefined){
-        path = base
+        path += base
     }else{
         for (const baseID in gb) {
             const {alias} = gb[baseID];
             if(base === alias){
-                path = baseID
+                path += baseID
                 break
             }
         }
@@ -437,37 +337,54 @@ function base(base){
     let out = baseChainOpt(path)
     return out
 }
-function table(table){
+function nodeType(label){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct tableChainOpt
     let base = this._path
-    let path
+    let id
     let tvals = gb[base].props
-    let tType
-    let check = getValue([base,'props',table],gb)
+    let check = getValue([base,'props',label],gb)
     if(check !== undefined){
-        tType = check.type
-        path = table
+        id = label
     }else{
         for (const tval in tvals) {
-            const {alias, type} = tvals[tval];
-            if(table === alias){
-                tType = type
-                path = tval
+            const {alias} = tvals[tval];
+            if(label === alias){
+                id = tval
                 break
             }
         }
     }
-    if(!path){
-        throw new Error('Cannot find corresponding ID for alias supplied')
+    if(!id){
+        throw new Error('Cannot find corresponding ID for nodeType alias supplied')
     }
     let out
-    let newPath = [base,path].join('/')
-    if(tType === 'static'){
-        out = staticTableChainOpt(newPath)
+    let newPath = [base,'#',id].join('')
+    out = nodeTypeChainOpt(newPath)
+    return out
+}
+function relation(label){
+    let base = this._path
+    let id
+    let rtvals = gb[base].props
+    let check = getValue([base,'relations',label],gb)
+    if(check !== undefined){
+        id = label
     }else{
-        out = interactionTableChainOpt(newPath,tType)
+        for (const tval in rtvals) {
+            const {alias} = rtvals[tval];
+            if(label === alias){
+                id = tval
+                break
+            }
+        }
     }
+    if(!id){
+        throw new Error('Cannot find corresponding ID for relation alias supplied')
+    }
+    let out
+    let newPath = [base,'-',id].join('')
+    out = relationChainOpt(newPath)
     return out
 }
 function group(group){
@@ -479,542 +396,144 @@ function group(group){
     let out = groupChainOpt(base,group)
     return out
 }
-function column(column){
+function prop(prop){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct columnChainOpt
-    let [base,tval] = this._path.split('/')
-    let path
-    let pvals = gb[base].props[tval].props
-    let tType = getValue([base,'props',tval,'type'],gb)
-    let check = getValue([base,'props',tval,'props',column],gb)
+    let path = this._path
+    let {b,t,tr} = parseSoul(path)
+    let id
+    let pvals = gb[b].props[t].props
+    let isNode = path.includes('#')
+    let check = (isNode) ? getValue([b,'props',t,'props',prop],gb) : getValue([b,'relations',tr,'props',prop],gb)
     let ptype
     if(check !== undefined){
-        ptype = check.GBtype
-        path = column
+        ptype = check.propType
+        id = prop
     }else{
         for (const pval in pvals) {
-            const {alias, GBtype} = pvals[pval];
-            if(table === alias){
-                ptype = GBtype
-                path = pval
+            const {alias, propType} = pvals[pval];
+            if(nodeType === alias){
+                ptype = propType
+                id = pval
                 break
             }
         }
     }
-    if(!path){
-        throw new Error('Cannot find corresponding ID for alias supplied')
+    if(!id){
+        throw new Error('Cannot find corresponding ID for prop alias supplied')
     }
     let out
-    let newPath = [base,tval,path].join('/')
-    if(tType === 'static'){
-        out = columnChainOpt(newPath, ptype)
+    let newPath = [path,'.',id].join('')
+    if(isNode){
+        out = propChainOpt(newPath, ptype)
     }else{
-        out = interactionColumnChainOpt(newPath)
+        out = relationPropChainOpt(newPath)
     }
     return out
 }
-function row(row){
-    //row must be rowID, not alias?
-    let [cb,ct,cr,li] = (this._path) ? this._path.split('/') : [false,false]
-    let [base,tval,r,l,lir] = String(row).split('/')
-    let alias = true
-    let tType, out, newPath
-    if(this._path !== undefined && cb === base && ct === tval){//should always work
-        alias = false
-        tType = getValue([cb,'props',ct,'type'],gb)
-        newPath = row
-    }else if(this._path !== undefined && (cb !== base || ct !== tval)){//passed in alias
-        tType = getValue([cb,'props',ct,'type'],gb)
-        newPath = [cb,ct,row].join('/')
-    }else if(this._path === undefined){//using `gbase.item()` api, should be a rowID 
-        alias = false
-        tType = getValue([base,'props',tval,'type'],gb)
-        newPath = row
-    }
-    if(tType === undefined){
+function node(nodeID){
+    //can be with just id of or could be whole string (!#$ or !-$)
+    //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
+    let out
+    let newPath
+    if(nodeID.includes('!') && nodeID.includes('#') && nodeID.includes('$')){
+        newPath = nodeID
+    }else if(this._path && nodeID.length === 10){//assumes nodeID is standard 10 digit idval
+        let path = this._path
+        newPath = [path,'$',nodeID].join('')
+    }else{
         throw new Error('Cannot decipher rowID given')
     }
-    if(tType === 'static'){
-        out = rowChainOpt(newPath, alias)
-    }else if(!lir && !li){
-        out = interactionRowChainOpt(newPath,tType, alias)
-    }else if(li || lir){
-        out = liRowChainOpt(newPath, alias)
-    }else{
-        throw new Error('Cannot determine what row you are trying to get')
-    }
+    out = nodeChainOpt(newPath)
     return out
 }
-function LIcolumn(column){
-    let [base,tval,li] = this._path.split('/')
-    let path
-    let pvals = gb[base].props[tval].li.props
-    let check = getValue([base,'props',tval,'li','props',column],gb)
-    let ptype
-    if(check !== undefined){
-        ptype = check.GBtype
-        path = column
-    }else{
-        for (const pval in pvals) {
-            const {alias, GBtype} = pvals[pval];
-            if(table === alias){
-                ptype = GBtype
-                path = pval
-                break
-            }
-        }
-    }
-    if(!path){
-        throw new Error('Cannot find corresponding ID for alias supplied')
-    }
-    let out
-    let newPath = [base,tval,'li',path].join('/')
-    out = LIcolumnChainOpt(newPath)
-    return out
-}
-function LI(){
-    let path = this._path
-    let out = LItableChainOpt(path)
-    return out
-}
+
 
 
 
 //STATIC CHAIN OPTS
 function gbaseChainOpt(){
-    return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: row}
+    return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), newStaticTable: newStaticTable(_path), newInteractionTable: newITtable(_path), importNewTable: importNewTable(_path), table,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path, config: config(_path), newNodeType: newNodeType(_path), importNewTable: importNewTable(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
 }
 function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
-function staticTableChainOpt(_path){
-    return {_path, toState: tableToState(_path), config: config(_path), newRow: newRow(_path), newColumn: newColumn(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path), column, row}
+function nodeTypeChainOpt(_path){
+    return {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path),prop,node}
 }
-function interactionTableChainOpt(_path,type){
-    let out = {_path, config: config(_path), newRow: newInteraction(_path), newColumn: newIColumn(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path), column,row}
-    if(type === 'transaction'){
-        out = Object.assign(out,{listItems: LI(_path)})
-    }
-    return out
+function relationChainOpt(_path){
+    return {_path, config: config(_path), newRow: newNode(_path), newColumn: addProp(_path), importData: importData(_path),prop}
 }
-function interactionColumnChainOpt(_path){
-    return {_path, config: config(_path)}
-}
-function columnChainOpt(_path, GBtype){
+
+function propChainOpt(_path, GBtype){
     let out = {_path, config: config(_path), clearColumn: clearColumn(_path)}
     if(['string','number'].includes(GBtype)){
         out = Object.assign(out,{linkColumnTo: linkColumnTo(_path)})
     }
     return out
 }
-function rowChainOpt(_path, _alias){
-    return {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path),toState: rowToState(_path,_alias)}
-}
-function interactionRowChainOpt(_path, tType, _alias){
-    let out = {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieve(_path), subscribe: subscribe(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
-    if(tType === 'transaction'){
-        out = Object.assign(out,{listItems: LI(_path)})
-    }
+function relationPropChainOpt(_path){
+    let out = {_path, config: config(_path)}
     return out
 }
-function LItableChainOpt(_path){
-    return {_path, config: config(_path), addListItems: addListItems(_path), removeListItems: removeListItems(_path), newColumn: newLIcolumn(_path), column:LIcolumn(_path), row:LIrow(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path)}
+function nodeChainOpt(_path){
+    return {_path, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
 }
-function LIcolumnChainOpt(_path){
-    return {_path, config: config(_path)}
 
-}
-function liRowChainOpt (_path, _alias){
-    return {_path, _alias, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path)}
-
-}
 
 //CACHE
 
-//these 3 are deprecated
-function loadColDataToCache(base, tval, pval){
-    //gun.gbase(baseID).loadColDataToCache('t0','p0', this)
-    let colSoul = base + '/' + tval + '/' + pval
-    let p0soul = [base,tval,'p0'].join('/')
-    let path = [base, tval, pval]
-    let rows = getValue([base,tval,'p0'], cache)
-    let inc = 0
-    let isLink = getColumnType(gb,[base,tval,pval].join('/'))
-    if(!gunSubs[colSoul]){//create subscription
-        if((isLink === 'prev' || isLink === 'next') && rows !== undefined){//get links for all rows for given pval, put in cache
-            for (const row in rows) {
-                let rowLinks = row +'/links/'+pval
-                if(!gunSubs[rowLinks]){//may already be subd from rowprops
-                    let rpath = path.slice()
-                    rpath.push(row)
-                    gun.get(rowLinks, function(msg,eve){//check for existence only
-                        eve.off()
-                        if(msg.put === undefined){
-                            setMergeValue(rpath,[],cache)
-                        }
-                    })
-                    gun.get(rowLinks).on(function(gundata,id){//gundata should be whole node, not just changes
-                        let data = Gun.obj.copy(gundata)
-                        delete data['_']
-                        let links = []
-                        for (const key in data) {
-                            const torf = data[key];
-                            if (torf) {//if current link
-                            links.push(key) 
-                            }
-                        }
-                        setValue(rpath,links,cache)
-                        handleNewData(colSoul, {[row]:links})
-                    })
+function loadRowPropToCache(rowID, pval){
+    let {b,t,tr,r} = parseSoul(rowID)
+    let p = pval
+    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,tr,p}))//rowID will only have one or other
+    let cpath = cachePathFromRowID(rowID,pval)
+    let propSet = (t) ? makeSoul({b,t,p,r}) : makeSoul({b,tr,p,r})
+    let nodeSoul = (t) ? makeSoul({b,t,r}): makeSoul({b,tr,r})
+    let subname = nodeSoul+'+'+p
+
+    if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
+        gun.get(propSet, function(msg,eve){//check for existence only
+            eve.off()
+            if(msg.put === undefined){
+                setRowPropCacheValue(cpath,pval,[],cache)
+            }
+        })
+        gun.get(propSet).on(function(gundata,id){//gundata should be whole node, not just changes
+            let data = Gun.obj.copy(gundata)
+            let links = []
+            for (const key in data) {
+                if(key === '_')continue
+                const torf = data[key];
+                if (torf) {//if current link
+                    links.push(key) 
                 }
             }
-            gunSubs[colSoul] = true
-        }else{//regular data row
-            gun.get(colSoul, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    if(!gunSubs[colSoul] && gunSubs[p0soul] && rows !== undefined){//first on() call, not p0 col, and p0 col is subd and in cache
-                        let nulls = {}
-                        for (const key in rows) {
-                            nulls[key] = null
-                        }
-                        setMergeValue(path,nulls,cache)
-                    }
-                    if(pval === 'p0'){
-                        let configpath = configPathFromSoul(colSoul)
-                        setMergeValue(configpath,{},gb)
-                        //triggerConfigUpdate(colSoul)
-                    }
-                }
-            })
-            gun.get(colSoul).on(function(gundata,id){
-                let data = Gun.obj.copy(gundata)
-                delete data['_']
-                if(!inc && gunSubs[p0soul] && rows !== undefined){//first on() call, not p0 col, and p0 col is subd and in cache
-                    let nulls = {}
-                    for (const key in rows) {
-                        nulls[key] = null
-                    }
-                    let fullList = Object.assign(nulls,data)
-                    //console.log(fullList)
-                    setMergeValue(path,fullList,cache)
-                    handleNewData(colSoul, data)
-                }
-                setMergeValue(path,data,cache)
-                handleNewData(colSoul, data)
-                console.log('gun.on()',colSoul)
-                if(pval === 'p0'){
-                    let configpath = configPathFromSoul(colSoul)
-                    setMergeValue(configpath,data,gb)
-                    triggerConfigUpdate(id)
-                }
-                for (const key in data) {//remove stale cached rows
-                    let rowpath = [base, tval, 'rows', key]
-                    if (getValue(rowpath,cache) !== undefined) {
-                        delete cache[base][tval].rows[key] 
-                    }
-                }
-                inc++
-            }, {change: true})
-            //.off() row prop subs
-            for (const on in gunSubs) {//unsubscribe any rowprop subs
-                let call = on.split('+')
-                let soul = call[0].split('/')
-                if(call.length === 2 && soul[2] && soul[2] === pval){//had a sub prop call
-                    gun.get(call[0]).get(call[1]).off()
-                    gunSubs[on] = false
-                }
+            setRowPropCacheValue(cpath,links,cache)
+            handleNewRowPropData(rowID,pval,links) //<<
+        })
+        gunSubs[propSet] = true
+    }else if(!gunSubs[subname] && !lType){
+        gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
+            eve.off()
+            if(msg.put === undefined){
+                setRowPropCacheValue(cpath, null, cache)
             }
-            gunSubs[colSoul] = true
-        } 
+        })
+        gun.get(nodeSoul).get(p).on(function(value){
+            handleNewRowPropData(nodeSoul,pval,value) //<<
+            setRowPropCacheValue(cpath,value,cache)
+        }) 
+        gunSubs[subname] = true
     }else{//do nothing, gun is already subscribed and cache is updating
 
     }
 }
-function getRow(path, colArr, inc){
-    //path should be base/tval/rowid
-    //colArr should be array of pvals requested
-    //console.log('getting row: '+ path)
-    let [base,tval,rowid] = path.split('/')
-    let cpath = cachePathFromChainPath(path)
-    let fullObj = false
-    let cacheValue = getValue(cpath,cache)
-    let colsCached = 0
-    let partialObj = {}
-    if(!colArr){
-        colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
-        fullObj = true
-    }
-    //console.log('getting row: '+ path + ' with properties:', colArr)
-    for (let i = 0; i < colArr.length; i++) {//setup subs if needed
-        const pval = colArr[i];
-        let colPath = [base, tval, pval, path]
-        let data = getValue(colPath, cache)
-        //console.log(colPath, data)
-        if(data === undefined){//add gun sub to cache
-            loadRowPropToCache(path, pval)
-        }else{
-            colsCached ++
-        }
-    }
-    if(colsCached !== colArr.length && inc <10){//recur and don't return, waiting for cache to load, 10 tries
-        //console.log(colsCached, colArr.length)
-        inc++
-        if(fullObj){
-            setTimeout(getRow,50, path, false, inc)
-        }else{
-            setTimeout(getRow,50, path, colArr, inc)
-        }
-    }else if(colsCached === colArr.length){
-        if(cacheValue !== undefined && fullObj){
-            return cacheValue
-        }else{
-            for (let i = 0; i < colArr.length; i++) {
-                const pval = colArr[i];
-                let colPath = [pArgs[0],pArgs[1], pval, path]
-                let data = getValue(colPath, cache)
-                partialObj[pval] = data
-            }
-            return partialObj
-        }
-    }else{
-        throw new Error('Could not retrieve data from cache after 10 tries')
-    }
-}
-function requestInitialData(path, colArr, reqType){
-    //runs on initial subscription to send cached data to sub and set up gun calls, handleNewData will pass noncached data to sub
-    //should match setupGsub mostly
-    let pathArg = path.split('/')
-    let base = pathArg[0]
-    let tval = pathArg[1]
-    let pval, rowid
-    let cachedData = {}
-    //generate configs from given args
-    if(reqType === 'row'){//row path
-        rowid = pathArg[2]
-    }else if(reqType === 'column'){//column path
-        pval = pathArg[2]
-    }else{//table path
-        rowid = false
-        pval = false
-    }
-    if(!colArr && (reqType === 'row' || reqType === 'table')){
-        colArr = Object.keys(getValue([base, 'props', tval, 'props'],gb))
-    }
-    if(reqType === 'row'){
-        console.log('getting row: '+ path + ' with properties:', colArr)
-        cachedData[rowid] = {}
-        for (let i = 0; i < colArr.length; i++) {//setup subs if needed
-            const pval = colArr[i];
-            let colPath = [base,tval, pval, path]
-            let data = getValue(colPath, cache)
-            //console.log(colPath, data)
-            if(data === undefined){//add gun sub to cache
-                loadRowPropToCache(path, pval)
-            }else{
-                cachedData[rowid][pval] = data
-            }
-        }
-
-    }else if(reqType === 'table'){
-        console.log('getting table: '+ path + ' with properties:', colArr)
-        let tRows = getValue([base, 'props', tval, 'rows'], gb)
-        for (let i = 0; i < colArr.length; i++) {//could have some row subs, but not col sub, sub columns if not already
-            const pval = colArr[i];
-            let colSoul = base + '/' + tval +'/' + pval
-            if(!gunSubs[colSoul]){
-                loadColDataToCache(base,tval,pval)
-            }
-        }
-        for (const row in tRows) {
-            cachedData[row] = {}
-            for (let i = 0; i < colArr.length; i++) {//setup subs if needed
-                const pval = colArr[i];
-                let rowPath = [base,tval, pval, row]
-                let data = getValue(rowPath, cache)
-                if(data !== undefined){//add gun sub to cache
-                    cachedData[row][pval] = data
-                }else{
-                    //rest will come though in gun.on()>handleNewData()>user CB
-                }
-            }
-        }
-    }else if(reqType === 'column'){
-        console.log('getting column: '+ path)
-        let colSoul = base + '/' + tval +'/' + pval
-        if(!gunSubs[colSoul]){
-            loadColDataToCache(base,tval,pval)
-        }
-        let colPath = [base,tval, pval]
-        let data = getValue(colPath, cache)
-        if(data !== undefined){
-            cachedData = data
-        }
-    }
-    return cachedData
-}
-
-
-
-function loadRowPropToCache(rowID, pval){
-    //path should be base/tval/rowid
-    let [base,tval,r,li,lir] = rowID.split('/')
-    let {type} = getValue([base,'props',tval],gb)
-    if(type === 'static'){
-        let colSoul = [base,tval,pval].join('/')
-        let [cpath] = cachePathFromRowID(gb,rowID,pval)
-        let isLink = getColumnType(gb,colSoul)
-        let lType = false
-        if(['prev','next'].includes(isLink)){
-            lType = '/links/'
-        }else if(isLink === 'association'){
-            lType = '/associations/'
-        }
-        let rowLinks = rowID + lType + pval
-        let subname = colSoul + '+' + rowID
-        if(!gunSubs[rowLinks] && lType){//may already be subd from rowprops
-            gun.get(rowLinks, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(cpath,pval,[],cache)
-                }
-            })
-            gun.get(rowLinks).on(function(gundata,id){//gundata should be whole node, not just changes
-                let data = Gun.obj.copy(gundata)
-                let links = []
-                for (const key in data) {
-                    if(key === '_')continue
-                    const torf = data[key];
-                    if (torf) {//if current link
-                        links.push(key) 
-                    }
-                }
-                setRowPropCacheValue(cpath,links,cache)
-                handleNewRowPropData(rowID,pval,links) //<<
-            })
-            gunSubs[rowLinks] = true
-        }else if(!gunSubs[subname] && !lType){
-            gun.get(colSoul).get(rowID, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(cpath, null, cache)
-                }
-            })
-            gun.get(colSoul).get(rowID).on(function(value){
-                handleNewRowPropData(rowID,pval,value) //<<
-                setRowPropCacheValue(cpath,value,cache)
-            }) 
-            gunSubs[subname] = true
-        }else{//do nothing, gun is already subscribed and cache is updating
-    
-        }
-    }else if(!li){//int||tr row prop
-        let isLink = getColumnType(gb,[base,tval,pval].join('/'))
-        let lType = false
-        let [cpath] = cachePathFromRowID(gb,rowID,pval)
-        if(['prev','next'].includes(isLink)){
-            lType = '/links/'
-        }else if(isLink === 'association'){
-            lType = '/associations/'
-        }
-        let rowLinks = rowID + lType + pval
-        let subname = rowID + '+' + pval
-        loadRowPropToCache([base,tval,r,'li'].join('/'))
-        if(!gunSubs[rowLinks] && lType){//may already be subd from rowprops
-            gun.get(rowLinks, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(cpath,[],cache)
-                }
-            })
-            gun.get(rowLinks).on(function(gundata,id){//gundata should be whole node, not just changes
-                let data = Gun.obj.copy(gundata)
-                delete data['_']
-                let links = []
-                for (const key in data) {
-                    const torf = data[key];
-                    if (torf) {//if current link
-                    links.push(key) 
-                    }
-                }
-                setRowPropCacheValue(cpath,links,cache)
-                handleNewRowPropData(rowID,pval,links)
-            })
-            gunSubs[rowLinks] = true
-        }else if(!gunSubs[subname] && !lType){
-            gun.get(rowID).get(pval, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(cpath, null, cache)
-                }
-            })
-            gun.get(rowID).get(pval).on(function(value,id){
-                handleNewRowPropData(rowID,pval,value)
-                setRowPropCacheValue(cpath,data,cache)
-                let rowpath = [base, tval, 'rows', rowID]
-                if (getValue(rowpath,cache) !== undefined) {
-                    delete cache[base][tval].rows[rowID] 
-                }
-                
-            }) 
-            gunSubs[subname] = true
-        }else{//do nothing, gun is already subscribed and cache is updating
-    
-        }
-    }else if(li && lir){
-        let [cpath] = cachePathFromRowID(gb,rowID,pval)
-        let subname = rowID + '+' + pval
-        if(!gunSubs[subname]){
-            gun.get(rowID).get(pval, function(msg,eve){//check for existence only
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(cpath, null, cache)
-                }
-            })
-            gun.get(rowID).get(pval).on(function(value){
-                handleNewRowPropData(rowID,pval,value)
-                setRowPropCacheValue(cpath,value,cache) 
-            }) 
-            gunSubs[subname] = true
-        }else{//do nothing, gun is already subscribed and cache is updating
-    
-        } 
-    }else if(li && !lir && !pval){
-        //for getting the current 'rows' on a particular transaction
-        let liSoul = [base,tval,r].join('/') + 'li'
-        if(!gunSubs[subname]){
-            let licpath = [base,tval,'li',rowID]
-            let lips = getValue([base,'props',tval,'li','props'],gb)
-            gun.get(liSoul).get(function(msg,eve){//put li's in to cache
-                eve.off()
-                if(msg.put === undefined){
-                    setRowPropCacheValue(licpath, {}, cache)
-                }
-            })
-            gun.get(liSoul).on(function(gundata,id){//get li's
-                let data = Gun.obj.copy(gundata)
-                for (const key in data) {
-                    if(key === '_')continue
-                    const torf = data[key];
-                    if (torf) {//if current li
-                        for (const p in lips) {
-                            loadRowPropToCache(key,p)
-                        }
-                    }
-                }
-                
-            })
-            gunSubs[subname] = true
-        }else{//do nothing, gun is already subscribed and cache is updating
-    
-        } 
-    }
-}
-function getCell(rowID,pval){
-    let [cpath,cellsub] = cachePathFromRowID(gb,rowID,pval)
+function getCell(rowID,pval){//shouldn't need this after reworking
+    let cpath = cachePathFromRowID(rowID,pval)
     let value = getRowPropFromCache(cpath, cache)
     //let colsub = [base,tval,pval].join('/')
     if(!gunSubs[cellsub] || value === undefined){
@@ -1027,6 +546,8 @@ function getCell(rowID,pval){
 
 
 //CASCADE
+//redo cascade and function to use similar method as query does to gather data and then fire call back for next thing
+
 function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
     try{
         inc = inc || 0
@@ -1168,23 +689,7 @@ function parseTableSub(subParams,tableBuffer){
     }
     return trigger
 }
-function parseLiTableSub(subID,subParams,tableBuffer){
-    let [path,sID] = subID.split('-')
-    let [base,tval,r,li] = path.split('/')
-    let liParent = [base,tval,r].join('/')
-    let trigger = {}
-    let {allColumns,rows} = subParams
-    for (const rowID in tableBuffer.li[liParent]) {
-        const propObj = tableBuffer.li[liParent][rowID];
-        for (const pval of allColumns) {
-            if(propObj[pval] !== undefined){
-                trigger[rowID] = false
-                break
-            }
-        }
-    }
-    return trigger
-}
+
 function handleSubUpdate(subID, subParams, tableBuffer){
     //subID = base/....-sval
     /* subParams
@@ -1207,30 +712,29 @@ function handleSubUpdate(subID, subParams, tableBuffer){
     }else if(type === 'table'){//table
         triggered = parseTableSub(subParams,tableBuffer)
     }else if(type === 'li'){
-        triggered = parseLiTableSub(subID,subParams,tableBuffer.li)
+
     }
     if(triggered){
         reQuerySub(subID,triggered)
     }
 }
-function newRowSubCheck(path){
+function newRowSubCheck(path){//never implemented??
     //this is also called directly from .edit(newRow:true) to see if this row meets any current subs
     let [base,tval] = path.split('/')
     let subs = getValue([base,tval],gsubs)
     for (const subID in subs) {
-       reQuerySub(subID,newRow)
+       reQuerySub(subID,newNode)
     }
 }
 function reQuerySub(subID,triggers,newRow){
     let [path,sID] = subID.split('-')
-    let [base,tval] = path.split('/')
-    let {columns,range,query,userCB,allRows} = getValue([base,tval,subID],gsubsParams)
+    let {b,t} = parseSoul(path)
+    let {columns,range,query,userCB,allRows} = getValue([b,t,subID],gsubsParams)
     let q = makeQobj(path,columns,range,query,userCB,true,sID, true)
     if(newRow && q.type !== 'row'){//redo range, to see if new row needs to be added to .rows for table or li subs
         getRange(q)
     }else{//something updated on a row already in .rows, update data in store, and return store
         q.allRows = Array.from(new Set(allRows))
-        console.log(triggers.length)
         q.rows = Array.from(new Set(triggers))
         q.next()
     }
@@ -1240,7 +744,7 @@ function reQuerySub(subID,triggers,newRow){
 function handleNewRowPropData(rowID,pval,value){
     //parse gun soul and keys in data
     //console.log('handle new Data' ,soul)
-    let cpath = bufferPathFromSoul(gb,rowID,pval)
+    let cpath = bufferPathFromSoul(rowID,pval)
     setValue(cpath,value,subBuffer)
     if(!bufferState){
         bufferState = true
@@ -1250,36 +754,16 @@ function handleNewRowPropData(rowID,pval,value){
 function setupSub(qObj){
     //subParams will have rows object in it {range: {from,to,idx,items}, type: table,row,li, columns: {p0,p1,etc}, query: [qArr], userCB, allRows}
     let {subID,allRows,allColumns,range,type,columns,query,userCB,arrMap,data,output,needRows} = qObj
-    let [path,sVal] = subID.split('-')
-    let [base,tval] = path.split('/')
+    let [path] = subID.split('-')
+    let {b,t} = parseSoul(path)
     let subParams = {userCB,query,allRows,range,columns,type,allColumns,arrMap,last:output}
     console.log('setting up or updating sub: '+ subID)
-    setValue([base,tval,subID],subParams,gsubsParams)
+    setValue([b,t,subID],subParams,gsubsParams)
     for (const soul in needRows) {
         for (const p of allColumns) {
             loadRowPropToCache(soul,p)
         } 
     }
-}
-
-
-function handleNewData(soul, data){ //deprecated
-    //parse gun soul and keys in data
-    //console.log('handle new Data' ,soul)
-    let pathArgs = soul.split('/')
-    let base = pathArgs[0]
-    let tval = pathArgs[1]
-    let pval = pathArgs[2]
-    for (const rowid in data) {
-        const value = data[rowid];
-        setValue([base,tval,rowid,pval], value, subBuffer)
-    }
-    if(!bufferState){
-        bufferState = true
-        setTimeout(flushSubBuffer, 250)
-    }
-    // determine what has changed
-    //set new values
 }
 
 
@@ -1300,10 +784,10 @@ function setupQuery(path,pvalArr,queryArr,cb,subscription, sVal){
 function getRange(qObj){
     //traverse the tRange and find all souls in the range.
     //once all souls are found fire qObj.next() in the callback.
-    let [base,tval] = qObj.table.split('/')
-    let {type} = getValue([base,'props',tval],gb)
+    //let [base,tval] = qObj.table.split('/')
+    //let {type} = getValue([base,'props',tval],gb)
     let {index,to,from,items} = qObj.range
-    let idx = index.split('/')
+    //let idx = index.split('/')
     console.log('Getting Range:', qObj.range)
     qIndex(index,function(data){
         //data is arr of souls
@@ -1337,6 +821,8 @@ function testRowAgainstQuery(propArr,queryParams){ //really this is just the que
         toUnix = to //to should be Infinity
     }
     
+
+    //need to revisit this after time index stuff is reworked
     let path = index.split('/')
     let idxPval
     let ptest = /p[0-9]+/
@@ -1347,6 +833,10 @@ function testRowAgainstQuery(propArr,queryParams){ //really this is just the que
             idxPval = val
         }
     }
+    //^^to here
+
+
+
     if(!idxPval){
         if(now <= fromUnix || now >= toUnix){//created or edited is outside of range
             return false
@@ -1438,11 +928,19 @@ const parseRange = (obj,path) =>{
     //Needs to end up with a from, to, items
     //from and to must be date obj or unix time
     if(!obj.RANGE)return false
-    let [base,tval] = path.split('/')
+    let {b,t} = parseSoul(path)
     let [tIndex,from,to,items, relativeTime, __toDate,last__,firstDayOfWeek] = obj.RANGE
     let out = {}
     if(!tIndex){
-        tIndex = [base,tval,'created'].join('/') //default is 'created'
+
+
+
+        //need to rework this
+        tIndex = [b,t,'created'].join('/') //default is 'created'
+        //need to makes sure all of this works together.
+
+
+
     }
     out.index = tIndex
     if((from || to) && (__toDate || last__ || relativeTime))throw new Error('Too many arguments in RANGE. use "from" & "to" OR "toDate" OR "last" OR "relavtiveTime"')
@@ -1635,7 +1133,7 @@ function gatherData(qObj){
     let {allColumns, rows, reQuery} = qObj
     console.log('Gathering Data; Rows: '+ rows.length + ' Columns: '+allColumns.join(', '))
     for (const rowID of rows) {
-        let [cpath] = cachePathFromRowID(gb,rowID)
+        let cpath = cachePathFromRowID(rowID)
         let propArr = getValue(cpath,cache)
         if(propArr && propArr.length >= allColumns.length && !propArr.includes(undefined)){
             qObj.data[rowID] = Array.from(propArr)
@@ -1801,110 +1299,44 @@ function addDataToQobj(rowID, pval, data, qObj){
     qObj.isRowDone(rowID)
 }
 function getRowProp(qObj, rowID, pval){
-    //path should be base/tval/rval
-    let [base,tval,r,li,lir] = rowID.split('/')
-    let {type} = getValue([base,'props',tval],gb)
-    if(type === 'static'){
-        let colSoul = [base,tval,pval].join('/')
-        let isLink = getColumnType(gb,colSoul)
-        let lType = false
-        if(['prev','next'].includes(isLink)){
-            lType = '/links/'
-        }else if(isLink === 'association'){
-            lType = '/associations/'
-        }
-        let rowLinks = rowID + lType + pval
-        let subname = colSoul + '+' + rowID
-        if(!gunSubs[subname] && lType){//may already be subd from rowprops
-            gun.get(rowLinks, function(msg,eve){
-                eve.off()
-                qObj.needRows[rowID] = true
-                if(msg.put === undefined){
-                    addDataToQobj(rowID,pval,[],qObj)
-                }else{
-                    let links = []
-                    for (const key in msg.put) {
-                        if(key === '_')continue
-                        const torf = msg.put[key];
-                        if (torf) {//if current link
-                            links.push(key) 
-                        }
+    let {b,t,tr,r} = parseSoul(rowID)
+    let p = pval
+    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,tr,p}))//rowID will only have one or other
+    let propSet = (t) ? makeSoul({b,t,p,r}) : makeSoul({b,tr,p,r})
+    let nodeSoul = (t) ? makeSoul({b,t,r}): makeSoul({b,tr,r})
+    let subname = nodeSoul+'+'+p
+
+    if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
+        gun.get(propSet, function(msg,eve){//check for existence only
+            eve.off()
+            qObj.needRows[rowID] = true
+            if(msg.put === undefined){
+                addDataToQobj(rowID,pval,[],qObj)
+            }else{
+                let links = []
+                for (const key in msg.put) {
+                    if(key === '_')continue
+                    const torf = msg.put[key];
+                    if (torf) {//if current link
+                        links.push(key) 
                     }
-                    addDataToQobj(rowID,pval,links,qObj)
                 }
-            })
-        }else if(!gunSubs[subname] && !lType){
-            gun.get(colSoul).get(rowID, function(msg,eve){
-                eve.off()
-                qObj.needRows[rowID] = true
-                if(msg.put === undefined){
-                    addDataToQobj(rowID,pval,null,qObj)
-                }else{
-                    addDataToQobj(rowID,pval,msg.put,qObj)
-                }
-            })
-        }else{//do nothing, gun is already subscribed and cache is updating
-            let val = getRowPropFromCache(cachePathFromRowID(gb,rowID,pval)[0],cache)
-            addDataToQobj(rowID,pval,val,qObj)
-        }
-    }else if(!li){//int||tr row prop
-        let isLink = getColumnType(gb,[base,tval,pval].join('/'))
-        let lType = false
-        if(['prev','next'].includes(isLink)){
-            lType = '/links/'
-        }else if(isLink === 'association'){
-            lType = '/associations/'
-        }
-        let rowLinks = rowID + lType + pval
-        let subname = rowID + '+' + pval
-        if(!gunSubs[subname] && lType){
-            gun.get(rowLinks, function(msg,eve){
-                eve.off()
-                qObj.needRows[rowID] = true
-                if(msg.put === undefined){
-                    addDataToQobj(rowID,pval,[],qObj)
-                }else{
-                    let links = []
-                    for (const key in msg.put) {
-                        if(key === '_')continue
-                        const torf = msg.put[key];
-                        if (torf) {//if current link
-                            links.push(key) 
-                        }
-                    }
-                    addDataToQobj(rowID,pval,links,qObj)
-                }
-            })
-        }else if(!gunSubs[subname] && !lType){
-            gun.get(rowID).get(pval, function(msg,eve){
-                eve.off()
-                qObj.needRows[rowID] = true
-                if(msg.put === undefined){
-                    addDataToQobj(rowID,pval,null,qObj)
-                }else{
-                    addDataToQobj(rowID,pval,msg.put,qObj)
-                }
-            })
-        }else{//do nothing, gun is already subscribed and cache is updating
-            let val = getRowPropFromCache(cachePathFromRowID(gb,rowID,pval),cache)
-            addDataToQobj(rowID,pval,val,qObj)
-        }
-    }else if(li && lir){
-        let subname = rowID + '+' + pval
-        if(!gunSubs[subname]){
-            gun.get(rowID).get(pval, function(msg,eve){
-                eve.off()
-                qObj.needRows[rowID] = true
-                if(msg.put === undefined){
-                    addDataToQobj(rowID,pval,null,qObj)
-                }else{
-                    addDataToQobj(rowID,pval,msg.put,qObj)
-                }
-            })
-        }else{
-            let val = getRowPropFromCache(cachePathFromRowID(gb,rowID,pval)[0],cache)
-            addDataToQobj(rowID,pval,val,qObj)
-        }
+                addDataToQobj(rowID,pval,links,qObj)
+            }
+        })      
+    }else if(!gunSubs[subname]){
+        gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
+            eve.off()
+            qObj.needRows[rowID] = true
+            if(msg.put === undefined){
+                addDataToQobj(rowID,pval,null,qObj)
+            }else{
+                addDataToQobj(rowID,pval,msg.put,qObj)
+            }
+        })
+    }else{//do nothing, gun is already subscribed and cache is updating
+        let val = getRowPropFromCache(cachePathFromRowID(rowID,pval),cache)
+        addDataToQobj(rowID,pval,val,qObj)
     }
 }
 
@@ -2800,14 +2232,9 @@ function treeReduceRight(startNodeID, method, acc, max){
 
 module.exports = {
     buildRoutes,
-    getRow,
-    tableToState,
-    rowToState,
     loadGBaseConfig,
     gbase,
     gunToGbase,
-    linkOptions,
-    fnOptions,
     formatQueryResults,
     addHeader,
     verifyPermissions,

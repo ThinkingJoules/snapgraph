@@ -34,7 +34,9 @@ const{getValue,
     getRetrieve,
     checkAliasName,
     getAllColumns,
-    buildPermObj
+    buildPermObj,
+    makeSoul,
+    rand
 } = require('./util')
 /*
 ID Length (using A-Za-z0-9)
@@ -72,18 +74,19 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
     try{
         let user = gun.user()
         let pub = user && user.is && user.is.pub || false
+        let invalidID = /[^a-zA-Z0-9]/
+        baseID = baseID || rand(10)
         if(!pub){
             throw new Error('Must be signed in to perform this action')
         }
-        let perms = buildPermObj('base',pub,basePermissions)
-
-        baseID = baseID || 'B' + Gun.text.random(8)
-
-        gun.get(baseID + '|super').put({[pub]:true},function(ack){
+        if(invalidID.test(baseID)){
+            throw new Error('baseID must only contain letters and numbers')
+        }
+        gun.get(makeSoul({'!':baseID,'|':'super'})).put({[pub]:true},function(ack){
             if(ack.err){
                 console.log(ack.err)
             }else{
-                gun.get(baseID + '|group/admin|permissions').put(buildPermObj('group'))
+                gun.get(makeSoul({'!':baseID,'^':'admin','|':true})).put(buildPermObj('group'))
                 
                 
             }
@@ -91,12 +94,12 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
         const putRest = () =>{
             gun.get(baseID + '|group/admin').put({[pub]:true})
 
-            let grpsSoul = baseID + '|groups'
-            gun.get(baseID + '|permissions').put(perms)
-            gun.get(grpsSoul).put({'admin': true, 'ANY': true})
-            gun.get(baseID + '|group/ANY|permissions').put(buildPermObj('group',false,{add: 'ANY'}))
+            let perms = buildPermObj('base',pub,basePermissions)
+            gun.get(makeSoul({'!':baseID,'|':true})).put(perms)
+            gun.get(makeSoul({'!':baseID,'^':true})).put({'admin': true, 'ANY': true})
+            gun.get(makeSoul({'!':baseID,'^':'ANY','|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
             gun.get('GBase').put({[baseID]: true})
-            gun.get(baseID + '/config').put(newBaseConfig({alias}))
+            gun.get(makeSoul({'!':baseID,'%':true})).put(newBaseConfig({alias}))
         }
         setTimeout(putRest,1000)
         return baseID
@@ -105,31 +108,30 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
         return e
     }
 }
-const makenewStaticTable = (gun, gb) => (path) => (tname, pname)=>{
+const makenewNodeType = (gun, gb) => (path) => (tname, pname)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let nextT = findNextID(gb,path)
-        checkAliasName(nextT,tname)
-        checkAliasName('p0',pname)
         let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path), type:tableType})
         checkConfig(newTableConfig(), tconfig)
         checkUniqueAlias(gb, cpath, tconfig.alias)
         let pconfig = newColumnConfig({alias: pname})
-        gun.get(path + '/' + nextT + '/config').put(tconfig)
-        gun.get(path + '/' + nextT + '/p0/config').put(pconfig)
-        gun.get(path + '/t').put({[nextT]: "static"})
-        gun.get(path + '/' + nextT + '/p').put({p0: true})
+        let tID = rand(6)
+        let pID = rand(6)
+        let tList = '#' + tID //need to prepend # to show this ID is a nodeType not a relationType('-')
+        gun.get(makeSoul({'!':path,'#':tID,'%':true})).put(tconfig)
+        gun.get(makeSoul({'!':path,'#':tID,'.':pID,'%':true})).put(pconfig)
+        gun.get(makeSoul({'!':path})).put({[tList]: true})
+        gun.get(makeSoul({'!':path,'#':tID})).put({[pID]: true})
         return nextT
     }catch(e){
         console.log(e)
         return e
     }
 }
-const makenewColumn = (gun, gb) => (path, config) => (pname, type)=>{
+const makeaddProp = (gun, gb) => (path, config) => (pname, type)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let nextP = findNextID(gb,path)
-        checkAliasName(nextP, pname)
+        let pID = rand(6)
         let pconfig
         if(config){
             config = Object.assign({alias: pname, GBtype: type, sortval: nextSortval(gb,path)}, config)
@@ -139,15 +141,15 @@ const makenewColumn = (gun, gb) => (path, config) => (pname, type)=>{
         }
         checkConfig(newColumnConfig(), pconfig)
         checkUniqueAlias(gb,cpath,pconfig.alias)
-        gun.get(path + '/' + nextP + '/config').put(pconfig)
-        gun.get(path + '/p').put({[nextP]: true})
-        return nextP
+        gun.get(makeSoul({'!':path,'#':tID,'.':pID,'%':true})).put(pconfig)
+        gun.get(makeSoul({'!':path,'#':tID})).put({[pID]: true})
+        return pID
     }catch(e){
         console.log(e)
         return false
     }
 }
-const makenewRow = (edit) => (path) => (alias, data, cb)=>{
+const makenewNode = (edit) => (path) => (alias, data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         if(alias === undefined || typeof alias === 'object'){
@@ -155,7 +157,7 @@ const makenewRow = (edit) => (path) => (alias, data, cb)=>{
             throw new Error(err)
         }
         let tpath = path
-        let id = 'r' + Gun.text.random(6)
+        let id = rand(10)
         let fullpath = tpath + '/' + id
         let call = edit(fullpath,true,alias)
         call(data, cb)
@@ -1161,11 +1163,9 @@ const makeshowgunsub = (gunSubs)=> () =>{
 
 module.exports = {
     makenewBase,
-    makenewStaticTable,
-    makenewInteractionTable,
-    makenewInteractionColumn,
-    makenewColumn,
-    makenewRow,
+    makenewNodeType,
+    makeaddProp,
+    makenewNode,
     makelinkColumnTo,
     makeconfig,
     makeedit,
