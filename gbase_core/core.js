@@ -130,7 +130,7 @@ const gunToGbase = (gunInstance,baseID) =>{
     importData = makeimportData(gun, gb)
     importNewTable = makeimportNewTable(gun,gb,tLog,tIndex,triggerConfigUpdate)
     associateTables = makeassociateTables(gun,gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,loadColDataToCache,addProp,cascade,solve,tLog)
+    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,addProp,cascade,solve,tLog)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(gb,handleConfigChange)
     qIndex = queryIndex(gun)
@@ -197,24 +197,25 @@ function startGunConfigSubs(baseID){
             for (const key in data) {
                 const value = data[key];
                 if (key === baseID) {
-                    let baseconfig = key + '/config'
+                    let baseconfig = makeSoul({b:key,'%':true})
                     gun.get(baseconfig).on(function(gundata, id){
                         gunSubs[baseconfig] = true
                         let data = Gun.obj.copy(gundata)
                         delete data['_']
                         let configpath = configPathFromSoul(id)
                         setMergeValue(configpath,data,gb)
-                        setupTableSubs(key)
+                        setupTypesSubs(baseID)
                         //setupPropSubs(key)
                         triggerConfigUpdate(id)
                     })
 
-                    let baseGrps = key + '|groups'
+                    let baseGrps = makeSoul({b:key,'^':true})
                     gun.get(baseGrps).on(function(gundata, id){
                         gunSubs[baseGrps] = true
                         let data = Gun.obj.copy(gundata)
                         delete data['_']
-                        setMergeValue([baseID,'groups'],data,gb)
+                        let configpath = configPathFromSoul(id)
+                        setMergeValue(configpath,data,gb)
                     })
                 }
             }
@@ -223,60 +224,45 @@ function startGunConfigSubs(baseID){
         setTimeout(startGunConfigSubs, 3000);
     }
 }
-function setupTableSubs(baseID){
-    let pathArgs = baseID.split('/')
-    let tpath = baseID.split('/')
-    tpath.push('t')
-    let s = tpath.join('/')
-    gun.get(s).on(function(gundata, id){
+function setupTypesSubs(baseID){
+    let tlist = makeSoul({b:baseID})
+    gun.get(tlist).on(function(gundata, id){//should have both relations and nodeTypes on this soul
         let data = Gun.obj.copy(gundata)
         delete data['_']
-        for (const tval in data) {
+        for (const tval in data) {//tval '#' + id
             const value = data[tval];
             if(value){
-                let tsoul = pathArgs.slice()
-                tsoul.push(tval)
-                let tconfig = tsoul.slice()
-                tconfig.push('config')
-                tsoul = tsoul.join('/')
-                handleGunSubConfig(tconfig.join('/'))//will sub if not already subed and merge in gb
-                setupColumnSubs(tsoul)
+                let {t,rt} = parseSoul(tval)
+                handleGunSubConfig(makeSoul({b:baseID,t,rt,'%':true}))//will sub if not already subed and merge in gb
+                setupPropSubs(tval)
             }
         }
     })
 
 
 }
-
-function setupColumnSubs(tpath){
-    let colPath = tpath.split('/')
-    colPath.push('p')
-    colPath = colPath.join('/')
-    gun.get(colPath).on(function(gundata, id){
+function setupPropSubs(tpath){
+    //tpath should be either !# or !-   
+    let {b,t,rt} = parseSoul(tpath) 
+    gun.get(tpath).on(function(gundata, id){
         let data = Gun.obj.copy(gundata)
         delete data['_']
-        for (const pval in data) {
+        for (const pval in data) { // pval = id
             const value = data[pval];
             if (value) {
-                let psoul = tpath.split('/')
-                psoul.push(pval)
-                psoul.push('config')
-                psoul = psoul.join('/')
-                handleGunSubConfig(psoul)//will sub if not already subed
+                handleGunSubConfig(makeSoul({b,t,rt,p:pval,'%':true}))//will sub if not already subed
             }
         }
     })
 }
-
 function handleGunSubConfig(subSoul){
-    //will be table config, column config or p0 col for rows
+    //will be type config or prop config 
     let configpath = configPathFromSoul(subSoul)
     let configLoaded = getValue(configpath,gb)
     if(!configLoaded || configLoaded.alias === undefined){//create subscription
         gun.get(subSoul, function(msg,eve){//check for existence only
             eve.off()
             if(msg.put === undefined){
-                let configpath = configPathFromSoul(subSoul)
                 setMergeValue(configpath,{},gb)
             }
         })
@@ -287,7 +273,6 @@ function handleGunSubConfig(subSoul){
             if(data.usedIn){
                 data.usedIn = JSON.parse(data.usedIn)
             }
-            let configpath = configPathFromSoul(subSoul)
             setMergeValue(configpath,data,gb)
             triggerConfigUpdate(id)
         })
@@ -297,6 +282,7 @@ function handleGunSubConfig(subSoul){
 
     }
 }
+
 function triggerConfigUpdate(path){
     if(gbChainState){
         gbChainState = false
@@ -304,12 +290,12 @@ function triggerConfigUpdate(path){
     }
 }
 function updateConfig(){
-    if(reactConfigCB && reactConfigCB.setState){
+    if(reactConfigCB){
         let configObj = {}
         configObj.byAlias = gbByAlias(gb)
         configObj.forUI = gbForUI(gb)
         configObj.byGB = gb
-        reactConfigCB.setState({config: configObj})
+        reactConfigCB.call(this,configObj)
         gbChainState = true
         //console.log(configObj.forUI, configObj.byGB)
     }
@@ -1964,8 +1950,8 @@ function testRequest(root, request, testSoul){
 
 
 //REACT STUFF
-function loadGBaseConfig(thisReact){
-    reactConfigCB = thisReact
+function loadGBaseConfig(cb){
+    reactConfigCB = cb
 
 }
 
@@ -2231,7 +2217,6 @@ function treeReduceRight(startNodeID, method, acc, max){
 
 
 module.exports = {
-    buildRoutes,
     loadGBaseConfig,
     gbase,
     gunToGbase,

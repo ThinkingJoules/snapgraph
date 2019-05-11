@@ -18,70 +18,67 @@ const {verifyLinksAndFNs, verifyLILinksAndFNs} = require('../function_lib/functi
 const newBaseConfig = (config) =>{
     config = config || {}
     let alias = config.alias || 'New Base'
-    let sortval = config.sortval || 0
-    let vis = config.vis || true
     let archived = config.archived || false
     let deleted = config.deleted || false
     let inherit_permissions = config.inherit_permissions || true
-    return {alias, sortval, vis, archived, deleted,inherit_permissions}
+    return {alias, archived, deleted,inherit_permissions}
 }
-const newTableConfig = (config) =>{
+const newNodeTypeConfig = (config) =>{
     config = config || {}
     let alias = config.alias || 'New Node Type ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let type = 'node'
-    let owner = config.owner || false
-    return {alias, type, archived, deleted, owner}
+    let log = config.log || false
+    return {alias, log, archived, deleted, timeBlockCadence}
 }
-const newColumnConfig = (config) =>{
+const newNodePropConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Column ' + rand(2)
+    let defType = {data:'string',date:'number',prev:'string',next:'string',ids:'string',pickList:'string',pickMultiple:'set',lookup:'string'}
+    let defMulti = {prev:true,next:false,lookup:false}
+    let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let GBtype = config.GBtype || 'string' 
+    let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids //lookup is basically prev, but it is only a one-way link (no next on target)
+    let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
     let required = config.required || false 
     let defaultval = config.defaultval || null 
     let fn = config.fn || "" 
     let usedIn = JSON.stringify([])
     let format = config.format || ""
-    let dateFormat = config.dateFormat || ""
-    return {alias, archived, deleted, GBtype, required, defaultval, fn, usedIn, dateFormat, format}
+    let pickOptions = config.pickOptions || JSON.stringify([])
+    let allowMultiple = config.allowMultiple || defMulti[propType] || false
+    let humanIdentifier = config.humanIdentifier || 0 //falsy, number represents the concat-order if multiple identifiers
+    return {alias, archived, deleted, propType, dataType, required, defaultval, fn, usedIn, pickOptions, format, allowMultiple, humanIdentifier}
 }
 const newRelationshipConfig = (config) =>{
     config = config || {}
-    let source = config.source || ""
     let alias = config.alias || 'New Relationship ' + rand(2)
-    let target = config.target || ""
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let type = 'relation'
-    //can't link more than one
-
-    return {alias, type, source, target, archived, deleted}
+    return {alias, archived, deleted}
 }
 const newRelationshipPropConfig = (config) =>{
     config = config || {}
-    let alias = config.alias || 'New Relationship Prop ' + rand(2)
+    let defType = {data:'string',date:'number',ids:'string',pickList:'string',pickMultiple:'set'}
+    let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
-    let GBtype = config.GBtype || 'string' 
+    let propType = config.propType || 'data' //lookup is basically prev, but it is only a one-way link (next is stored as a relation?)
+    let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
     let required = config.required || false 
     let defaultval = config.defaultval || null 
-    let fn = config.fn || "" 
-    let usedIn = (config.usedIn && JSON.stringify(config.usedIn)) || JSON.stringify([])
-    let ref = config.ref || ""
     let format = config.format || ""
-    let dateFormat = config.dateFormat || ""
-    return {alias, archived, deleted, GBtype, required, defaultval, fn, usedIn, ref, dateFormat, format}
+    let pickOptions = config.pickOptions || JSON.stringify([])
+    return {alias, archived, deleted, propType, dataType, required, defaultval, pickOptions, format}
 }
-const validGBtypes = ["string", "number", "boolean", "date", "list", "null", "prev", "next", "function", "tag", "association", "result", "cumulative", "link"] //link is not really valid, but is always handled
-const validTableTypes = ['static', 'transaction', 'interaction']
-const validListItemTypes = ['context','contextLink','function','string','number','result']
+const validDataTypes = ["string", "number", "boolean", "set"]
+const validNodePropTypes = ["data", "date", "pickList", "pickMultiple", "prev", "next", "lookup", "ids", "function"]
+const validRelationPropTypes = ["data", "date", "pickList", "pickMultiple", "lookup", "ids"]
 const validNumberFormats = ['AU', '%',]
-const checkConfig = (validObj, testObj, li) =>{//use for new configs, or update to configs
+const checkConfig = (validObj, testObj, type) =>{//use for new configs, or update to configs
+    if(!type)throw new Error('Must specify whether this is a node or a relation')
+    let validPropTypes = (type === 'node') ? validNodePropTypes : validRelationPropTypes
     //whichConfig = base, table, column, ..row?
-    li = (li) ? true : false
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}
     for (const key in testObj) {
         if (validObj[key] !== undefined) {//key is valid
@@ -94,16 +91,12 @@ const checkConfig = (validObj, testObj, li) =>{//use for new configs, or update 
                 let err = vTypeof + ' !== '+ tTypeof
                 throw new Error(err)
             }
-            if(key === 'type' && !validTableTypes.includes(testObj[key])){
-                let err = 'Table type does not match one of: '+ validTableTypes.join(', ')
+            if(key === 'propType' && !validPropTypes.includes(testObj[key])){//type check the column data type
+                let err = 'propType does not match one of: '+ validPropTypes.join(', ')
                 throw new Error(err)
             }
-            if(key === 'GBtype' && !li && !validGBtypes.includes(testObj[key])){//type check the column data type
-                let err = 'GBtype does not match one of: '+ validGBtypes.join(', ')
-                throw new Error(err)
-            }
-            if(key === 'GBtype' && li && !validListItemTypes.includes(testObj[key])){//type check the column data type
-                let err = 'GBtype does not match one of: '+ validListItemTypes.join(', ')
+            if(key === 'dataType' && !validDataTypes.includes(testObj[key])){//type check the column data type
+                let err = 'dataType does not match one of: '+ validDataTypes.join(', ')
                 throw new Error(err)
             }
             return true
@@ -128,9 +121,9 @@ const makehandleConfigChange = (gun,gb,cache,gunSubs,loadColDataToCache,newColum
     let history = {}
     let thisColConfig = getValue(cpath,gb)
     if(cpath[cpath.length-1][0] === 'p'){//col
-        validConfig = newColumnConfig()
+        validConfig = newNodePropConfig()
     }else if(cpath[cpath.length-1][0] === 't'){//table
-        validConfig = newTableConfig()
+        validConfig = newNodeTypeConfig()
     }else{//base (or row, but validConfig is not called)
         validConfig = newBaseConfig()
     }
@@ -180,7 +173,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
             throw new Error('Can only change GBtype of columns')
         }
         let cpath = configPathFromChainPath(path)
-        let configCheck = newColumnConfig()
+        let configCheck = newNodePropConfig()
         checkConfig(configCheck, {GBtype: newType})
         let colParam = getValue(cpath,gb)
         if(colParam.GBtype === newType){
@@ -266,105 +259,6 @@ const oldConfigVals = (gb,pathArr, configObj)=>{
     return oldObj
 }
 
-const makehandleInteractionConfigChange = (gun,gb,timeLog) => (configObj, path, cb)=>{
-    //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
-    //this._path from wherever config() was called
-    cb = (cb instanceof Function && cb) || function(){}
-    let cpath = configPathFromChainPath(path)
-    let csoul = configSoulFromChainPath(path)
-    //cannot edit these config values from here, use .archive() or .delete() to change these values
-    delete configObj.archived
-    delete configObj.deleted
-    if(cpath.length === 3 ){//tval change
-        let validConfig = newInteractionTableConfig()
-        checkConfig(validConfig, configObj)
-        checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
-        checkUniqueSortval(gb,cpath, configObj.sortval)//same as alias
-        if(Object.keys(configObj).length !== 0){
-            timeLog(csoul,configObj)
-            gun.get(csoul).put(configObj)
-            cb.call(this, undefined)
-        }
-        return true
-    }else if(cpath.length === 5){//reg pval change
-        const handleIntFNColumn = makehandleInteractionFNColumn(gun,gb)
-        let validConfig = newInteractionColumnConfig()
-        checkConfig(validConfig, configObj)
-        checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
-        checkUniqueSortval(gb,cpath, configObj.sortval)//same as alias
-        let thisColConfig = getValue(cpath,gb)
-
-        if(configObj.GBtype || configObj.associatedWith || configObj.fn){//new type change or update to link of fn
-            let typeStuff = {}
-            for (const key in configObj) {//split config obj for normal configs vs type/link configs
-                if(key === 'GBtype' || key === 'associatedWith' || key === "fn"){
-                    typeStuff[key] = configObj[key]
-                    delete configObj[key]
-                }
-            }
-            if(typeStuff.GBtype && typeStuff.GBtype !== thisColConfig.GBtype){//change col type
-                throw new Error('Cannot change column type for interaction tables. Can only archive/delete and create another column')
-            }else if(typeStuff.fn && thisColConfig.GBtype === 'function'){//update function
-                handleIntFNColumn(path, typeStuff, cb)
-            }else if(typeStuff.associatedWith && thisColConfig.GBtype === 'association'){//update linksTo
-                throw new Error('Cannot change which table this is associated with, can only archive/delete this column')
-            }else if (typeStuff.GBtype === thisColConfig.GBtype){
-                throw new Error('GBtype is already type specified')
-            }
-        }
-
-        if(Object.keys(configObj).length !== 0){
-            timeLog(csoul,configObj)
-            gun.get(csoul).put(configObj)
-            cb.call(this, undefined)
-        }
-        return true
-    }else if(cpath.length === 4){//li change
-        let validConfig = newListItemsConfig()
-        checkConfig(validConfig, configObj)
-        if(Object.keys(configObj).length !== 0){
-            timeLog(csoul,configObj)
-            gun.get(csoul).put(configObj)
-            cb.call(this, undefined)
-        }
-        return true
-    }else if(cpath.length === 6){//li pval change
-        const handleLIFNColumn = makehandleLIFNColumn(gun,gb)
-        let validConfig = newListItemColumnConfig()
-        checkConfig(validConfig, configObj, true)
-        checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
-        checkUniqueSortval(gb,cpath, configObj.sortval)//same as alias
-        let thisColConfig = getValue(cpath,gb)
-
-        if(configObj.GBtype || configObj.associatedWith || configObj.fn){//new type change or update to link of fn
-            let typeStuff = {}
-            for (const key in configObj) {//split config obj for normal configs vs type/link configs
-                if(key === 'GBtype' || key === "fn"){
-                    typeStuff[key] = configObj[key]
-                    delete configObj[key]
-                }
-            }
-            if(typeStuff.GBtype && typeStuff.GBtype !== thisColConfig.GBtype){//change col type
-                throw new Error('Cannot change column type for list item sub-table. Can only archive/delete and create another column')
-            }else if(typeStuff.fn && thisColConfig.GBtype === 'function'){//update function
-                handleLIFNColumn(path, typeStuff, cb)
-            }else if(typeStuff.fn && thisColConfig.GBtype === 'contextLink'){//update contextLink
-                throw new Error('Cannot change a columns contextLink, can only archive/delete and create another column')
-            }else if(thisColConfig.GBtype === 'context'){//update linksTo
-                throw new Error('Cannot change context on List Item table')
-            }else if (typeStuff.GBtype === thisColConfig.GBtype){
-                throw new Error('GBtype is already type specified')
-            }
-        }
-
-        if(Object.keys(configObj).length !== 0){
-            timeLog(csoul,configObj)
-            gun.get(csoul).put(configObj)
-            cb.call(this, undefined)
-        }
-        return true
-    }
-}
 
 
 
@@ -571,242 +465,7 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         return
     }
 }
-const makehandleInteractionFNColumn = (gun,gb) => function handlefncol(path,configObj,cb){
-    //parse equation for all links
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        //let [base,tval,pval] = path.split('/')
-        //loadColDataToCache(base,tval,pval)
-        let cpath = configPathFromChainPath(path)
-        let thisColConfig = getValue(cpath,gb)
-        let thisColConfigSoul = configSoulFromChainPath(path)
-        let fn = configObj.fn
-        let oldfn = thisColConfig.fn
-        verifyLinksAndFNs(gb,path,fn)
-        let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
-        let links = []
-        let checkmatch
-        while (checkmatch = allLinkPattern.exec(fn)) {
-            let path = checkmatch[1]
-            links.push(path.split('.'))
-        }
-        let usedInLinks = []
-        for (let i = 0; i < links.length; i++) {
-            const linkArr = links[i];
-            let link
-            if (linkArr.length === 1){
-                link = linkArr[0]
-            }else{
-                link = linkArr[1]
-            }
-            usedInLinks.push(link)
-        }
-        checkForCirc(gb,path,usedInLinks)
-        let oldLinksTo = []
-        let newLinksTo = []
-        let match
-        while (match = allLinkPattern.exec(oldfn)) {
-            let path = match[1]
-            oldLinksTo = oldLinksTo.concat(path.split('.'))
-        }
-        while (match = allLinkPattern.exec(fn)) {
-            let path = match[1]
-            newLinksTo = newLinksTo.concat(path.split('.'))
-        }
-        let remove = oldLinksTo.filter(val => !newLinksTo.includes(val))
-        let add = newLinksTo.filter(val => !oldLinksTo.includes(val))
-        //console.log(add, remove)
-        let usedIn = {}
-        //let result = {}
-        //let inMemory = true
-        for (let i = 0; i < add.length; i++) {
-            const link = add[i];
-            let csoul = configSoulFromChainPath(link)
-            let cpath = configPathFromChainPath(link)
-            cpath.push('usedIn')
-            let newUsedIn = getValue(cpath,gb)
-            newUsedIn.push(path)
-            let uniq = [ ...new Set(newUsedIn) ]
-            usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
-        }
-        for (let i = 0; i < remove.length; i++) {
-            const link = remove[i];
-            let csoul = configSoulFromChainPath(link)
-            let cpath = configPathFromChainPath(link)
-            cpath.push('usedIn')
-            let newUsedIn = removeFromArr(path,getValue(cpath,gb))
-            let uniq = [ ...new Set(newUsedIn) ]
-            usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
-        }
-        //console.log(usedIn)
-        // for (let i = 0; i < newLinksTo.length; i++) {
-        //     const link = newLinksTo[i];
-        //     let [base,tval,pval] = link.split('/')
-        //     let soul = link
-        //     if(!gunSubs[soul]){
-        //         inMemory = false
-        //         loadColDataToCache(base,tval,pval)
-        //     }
-        // }
-        // let data = getValue([base,tval,pval], cache)
-        // if(!inMemory){
-        //     //console.log(data)
-        //     setTimeout(handlefncol,1000,path,configObj,cb)
-        //     return
-        // }else{
-        //     for (const rowid in data) {
-        //         let val = solve(rowid, fn)
-        //         result[rowid] = val
-        //     }
-        //     // console.log(usedIn)
 
-        for (const csoul in usedIn) {//update all usedIn's effected
-            let val = usedIn[csoul]
-            gun.get(csoul).put(val)
-        }
-        // if(configObj.GBtype && configObj.GBtype !== thisColConfig.GBtype){//update the config type, this is a changeColType
-        //     gun.get(thisColConfigSoul).put({GBtype: 'function'})
-        // }
-        gun.get(thisColConfigSoul).put({fn: fn})//add fn to config
-        //let colSoul = [base,tval,pval].join('/')
-        //console.log(result)
-        //gun.get(colSoul).put(result)//put the new calc results in to gun
-
-        //need to check if this col is used in anything else and manually start the cascades
-        // let triggers = thisColConfig.usedIn
-        // if(triggers.length){
-        //     let rows = getValue([base,'props',tval,'rows'])
-        //     //console.log(rows, pval)
-        //     for (const rowid in rows) {
-        //         cascade(rowid, pval)
-        //     }
-        // }
-        cb.call(this,undefined)
-    //}
-    }catch(e){
-        console.log(e)
-        cb.call(this, e)
-        return
-    }
-}
-const makehandleLIFNColumn = (gun,gb) => function handlefncol(path,configObj,cb){
-    //parse equation for all links
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        //let [base,tval,pval] = path.split('/')
-        //loadColDataToCache(base,tval,pval)
-        let cpath = configPathFromChainPath(path)
-        let thisColConfig = getValue(cpath,gb)
-        let thisColConfigSoul = configSoulFromChainPath(path)
-        let fn = configObj.fn
-        let oldfn = thisColConfig.fn
-        verifyLILinksAndFNs(gb,path,fn)
-        let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
-        let links = []
-        let checkmatch
-        while (checkmatch = allLinkPattern.exec(fn)) {
-            let path = checkmatch[1]
-            links.push(path.split('.'))
-        }
-        let usedInLinks = []
-        for (let i = 0; i < links.length; i++) {
-            const linkArr = links[i];
-            let link
-            if (linkArr.length === 1){
-                link = linkArr[0]
-            }else{
-                link = linkArr[1]
-            }
-            usedInLinks.push(link)
-        }
-        checkForCirc(gb,path,usedInLinks)
-        let oldLinksTo = []
-        let newLinksTo = []
-        let match
-        while (match = allLinkPattern.exec(oldfn)) {
-            let path = match[1]
-            oldLinksTo = oldLinksTo.concat(path.split('.'))
-        }
-        while (match = allLinkPattern.exec(fn)) {
-            let path = match[1]
-            newLinksTo = newLinksTo.concat(path.split('.'))
-        }
-        let remove = oldLinksTo.filter(val => !newLinksTo.includes(val))
-        let add = newLinksTo.filter(val => !oldLinksTo.includes(val))
-        //console.log(add, remove)
-        let usedIn = {}
-        //let result = {}
-        //let inMemory = true
-        for (let i = 0; i < add.length; i++) {
-            const link = add[i];
-            let csoul = configSoulFromChainPath(link)
-            let cpath = configPathFromChainPath(link)
-            cpath.push('usedIn')
-            let newUsedIn = getValue(cpath,gb)
-            newUsedIn.push(path)
-            let uniq = [ ...new Set(newUsedIn) ]
-            usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
-        }
-        for (let i = 0; i < remove.length; i++) {
-            const link = remove[i];
-            let csoul = configSoulFromChainPath(link)
-            let cpath = configPathFromChainPath(link)
-            cpath.push('usedIn')
-            let newUsedIn = removeFromArr(path,getValue(cpath,gb))
-            let uniq = [ ...new Set(newUsedIn) ]
-            usedIn[csoul] = {usedIn: JSON.stringify(uniq)}
-        }
-        //console.log(usedIn)
-        // for (let i = 0; i < newLinksTo.length; i++) {
-        //     const link = newLinksTo[i];
-        //     let [base,tval,pval] = link.split('/')
-        //     let soul = link
-        //     if(!gunSubs[soul]){
-        //         inMemory = false
-        //         loadColDataToCache(base,tval,pval)
-        //     }
-        // }
-        // let data = getValue([base,tval,pval], cache)
-        // if(!inMemory){
-        //     //console.log(data)
-        //     setTimeout(handlefncol,1000,path,configObj,cb)
-        //     return
-        // }else{
-        //     for (const rowid in data) {
-        //         let val = solve(rowid, fn)
-        //         result[rowid] = val
-        //     }
-        //     // console.log(usedIn)
-
-        for (const csoul in usedIn) {//update all usedIn's effected
-            let val = usedIn[csoul]
-            gun.get(csoul).put(val)
-        }
-        // if(configObj.GBtype && configObj.GBtype !== thisColConfig.GBtype){//update the config type, this is a changeColType
-        //     gun.get(thisColConfigSoul).put({GBtype: 'function'})
-        // }
-        gun.get(thisColConfigSoul).put({fn: fn})//add fn to config
-        //let colSoul = [base,tval,pval].join('/')
-        //console.log(result)
-        //gun.get(colSoul).put(result)//put the new calc results in to gun
-
-        //need to check if this col is used in anything else and manually start the cascades
-        // let triggers = thisColConfig.usedIn
-        // if(triggers.length){
-        //     let rows = getValue([base,'props',tval,'rows'])
-        //     //console.log(rows, pval)
-        //     for (const rowid in rows) {
-        //         cascade(rowid, pval)
-        //     }
-        // }
-        cb.call(this,undefined)
-    //}
-    }catch(e){
-        console.log(e)
-        cb.call(this, e)
-        return
-    }
-}
 //LINK STUFF
 
 const makehandleLinkColumn = (gun, gb, cache, gunSubs, loadColDataToCache, newColumn) =>function handlelinkcol(path, configObj, backLinkCol, cb){
@@ -962,95 +621,49 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
 
 const handleImportColCreation = (gun, gb, base, tval, colHeaders, datarow, append)=>{
     // create configs
-    let path = base+'/'+tval
+    let path = makeSoul({b:base, t:tval})
     let gbpath = configPathFromChainPath(path)
     let colspath = gbpath.slice()
     colspath.push('props')
     let cols = getValue(colspath, gb)
     let results = {}
-    let colExists = {}
-    if(cols === undefined){//new table
-        for (let i = 0; i < colHeaders.length; i++) {
-            const palias = String(colHeaders[i]);
+    for (let i = 0; i < colHeaders.length; i++) {
+        const palias = String(colHeaders[i]);
+        let pval = findID(cols, palias)
+        if(!pval && append){
             const colType = typeof datarow[i]
-            const pval = 'p'+ i
-            const sort = i*10
+            pval = rand(6)
+            let pconfig = newNodePropConfig({alias: palias, dataType: colType, propType:'data'})
+            checkConfig(newNodePropConfig(), pconfig)
+            gun.get(makeSoul({b:base, t:tval, p:pval, '%':true})).put(pconfig)
+            gun.get(makeSoul({b:base, t:tval})).put({[pval]: true})
             results[palias] = pval
-            let pconfig = newColumnConfig({alias: palias, GBtype: colType, sortval: sort})
-            let typeCheck = checkConfig(newColumnConfig(), pconfig)
-            if(typeCheck){
-                gun.get(path + '/' + pval + '/config').put(pconfig)
-                gun.get(path + '/p').put({[pval]: true})
-            }
-        }
-    }else if(append){//existing table and we can add more columns/rows
-        for (let j = 0; j < colHeaders.length; j++) {
-            const col = colHeaders[j];
-            let pval = findID(cols, col)
-            if(pval !== undefined){
-                colExists[col] = pval
-            }else{
-                colExists[col] = false
-            }
-        }
-        let nextP = findNextID(gb, path)
-        let pInt = nextP.slice(1) *1
-        let nextS = nextSortval(gb, path)
-        for (let i = 0; i < colHeaders.length; i++) {
-            const palias = colHeaders[i];
-            if(!colExists[palias]){
-                let newP = 'p' + pInt
-                const colType = typeof datarow[i]
-                const pval = newP
-                const sort = nextS
-                results[palias] = pval
-                let pconfig = newColumnConfig({alias: palias, GBtype: colType, sortval: sort})
-                let typeCheck = checkConfig(newColumnConfig(), pconfig)
-                if(typeCheck){
-                    gun.get(path + '/' + pval + '/config').put(pconfig)
-                    gun.get(path + '/p').put({[pval]: true})
-                    pInt ++
-                    nextS += 10
-                }
-            }else{
-                results[palias] = colExists[palias]
-            }
-            
+        }else if(pval){
+            results[palias] = pval
         }
     }
-    
     return results
 }
-const handleTableImportPuts = (gun, path, resultObj, cb)=>{
-    //console.log(resultObj)
-    //path base/tval
+const handleTableImportPuts = (gun, resultObj, cb)=>{
     cb = (cb instanceof Function && cb) || function(){}
-    let basesoul = path + '/'
-    //console.log(basesoul)
-    gun.get(basesoul + 'p0').put(resultObj.p0)//put alias keys in first, to ensure they write first in case of disk error, can reimport
-    //create instance nodes
-    for (const rowID in resultObj.p0) {//put alias on row node
-        const rowAlias = resultObj.p0[rowID]
-        gun.get(rowID).get('p0').put(rowAlias)
+    for (const rowID in resultObj) {//put alias on row node
+        const data = resultObj[rowID]
+        gun.get(rowID).put(data)
+
+        //put data in through edit?? would handle timeIndex and timeLog..
+
+
     }
-    //put column idx objs
-    for (const key in resultObj) {//put rest of column data in
-        if (key !== 'p0') {
-            const putObj = resultObj[key];
-            let gbsoul = basesoul + key
-            gun.get(gbsoul).put(putObj)
-        }
-    }
+    
     cb.call(this, undefined)
 }
 module.exports = {
     newBaseConfig,
-    newTableConfig,
+    newTableConfig: newNodeTypeConfig,
     newRelationshipConfig,
     newRelationshipPropConfig,
-    newColumnConfig,
+    newColumnConfig: newNodePropConfig,
     makehandleConfigChange,
-    makehandleInteractionConfigChange,
     makechangeColumnType,
     oldConfigVals,
     makehandleLinkColumn,

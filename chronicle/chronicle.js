@@ -1,47 +1,65 @@
 'use strict'
-const {getValue, setValue} = require('../gbase_core/util')
-function ify(dataObj, soul){//will add soul metadata to dataObj
-  //does not verify valid data obj
-  //simply adds the sould obj under '_' key
-  let s = {'_' : {'#': soul}}
-  let newObj = Object.assign({},dataObj,s)
-  return newObj
+const {getValue, setValue, makeSoul, parseSoul,configPathFromChainPath} = require('../gbase_core/util')
+function getBlockTime(unix){
+  let date = new Date(unix)
+  console.log(date.toString())
+  let granArr = granularDate(date)
+  let i = 0
+  let out = []
+  for (const val of granArr) {
+    if(i===1){
+      out.push(val-1)//undo granular date, back to 0 index on month
+    }else if(i>2){//make hours, minutes, seconds, millis === 0
+      out.push(0)
+    }else{//push i == 2, day
+      out.push(val)
+    }
+    i++
+  }
+  let mid = new Date(Date.UTC(...out))
+  console.log(unix, granArr, mid.toString())
+
+  return mid.getTime()
 }
 
 function newQueryObj(cb,from,to,items,order){
-  let obj = {
-  
-  range : {
-  low: from && granularDate(from) || [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity, -Infinity, -Infinity],
-  high: to && granularDate(to) || [Infinity, Infinity, Infinity, Infinity, Infinity, Infinity, Infinity],
-  },
+  let low,high,rangeOrder,traverse
+  let testLow = from && from.getTime() || -Infinity
+  let testHigh = to && to.getTime() || Infinity
+
+  low = (testLow < testHigh) ? testLow : testHigh
+  high = (testLow < testHigh) ? testHigh : testLow
+  rangeOrder = order || '<'
+  traverse = (rangeOrder === '<') ? 'prev' : 'next'
+
+  return {
+    range : {
+    low,
+    high
+    },
 
 
-  result: {}, //keys of UTC unix equivalent for where it was found
+    result: [], //keys of UTC unix equivalent for where it was found
 
-  pending : {},
-
-  max : items || Infinity,
-  rangeOrder : order || '<',
-  dumpResult: function(){
-    let out = []
-    let order = Object.keys(this.result)
-    if (this.rangeOrder === '>'){
-      order.sort(function(a, b){return a - b})
-    }else{
-      order.sort(function(a, b){return b - a})
-    }
-    for (let i = 0; i < order.length; i++) {
-      const ts = order[i];
-      out = out.concat(this.result[ts])
-    }
-    this.done(out)
-  },
-  
-  done : cb || function(){}
-}
-
-  return obj
+    max : items || Infinity,
+    rangeOrder,
+    traverse,
+    dumpResult: function(){
+      let out = []
+      let order = Object.keys(this.result)
+      if (this.rangeOrder === '>'){
+        order.sort(function(a, b){return a - b})
+      }else{
+        order.sort(function(a, b){return b - a})
+      }
+      for (const ts of order) {
+        out = out.concat(this.result[ts])
+      }
+      this.done(out)
+    },
+    
+    done : cb || function(){}
+  }
 }
 
 const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
@@ -49,130 +67,74 @@ const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
   //idxData = Must be unique for the entire index, this is the string (usually a gun soul) that you are indexing at ...VV
   //idxDate = This is the timestamp you are indexing the idxData at. 
   let root = gun.back(-1)
-  let tsoul = 'timeIndex>' + idxID
-  let lastindexsoul = tsoul + '/last' // then .get(idxData)>> indexSoul where idxData can be found as a key
-  if (idxDate instanceof Date){ // TODO: Do magic
-  }else{
-      console.warn('Warning: Improper idxDate used. Must be a Date Object')
+  let soulObj = parseSoul(idxID)
+  let idxSoul = makeSoul(Object.assign({}, soulObj,{':':true}))
+  if (!(idxDate instanceof Date) || isNaN(idxDate*1)){ // TODO: Do magic
+    console.warn('Warning: Improper idxDate used. Must be a Date Object or unix time')
   }
+  if(idxDate instanceof Date)idxDate = idxDate.getTime()
+  let correctBlock = getBlockTime(idxDate)
+  const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
+  console.log(correctBlock,correctSoul)
 
-  let t = granularDate(idxDate)
-  t = [tsoul].concat(t)
-
-  // Working example of original modified slightly. Will later work this into a loop.
-  let milliStr = t.join(':')
-  let milli, objData
-  if(typeof idxData === 'object' && !Array.isArray(idxData)){
-    objData = true
-    milli = ify(idxData, milliStr)
-  }else{
-    milli = ify({[idxData]: true}, milliStr)
-  }
-  let tmp = t.pop()
-
-  let sec = ify({}, t.join(':'))
-  sec[tmp] = milli
-  tmp = t.pop()
-
-  let min = ify({}, t.join(':'));
-  min[tmp] = sec;
-  tmp = t.pop();
-
-  let hour = ify({}, t.join(':'))
-  hour[tmp] = min
-  tmp = t.pop()
-
-  let day = ify({}, t.join(':'))
-  day[tmp] = hour
-  tmp = t.pop()
-
-  let month = ify({}, t.join(':'))
-  month[tmp] = day
-  tmp = t.pop()
-
-  let year = ify({}, t.join(':'))
-  year[tmp] = month
-  tmp = t.pop()
-  
-  let node = ify({}, t.join(':'))
-  node[tmp] = year
-
-  if(objData){
-    root.put.call(root, node, tsoul) //true new indices
-    let last = {}
-    for (const soul in idxData) {
-      last[soul] = milliStr
+  root.get(idxSoul).get(idxData).get(function(msg, ev) {
+    let prevIdx = msg.put
+    ev.off()
+    if (prevIdx !== undefined){//false old index
+      let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
+      root.get(oldSoul).put({[idxData]: false})
     }
-    root.put.call(root,last,lastindexsoul)
-  }else{
-    root.get(lastindexsoul).get(idxData).get(function(msg, ev) {
-      let prevSoul = msg.put
+    root.get(idxSoul).get('tail').get(function(msg, ev) {//new idxData, check last block time to see if we add to that block or create new block
+      let lastBlock = msg.put //unix
       ev.off()
-      if (prevSoul !== undefined){//false old index
-        root.put.call(root, {[idxData]: false}, prevSoul)
+      if (lastBlock !== undefined){//lastBlock exists
+        if(correctBlock === lastBlock){//add to block
+          root.get(correctSoul).put({[idxData]:idxDate})
+        }else{//make new block 
+          let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastBlock}))
+          root.get(idxSoul).put({tail:correctBlock})//new tail
+          root.get(lastSoul).put({next:correctSoul})//old tail, update next
+          root.get(correctSoul).put({prev:lastSoul ,next: null, [idxData]:idxDate})//put data and prev in new block
+        }
+      }else{//first block for index, make head === tail on idxSoul
+        root.get(idxSoul).put({head:correctBlock,tail:correctBlock})
+        root.get(correctSoul).put({prev:null,next:null,[idxData]:idxDate})
       }
-      root.put.call(root, node, tsoul) //true new index
-      root.put.call(root,{[idxData] : milliStr}, lastindexsoul)//update last index soul
-  
+      root.get(idxSoul).put({[idxData]:idxDate})//'last' index
     })
-  }
-  
-
+  })
 }
 
-const timeLog = (gun) => (idxID, logObj) =>{
-  //idxID = Can be anything, it is just a reference to this specific index, it is usually a 'list' soul
-  //idxData = Must be unique for the entire index, this is the string (usually a gun soul) that you are indexing at ...
-  //idxDate = This is the timestamp you are indexing the idxData at. Should be in UTC Unix, ms (or seconds, could detect...)
+const timeLog = (gun) => (idxID, changeObj) =>{
+  //idxID = Should be a dataNode soul(or any soul that you want to log edits on)
+  //changeObj = partial update of what is being 'put'
   let root = gun.back(-1)
-  let tsoul = 'timeLog>' + idxID
-
-  let t = granularDate(new Date())
-  t = [tsoul].concat(t)
-
-  // Working example of original modified slightly. Will later work this into a loop.
-  let milliStr = t.join(':')
-  let milli = ify({}, milliStr)
-  for (const key in logObj) {// put data in
-    milli[key] = logObj[key];
-  }
-  let tmp = t.pop()
-
-  let sec = ify({}, t.join(':'))
-  sec[tmp] = milli
-  tmp = t.pop()
-
-  let min = ify({}, t.join(':'));
-  min[tmp] = sec;
-  tmp = t.pop();
-
-  let hour = ify({}, t.join(':'))
-  hour[tmp] = min
-  tmp = t.pop()
-
-  let day = ify({}, t.join(':'))
-  day[tmp] = hour
-  tmp = t.pop()
-
-  let month = ify({}, t.join(':'))
-  month[tmp] = day
-  tmp = t.pop()
-
-  let year = ify({}, t.join(':'))
-  year[tmp] = month
-  tmp = t.pop()
+  let soulObj = parseSoul(idxID)
+  let idxSoul = makeSoul(Object.assign({}, soulObj,{':':true}))
+  let user = root.user()
+  let pub = user && user.is && user.is.pub || false
+  let idxDate = new Date().getTime()
   
-  let node = ify({}, t.join(':'))
-  node[tmp] = year
-  
-  root.put.call(root, node, tsoul) //put data at index
-    
+  let logObj = {who:pub,what:changeObj,when:idxDate}
+
+  root.get(idxSoul).get('tail').get(function(msg, ev) {
+    let lastEdit = msg.put
+    ev.off()
+    if (lastEdit === undefined){//new object
+      root.get(idxSoul).put({head:idxDate,tail:idxDate})
+    }
+    let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastEdit}))
+    let nextSoul = makeSoul(Object.assign({},soulObj,{':':idxDate}))
+    Object.assign(logObj,{prev:{'#':lastSoul}})
+    root.get(idxSoul).put({tail:idxDate})//new tail
+    root.get(lastSoul).put({next:{'#':nextSoul}})//old tail, update next
+    root.get(nextSoul).put(logObj)//put data and prev in new block
+  })
 }
 
-const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,index,UTCoffset) => {//need to add a filter so it only matches a certain item
+const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCoffset) => {//need to add a filter so it only matches a certain item
   //UTCoffset is in hours that you want to interpret the start and stop dates
   let begin,end,dateShift
-  index = (index) ? true : false
 
   if(UTCoffset !== undefined && !isNaN(UTCoffset*1)){
     let thisTz = new Date()
@@ -185,18 +147,22 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,index
     dateShift = 0
   }
 
-  if (startDate && startDate instanceof Date){ 
+  if (startDate && startDate instanceof Date && dateShift){ 
     let correctedDate = granularDate(startDate)
     correctedDate[4] += dateShift
-    begin = newDate(granularToUnix(correctedDate))
+    begin = new Date(granularToUnix(correctedDate))
+  }else if (startDate && startDate instanceof Date){ 
+    begin = startDate
   }else if (startDate){ 
     console.warn('Warning: Improper start Date used for .range()')
   }
 
-  if (stopDate && stopDate instanceof Date){ 
+  if (stopDate && stopDate instanceof Date && dateShift){ 
     let correctedDate = granularDate(stopDate)
     correctedDate[4] += dateShift
-    end = newDate(granularToUnix(correctedDate))
+    end = new Date(granularToUnix(correctedDate))
+  }else if (stopDate && stopDate instanceof Date){ 
+    end = stopDate
   }else if (stopDate){ 
     console.warn('Warning: Improper start Date used for .range()')
   }
@@ -204,131 +170,100 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,index
   if(resultOrder && resultOrder !== '<' && resultOrder !== '>'){
     console.warn('Invalid Result Order. "<": returns array with newest to oldest, ">" returns array with oldest to newest')
   }
-
-  if(!index){
-    resultOrder = '>'
-  }
   
   if(!(cb instanceof Function)){
     console.warn('must specify a Callback function to return your data')
   }
 
   let query = newQueryObj(cb,begin,end,items,resultOrder)//this needs a filter option
-  let soul = (index) ? 'timeIndex>' + idxID : 'timeLog>' + idxID
-  traverse(gun, soul, query)
+  let soul = makeSoul(Object.assign({},parseSoul(idxID),{':':true}))
+  if(!begin && !end){//getting ALL, don't traverse, just get all from the index soul
+    gun.get(soul).get(function(msg,eve){
+      eve.off()
+      let data = msg.put
+      for (const soul in data) {
+        if(['_','head','tail'].includes(soul))continue
+        const ts = data[soul];
+        if(ts){
+          query.result.push(soul)
+        }
+      }
+      query.dumpResult()
+    })
+  }else{//some sort of bounds, so traverse
+    //work from direction specified by user
+    let headOrTail = (query.traverse === 'prev') ? 'tail' : 'head'
+    let highOrLow = (query.traverse === 'prev') ? 'high' : 'low'
+    let Infin = (query.traverse === 'prev') ? Infinity : -Infinity
+    if(query.range[highOrLow] === Infin){
+      console.log(query.range,highOrLow)
+      gun.get(soul).get(headOrTail).get(function(msg,eve){
+        eve.off()
+        let blockTime = msg.put
+        let traverseStart = makeSoul(Object.assign({},parseSoul(idxID),{':':blockTime}))
+        traverseIndex(gun,traverseStart,query)
+      })
+    }else{
+      let bt = getBlockTime(query.range[highOrLow])
+      console.log(bt,query.range,highOrLow)
+      let traverseStart = makeSoul(Object.assign({},parseSoul(idxID),{':': bt}))
+      traverseIndex(gun,traverseStart,query)
+    }
+  }
 }
 
-
-function withinRange(checkRange, startRange, stopRange) {
-  // If startDate and stopDate are provided, check within bounds
-  //console.log(checkRange, startRange, stopRange)
-
-  if (startRange && stopRange)
-    if (checkRange >= startRange && checkRange <= stopRange)
-      return true
-    else
-      return false
-
-  // If startDate only provided
-  if (startRange && startRange <= checkRange) {
-    return true
-  }
-
-  // if stopDate only provided
-  if (stopRange && stopRange >= checkRange) {
-    return true
-  }
-
-  return false
-}
-
-function traverse(gun, soul, qObj, depth) {
+function traverseIndex(gun, soul, qObj) {
   var root = gun.back(-1)
-  let type = soul.split('>')[0]
   console.log('traverse', soul)
-
   root.get(soul).get(function(msg, ev) {
     var timepoint = msg.put
     ev.off()
     if (!timepoint)
       return
-
-    if (!depth){
-      depth = 0
-    }
     // Retrieve all timepoint keys within range.
-    var low = qObj.range.low[depth]
-    var high = qObj.range.high[depth]
+    var low = qObj.range.low
+    var high = qObj.range.high
 
-    var keys = []
-    let tp
-    let unix
-    if(depth === 7){
-      tp = soul.split(':').slice(1)
-      unix = granularToUnix(tp)
-      qObj.result[unix] = {}
-    }
-    for (var key of Object.keys(timepoint)) {
-      if (key === '_'){
-        continue
-      }
-      if(depth < 7){//keys will be more timepoints
-        if (!withinRange(key, low, high)){
-          continue
-        }
-        keys.push(key)
-      }else{//keys will be data and values are t/f
-        if(type === 'timeIndex'){
-          if(timepoint[key]){//if not falsy
-            if(!Array.isArray(qObj.result[unix]))qObj.result[unix] = []
-            qObj.result[unix].push(key)
-            // if (Object.values(qObj.result).length >= qObj.max) {
-            //   //this branch has more keys than what was requested
-            //   break
-            // }
-          }
-        }else{
-          qObj.result[unix][key] = timepoint[key]
-        }
-      }
-    }
-
-    //console.log(qObj)
-    if(depth < 7){// Recurse to find timepoint souls
-      // We already have the amount we asked for, exit from query
-      if (Object.keys(qObj.result).length >= qObj.max) {
-        //another branch has added items to make it to .max, stop looking down this branch
-        return
-      }
-      if (qObj.rangeOrder === '>'){
-        keys.sort(function(a, b){return a - b})
-      }else{
-        keys.sort(function(a, b){return b - a})
-      }
-      depth++
-      for (var tpKey of keys) {
-        let nextSoul = soul + ':' + tpKey
-        setChainValue(nextSoul.split(':').slice(0,-1),1,qObj.pending)
-        setTimeout(traverse,1,gun,nextSoul, qObj, depth)//otherwise doesn't work on second call
-      }
+    let order = Object.entries(timepoint)
+    if (qObj.rangeOrder === '>'){
+      order.sort(function(a, b){return a[1] - b[1]})
     }else{
-      setChainValue(soul.split(':'),1,qObj.pending)
-      let done = chainFinished(soul.split(':'),qObj.pending)
-      // We already have the amount we asked for, exit from getRange()
-      if (Object.values(qObj.result).length >= qObj.max) {
-        qObj.dumpResult()
-        qObj.done = function(){}//wipe out cb in case it tries to fire again
-        //done
-        return
-      }else{
-        if(done){
-          qObj.dumpResult()
-          qObj.done = function(){}//wipe out cb in case it tries to fire again
-        }
+      order.sort(function(a, b){return b[1] - a[1]})
+    }
+    for (const [soul,ts] of order) {
+      if(['_','prev','next'].includes(soul))continue
+      console.log(ts,low,high)
+      if(ts && ts >= low && ts <= high && qObj.result.length < qObj.max){
+        qObj.result.push(soul)
       }
+    }
+    let adjacentSoul = timepoint[qObj.traverse]
+    if(adjacentSoul === null){//ran out of blocks to traverse
+      qObj.dumpResult()
+      return
+    }
+    let adjacentBlockTime = getBlockTime(parseSoul(adjacentSoul)[':'])
+    let adjacentInBounds
+    if(qObj.traverse === 'prev'){
+      adjacentInBounds = ( (adjacentBlockTime + 86400000) > low ) ? true : false //blocks are one unix day, can data in block be in bounds of `low`
+    }else{
+      adjacentInBounds = ( adjacentBlockTime < high ) ? true : false 
+    }
+    if(adjacentInBounds && qObj.result.length < qObj.max){//we need to traverse
+      traverseIndex(gun,adjacentSoul,qObj)
+      //setTimeout(traverseIndex,1,gun,nextSoul, qObj)//otherwise doesn't work on second call?
+    }else{//we are done, return result
+      qObj.dumpResult()
+      return
     }
   })
 }
+
+const buildFromLog = gun => (idxID,cb,atTime) => {
+  //todo
+}
+
+
 
 
 //util suff

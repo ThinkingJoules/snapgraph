@@ -36,6 +36,7 @@ const{getValue,
     getAllColumns,
     buildPermObj,
     makeSoul,
+    parseSoul,
     rand
 } = require('./util')
 /*
@@ -56,18 +57,7 @@ column: 1000
 group: 100
 
 */
-/* legend
-    {!: base id
-    #: label/table/nodeType id
-    >: relation id
-    .: prop id
-    $: instance id
-    ^: group name
-    *: pubkey
-    /: scope
-    ?: scope string}
 
-    */
 
 //GBASE CHAIN COMMANDS
 const makenewBase = gun => (alias, basePermissions, baseID) =>{
@@ -91,13 +81,13 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
                 
             }
         })
+        let adminID = rand(5)
+        let anyID = rand(5)
         const putRest = () =>{
-            gun.get(baseID + '|group/admin').put({[pub]:true})
-
             let perms = buildPermObj('base',pub,basePermissions)
             gun.get(makeSoul({'!':baseID,'|':true})).put(perms)
-            gun.get(makeSoul({'!':baseID,'^':true})).put({'admin': true, 'ANY': true})
-            gun.get(makeSoul({'!':baseID,'^':'ANY','|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
+            gun.get(makeSoul({'!':baseID,'^':true})).put({[adminID]: 'admin', [anyID]: 'ANY'})
+            gun.get(makeSoul({'!':baseID,'^':anyID,'|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
             gun.get('GBase').put({[baseID]: true})
             gun.get(makeSoul({'!':baseID,'%':true})).put(newBaseConfig({alias}))
         }
@@ -108,58 +98,51 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
         return e
     }
 }
-const makenewNodeType = (gun, gb) => (path) => (tname, pname)=>{
+const makenewNodeType = (gun, gb) => (path) => (configObj)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let tconfig = newTableConfig({alias: tname, sortval: nextSortval(gb,path), type:tableType})
+        let tconfig = newTableConfig(configObj)
         checkConfig(newTableConfig(), tconfig)
         checkUniqueAlias(gb, cpath, tconfig.alias)
-        let pconfig = newColumnConfig({alias: pname})
         let tID = rand(6)
-        let pID = rand(6)
         let tList = '#' + tID //need to prepend # to show this ID is a nodeType not a relationType('-')
         gun.get(makeSoul({'!':path,'#':tID,'%':true})).put(tconfig)
-        gun.get(makeSoul({'!':path,'#':tID,'.':pID,'%':true})).put(pconfig)
         gun.get(makeSoul({'!':path})).put({[tList]: true})
-        gun.get(makeSoul({'!':path,'#':tID})).put({[pID]: true})
         return nextT
     }catch(e){
         console.log(e)
         return e
     }
 }
-const makeaddProp = (gun, gb) => (path, config) => (pname, type)=>{
+const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
     try{
+        let {b,t,rt} = parseSoul(path)
         let cpath = configPathFromChainPath(path)
         let pID = rand(6)
         let pconfig
         if(config){
-            config = Object.assign({alias: pname, GBtype: type, sortval: nextSortval(gb,path)}, config)
+            config = Object.assign({alias: pname, GBtype: propType, sortval: nextSortval(gb,path)}, config)
             pconfig = newColumnConfig(config)
         }else{
-            pconfig = newColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
+            pconfig = newColumnConfig({alias: pname,propType, sortval: nextSortval(gb,path)})
         }
         checkConfig(newColumnConfig(), pconfig)
         checkUniqueAlias(gb,cpath,pconfig.alias)
-        gun.get(makeSoul({'!':path,'#':tID,'.':pID,'%':true})).put(pconfig)
-        gun.get(makeSoul({'!':path,'#':tID})).put({[pID]: true})
+        gun.get(makeSoul({b,t,rt,'.':pID,'%':true})).put(pconfig)
+        gun.get(makeSoul({b,t,rt})).put({[pID]: true})
         return pID
     }catch(e){
         console.log(e)
         return false
     }
 }
-const makenewNode = (edit) => (path) => (alias, data, cb)=>{
+const makenewNode = (edit) => (path) => (data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        if(alias === undefined || typeof alias === 'object'){
-            let err = 'You must specify an alias for this column, you supplied: '+ alias
-            throw new Error(err)
-        }
-        let tpath = path
+        let {b,t,rt} = parseSoul(path)
         let id = rand(10)
-        let fullpath = tpath + '/' + id
-        let call = edit(fullpath,true,alias)
+        let fullpath = makeSoul({b,t,rt,'$':id})
+        let call = edit(fullpath,true)
         call(data, cb)
     }catch(e){
         cb.call(this, e)
@@ -230,21 +213,16 @@ const makeconfig = (gb, handleConfigChange, handleInteractionConfigChange) => (p
         return false
     }
 }
-const makeedit = (gun,gb,cascade,timeLog,timeIndex,getCell) => (path,newRow,newAlias,fromCascade,_alias) => (editObj, cb)=>{
+const makeedit = (gun,gb,cascade,timeLog,timeIndex,getCell) => (path,newRow,newAlias,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        newRow = (newRow) ? true : false
-        let [base,tval,r,li,lir] = path.split('/')
-        let eSoul
-        let {type} = getValue([base,'props',tval], gb)
-        if(type === 'static'){
-            eSoul = [base,tval,'p0'].join('/')
-        }else{
-            eSoul = [base,tval].join('/')
-        }
+        newRow = !!newRow
+        let {b,t,rt} = parseSoul(path)
+        let [tval,r,li,lir] = path.split('/')
+        let eSoul = makeSoul({b,t,rt})
+        
         const runEdit = (verifiedPath) =>{
-            let [base,tval,r,li,lir] = verifiedPath.split('/')
-            let tpath = configPathFromChainPath([base,tval].join('/'))
+            let tpath = configPathFromChainPath(eSoul)
             let ppath = tpath.slice()
             ppath.push('props')
             let cols = getValue(ppath, gb)
@@ -259,16 +237,7 @@ const makeedit = (gun,gb,cascade,timeLog,timeIndex,getCell) => (path,newRow,newA
                     throw new Error(err)
                 }
             }
-            if(type === 'static'){
-                handleStaticDataEdit(gun,gb,cascade,timeLog,timeIndex,verifiedPath,newRow,newAlias,fromCascade,putObj,cb)
-            }else if (type === 'interaction' || (type === 'transaction' && li !== 'li') ){
-                handleInteractionDataEdit(gun,gb,cascade,timeLog,timeIndex,getCell,verifiedPath,newRow,newAlias,fromCascade,putObj, cb)
-            }else if (type === 'transaction' && li === 'li'){
-                handleLIDataEdit(gun,gb,cascade,timeLog,verifiedPath,newRow,fromCascade,putObj, cb)
-            }else{
-                throw new Error('Cannot determine type of table instance you are editing.')
-            }
-    
+            handleStaticDataEdit(gun,gb,cascade,timeLog,timeIndex,verifiedPath,newRow,newAlias,fromCascade,putObj,cb)
         }
         const checkExistence = (soul)=>{
             gun.get(eSoul).get(soul).get(function(msg,eve){
@@ -284,29 +253,7 @@ const makeedit = (gun,gb,cascade,timeLog,timeIndex,getCell) => (path,newRow,newA
             })
             
         }
-        if(_alias){
-            gun.get(eSoul).get(function(msg,eve){
-                let node = msg.put
-                eve.off()
-                let foundSoul
-                for (const soul in node) {
-                    if(soul === '_')continue
-                    const value = node[soul];
-                    if(String(r) === String(value)) {
-                        if(!newRow){//check existence
-                            checkExistence(soul)
-                        }else if(newRow){
-                            runEdit(soul)
-                        }
-                        foundSoul = true
-                        break
-                    }
-                }
-                if(!foundSoul){
-                    throw new Error('Cannot find RowID for given path')
-                }
-            })
-        }else if(!newRow){
+        if(!newRow){
             checkExistence(path)
         }else if(newRow || fromCascade){
             runEdit(path)
@@ -665,54 +612,61 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTES
     }
     handleTableImportPuts(gun, path, result, cb)
 }
-const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerChainRebuild) => (path) => (tsv, tAlias,cb)=>{
+const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, tAlias, cb)=>{
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
     try{
+        let {b} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
         let cpath = configPathFromChainPath(path)
         checkUniqueAlias(gb,cpath, tAlias)
         let dataArr = tsvJSONgb(tsv)
-        let tval = findNextID(gb,path)
-        let nextSort = nextSortval(gb,path)
-        let tconfig = newTableConfig({alias: tAlias, sortval: nextSort})
-        gun.get(path + '/' + tval + '/config').put(tconfig)
+        let t = rand(6)
+        let tconfig = newTableConfig({alias: tAlias})
+        gun.get(makeSoul({b,t,'%':true})).put(tconfig)
         let result = {}, ti = {}, tl = {}
         let headers = dataArr[0]
-        let headerPvals = handleImportColCreation(gun, gb, path, tval, headers, dataArr[1], true)
+        let headerPvals = handleImportColCreation(gun, gb, b, t, headers, dataArr[1], true)
         for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
             const rowArr = dataArr[i];
-            let rowsoul
-            rowsoul =  path + '/' + tval + '/r' + Gun.text.random(6)
+            let r = rand(10)
+            let rowsoul = makeSoul({b,t,r})
             ti[rowsoul] = true
             tl[rowsoul] = {}
-            if(rowArr[0]){//skip if HID is blank
-                for (let j = 0; j < rowArr.length; j++) {
-                    const value = rowArr[j];
-                    if(value !== ""){//ignore empty strings only
-                        const header = headers[j]
-                        const headerPval = headerPvals[header]
-                        tl[rowsoul][headerPval] = value
-                        if(typeof result[headerPval] !== 'object'){
-                            result[headerPval] = {}
-                        }
-                        let GBidx = {}
-                        GBidx[rowsoul] = value
-                        result[headerPval] = Object.assign(result[headerPval], GBidx)
+            for (let j = 0; j < rowArr.length; j++) {
+                const value = rowArr[j];
+                if(value !== ""){//ignore empty strings only
+                    const header = headers[j]
+                    const headerPval = headerPvals[header]
+                    tl[rowsoul][headerPval] = value
+                    if(typeof result[rowsoul] !== 'object'){
+                        result[rowsoul] = {}
                     }
+                    result[rowsoul][headerPval] = value
                 }
             }
         }
-        gun.get(path + '/t').put({[tval]: 'static'})
-        let tpath = path + '/' + tval
-        timeIndex([path,tval,'created'].join('/'),ti,new Date())
-        handleTableImportPuts(gun, tpath, result, cb)
+        let tval = '#' + t
+        let tpath = makeSoul({b,t})
+        gun.get(tpath).put({[tval]: true})
+
+
+        timeIndex(tpath,ti,new Date())
+
+
+        handleTableImportPuts(gun, result, cb)
+
+
+
         for (const soul in tl) {
             const logObj = tl[soul];
             timeLog(soul,logObj)
         }
-        triggerChainRebuild(tpath)
+
+
+        triggerConfigUpdate(tpath)
     }catch(e){
         console.log(e)
+        cb.call(this,e)
         return e
     }
 }

@@ -74,12 +74,7 @@ function configSoulFromChainPath(thisPath){
 
 }
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
-    let first = name[0]
-    let rest = name.slice(1)
     let out = false
-    if(first === 'p' && !isNaN(rest *1)){//if name is a pval just return the name
-        return name
-    }
     for (const key of Object.keys(obj)) {
         const alias = obj[key].alias;
         if(alias === name){
@@ -87,12 +82,7 @@ const findID = (obj, name) =>{//obj is level above .props, input human name, ret
             break
         }
     }
-    if(out){
-        return out
-    }else{
-        let err = 'Cannot find column with name: '+ pval
-        throw new Error(err)
-    }
+    return out
 }
 const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
     for (const key in obj) {
@@ -706,7 +696,13 @@ function getAllColumns(gb, tpath,bySortval){
 }
 
 function handleStaticDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, newAlias, fromCascade, editObj, cb){
-    newRow = (newRow) ? true : false
+    newRow = !!newRow
+
+
+    //update
+
+
+
     let [base,tval] = path.split('/')
     let validatedObj = validateStaticData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
     //console.log(validatedObj)
@@ -1195,6 +1191,7 @@ function formatQueryResults(results, qArr, colArr){//will export this for as a d
     }
 }
 function buildPermObj(type, curPubKey, usersObj,checkOnly){
+    curPubKey = curPubKey || false
     let types = ['base','table','row','group']
     usersObj = usersObj || {}
     if(!types.includes(type)){
@@ -1238,7 +1235,7 @@ function makeSoul(argObj){
         if(val){
             soul += sym
             if(val === 'new' && length[sym])val=rand(length[sym])
-            if(typeof val === 'string'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
+            if(typeof val === 'string' || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
                 soul += val
             }
         }
@@ -1246,13 +1243,14 @@ function makeSoul(argObj){
     return soul
 }
 function parseSoul(soul){
+    //first character of soul MUST be some symbol, or this won't work
     let alias = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g'}
     let out = {}
     let last = 0
-    let curSym = ['!']
+    let curSym = [soul[0]]
     let idx
     for (const char of soulSymbolOrder) {
-        if(char === '!')continue
+        if(char === soul[0])continue
         idx = soul.indexOf(char)
         if(idx !== -1){
             toOut()
