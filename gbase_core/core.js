@@ -52,7 +52,8 @@ const {
     formatQueryResults,
     hasColumnType,
     makeSoul,
-    parseSoul
+    parseSoul,
+    rand
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -95,14 +96,12 @@ const showgsub = makeshowgsub(gsubsParams)
 const showgunsub = makeshowgunsub(gunSubs)
 
 const {makesolve,
-    makegetLinks,
     findTruth,
     parseTruthStr,
     regexVar,
     evaluateAllFN
 } = require('../function_lib/function_utils');
-const getLinks = makegetLinks(gb,getCell)
-const solve = makesolve(getLinks)
+const solve = makesolve(gb, getCell)
 
 
 const {timeIndex,
@@ -124,13 +123,13 @@ const gunToGbase = (gunInstance,baseID) =>{
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
     edit = makeedit(gun,gb,cascade,tLog,tIndex)
-    newNode = makenewNode(edit)
+    newNode = makenewNode(gun,gb,cascade,tLog,tIndex)
     linkRowTo = makelinkRowTo(gun,gb,getCell)
     unlinkRow = makeunlinkRow(gun,gb)
     importData = makeimportData(gun, gb)
     importNewTable = makeimportNewTable(gun,gb,tLog,tIndex,triggerConfigUpdate)
     associateTables = makeassociateTables(gun,gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,cache,gunSubs,addProp,cascade,solve,tLog)
+    handleConfigChange = makehandleConfigChange(gun,gb,gunSubs,getCell,addProp,cascade,solve,tIndex,tLog)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(gb,handleConfigChange)
     qIndex = queryIndex(gun)
@@ -215,7 +214,12 @@ function startGunConfigSubs(baseID){
                         let data = Gun.obj.copy(gundata)
                         delete data['_']
                         let configpath = configPathFromSoul(id)
-                        setMergeValue(configpath,data,gb)
+                        let flip = {}
+                        for (const id in data) {
+                            const alias = data[id];
+                            flip[alias] = id
+                        }
+                        setMergeValue(configpath,flip,gb)
                     })
                 }
             }
@@ -234,7 +238,7 @@ function setupTypesSubs(baseID){
             if(value){
                 let {t,rt} = parseSoul(tval)
                 handleGunSubConfig(makeSoul({b:baseID,t,rt,'%':true}))//will sub if not already subed and merge in gb
-                setupPropSubs(tval)
+                setupPropSubs(makeSoul({b:baseID,t,rt}))
             }
         }
     })
@@ -327,9 +331,10 @@ function nodeType(label){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct tableChainOpt
     let base = this._path
+    let {b} = parseSoul(this._path)
     let id
-    let tvals = gb[base].props
-    let check = getValue([base,'props',label],gb)
+    let tvals = gb[b].props
+    let check = getValue([b,'props',label],gb)
     if(check !== undefined){
         id = label
     }else{
@@ -386,34 +391,29 @@ function prop(prop){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct columnChainOpt
     let path = this._path
-    let {b,t,tr} = parseSoul(path)
+    let {b,t,rt} = parseSoul(path)
     let id
-    let pvals = gb[b].props[t].props
+    let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,rt})),gb)
     let isNode = path.includes('#')
-    let check = (isNode) ? getValue([b,'props',t,'props',prop],gb) : getValue([b,'relations',tr,'props',prop],gb)
-    let ptype
-    if(check !== undefined){
-        ptype = check.propType
-        id = prop
-    }else{
-        for (const pval in pvals) {
-            const {alias, propType} = pvals[pval];
-            if(nodeType === alias){
-                ptype = propType
-                id = pval
-                break
-            }
+    let ptype,dtype
+    for (const pval in pvals) {
+        const {alias, propType, dataType} = pvals[pval];
+        if(prop === alias || prop === pval){
+            ptype = propType
+            dtype = dataType
+            id = pval
+            break
         }
     }
     if(!id){
         throw new Error('Cannot find corresponding ID for prop alias supplied')
     }
     let out
-    let newPath = [path,'.',id].join('')
+    let newPath = makeSoul({b,t,rt,p:id})
     if(isNode){
-        out = propChainOpt(newPath, ptype)
+        out = propChainOpt(newPath, ptype, dtype)
     }else{
-        out = relationPropChainOpt(newPath)
+        out = relationPropChainOpt(newPath, ptype, dtype)
     }
     return out
 }
@@ -454,9 +454,9 @@ function relationChainOpt(_path){
     return {_path, config: config(_path), newRow: newNode(_path), newColumn: addProp(_path), importData: importData(_path),prop}
 }
 
-function propChainOpt(_path, GBtype){
-    let out = {_path, config: config(_path), clearColumn: clearColumn(_path)}
-    if(['string','number'].includes(GBtype)){
+function propChainOpt(_path, propType, dataType){
+    let out = {_path, config: config(_path)}
+    if(['string','number'].includes(dataType) && propType === 'data'){
         out = Object.assign(out,{linkColumnTo: linkColumnTo(_path)})
     }
     return out
@@ -466,19 +466,19 @@ function relationPropChainOpt(_path){
     return out
 }
 function nodeChainOpt(_path){
-    return {_path, edit: edit(_path,false,false,false,_alias), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
+    return {_path, edit: edit(_path,false,false), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
 }
 
 
 //CACHE
 
 function loadRowPropToCache(rowID, pval){
-    let {b,t,tr,r} = parseSoul(rowID)
+    let {b,t,rt,r} = parseSoul(rowID)
     let p = pval
-    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,tr,p}))//rowID will only have one or other
+    let dataType = getDataType(gb,makeSoul({b,t,rt,p}))
     let cpath = cachePathFromRowID(rowID,pval)
-    let propSet = (t) ? makeSoul({b,t,p,r}) : makeSoul({b,tr,p,r})
-    let nodeSoul = (t) ? makeSoul({b,t,r}): makeSoul({b,tr,r})
+    let propSet = makeSoul({b,t,rt,p,r})
+    let nodeSoul = makeSoul({b,t,rt,r})
     let subname = nodeSoul+'+'+p
 
     if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
@@ -502,7 +502,7 @@ function loadRowPropToCache(rowID, pval){
             handleNewRowPropData(rowID,pval,links) //<<
         })
         gunSubs[propSet] = true
-    }else if(!gunSubs[subname] && !lType){
+    }else if(!gunSubs[subname]){
         gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
             eve.off()
             if(msg.put === undefined){
@@ -518,15 +518,39 @@ function loadRowPropToCache(rowID, pval){
 
     }
 }
-function getCell(rowID,pval){//shouldn't need this after reworking
+function getCell(rowID,pval,cb){
+    let {b,t,rt,r} = parseSoul(rowID)
+    let p = pval
+    let dataType = getDataType(gb,makeSoul({b,t,rt,p}))
     let cpath = cachePathFromRowID(rowID,pval)
+    let propSet = makeSoul({b,t,rt,p,r})
+    let nodeSoul = makeSoul({b,t,rt,r})
     let value = getRowPropFromCache(cpath, cache)
-    //let colsub = [base,tval,pval].join('/')
-    if(!gunSubs[cellsub] || value === undefined){
+    if(value === undefined){
         loadRowPropToCache(rowID, pval)
-        return
+        if(dataType === 'set'){
+            gun.get(propSet, function(msg,eve){//check for existence only
+                eve.off()
+                let out = []
+                if(msg.put !== undefined){
+                    for (const soul in msg.put) {
+                        const boolean = msg.put[soul];
+                        if(boolean){
+                            out.push(soul)
+                        }
+                    }
+                }
+                cb.call(this,out)
+            })
+        }else{
+            gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
+                eve.off()
+                let val = (msg.put === undefined) ? null : msg.put
+                cb.call(this,val)
+            })
+        }
     }else{
-        return value
+        cb.call(this,value)
     }
 }
 
@@ -567,9 +591,10 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
             [linkCol,linkColInfo] = findLinkingCol(gb,rowID,path)
             if(linkCol === undefined){throw new Error('Cannot resolve "usedIn" reference')}
             if(linkColInfo.GBtype === 'function'){
-                checkData[path] = getLinks(rowID,linkColInfo.fn,toLi)
+                checkData[path] = getLinks(rowID,linkColInfo.fn)
                 usedInFN[path] = {rows: [rowID], fn: linkColInfo.fn}
             }else{
+                //getCell has changed!
                 let links = getCell(rowID, linkCol)
                 checkData[path] = links
                 usedInFN[path] = {rows: links, fn: linkColInfo.fn}
@@ -713,7 +738,7 @@ function newRowSubCheck(path){//never implemented??
     }
 }
 function reQuerySub(subID,triggers,newRow){
-    let [path,sID] = subID.split('-')
+    let [path,sID] = subID.split('{')
     let {b,t} = parseSoul(path)
     let {columns,range,query,userCB,allRows} = getValue([b,t,subID],gsubsParams)
     let q = makeQobj(path,columns,range,query,userCB,true,sID, true)
@@ -740,7 +765,7 @@ function handleNewRowPropData(rowID,pval,value){
 function setupSub(qObj){
     //subParams will have rows object in it {range: {from,to,idx,items}, type: table,row,li, columns: {p0,p1,etc}, query: [qArr], userCB, allRows}
     let {subID,allRows,allColumns,range,type,columns,query,userCB,arrMap,data,output,needRows} = qObj
-    let [path] = subID.split('-')
+    let [path] = subID.split('{')
     let {b,t} = parseSoul(path)
     let subParams = {userCB,query,allRows,range,columns,type,allColumns,arrMap,last:output}
     console.log('setting up or updating sub: '+ subID)
@@ -918,15 +943,7 @@ const parseRange = (obj,path) =>{
     let [tIndex,from,to,items, relativeTime, __toDate,last__,firstDayOfWeek] = obj.RANGE
     let out = {}
     if(!tIndex){
-
-
-
-        //need to rework this
-        tIndex = [b,t,'created'].join('/') //default is 'created'
-        //need to makes sure all of this works together.
-
-
-
+        tIndex = makeSoul({b,t}) //default is 'created'
     }
     out.index = tIndex
     if((from || to) && (__toDate || last__ || relativeTime))throw new Error('Too many arguments in RANGE. use "from" & "to" OR "toDate" OR "last" OR "relavtiveTime"')
@@ -1137,34 +1154,25 @@ function gatherData(qObj){
     }
 }
 function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
-    let [base,tval,r,li,lir] = path.split('/')
-    let table = [base,tval].join('/')
+    let {b,t,r} = parseSoul
+    let table = makeSoul({b,t})
     let type
     let hasSearch = (qArr.filter(o => o.SEARCH).length) ? true : false
-    let needCols = (!colArr) ? true : false
-    colArr = colArr || getAllColumns(gb,[base,tval].join('/'),true)
-    let allCols = getAllColumns(gb,[base,tval].join('/'))
+    let allCols = getAllColumns(gb,path)
+    colArr = colArr || allCols
     if(!r){
         type = 'table'
-    }else if(r || (r && li && lir)){
-        type = 'row'
-        if(li){
-            allCols = getAllColumns(gb,[base,tval,'li'].join('/'))
-            if(needCols) colArr = getAllColumns(gb,[base,tval,'li'].join('/'),true)
-        }
-    }else{ //(r && li && !lir)
-        type = 'li'
-        allCols = getAllColumns(gb,[base,tval,'li'].join('/'))
-        if(needCols) colArr = getAllColumns(gb,[base,tval,'li'].join('/'),true)
+    }else{
+        type = 'row'   
     }
     let subID
     if(sVal){
-        subID = path + '-' + sVal
+        subID = path + '{' + sVal
     }else{
-        let id = Gun.text.random(4)
-        subID = path + '-' + id
+        let id = rand(4)
+        subID = path + '{' + id
     }
-    let {arrMap,last} = getValue([base,tval,subID],gsubsParams) || {arrMap: false,last:[]}
+    let {arrMap,last} = getValue([b,t,subID],gsubsParams) || {arrMap: false,last:[]}
     return {
         reQuery: (arrMap) ? true : false,
         table,

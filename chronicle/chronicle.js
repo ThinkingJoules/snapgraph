@@ -2,7 +2,7 @@
 const {getValue, setValue, makeSoul, parseSoul,configPathFromChainPath} = require('../gbase_core/util')
 function getBlockTime(unix){
   let date = new Date(unix)
-  console.log(date.toString())
+  //console.log(date.toString())
   let granArr = granularDate(date)
   let i = 0
   let out = []
@@ -17,7 +17,7 @@ function getBlockTime(unix){
     i++
   }
   let mid = new Date(Date.UTC(...out))
-  console.log(unix, granArr, mid.toString())
+  //console.log(unix, granArr, mid.toString())
 
   return mid.getTime()
 }
@@ -75,7 +75,7 @@ const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
   if(idxDate instanceof Date)idxDate = idxDate.getTime()
   let correctBlock = getBlockTime(idxDate)
   const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
-  console.log(correctBlock,correctSoul)
+  //console.log(correctBlock,correctSoul)
 
   root.get(idxSoul).get(idxData).get(function(msg, ev) {
     let prevIdx = msg.put

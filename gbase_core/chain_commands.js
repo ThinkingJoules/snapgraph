@@ -10,9 +10,6 @@ const{newBaseConfig,
     newListItemColumnConfig,
     checkConfig
 } = require('./configs')
-const{newQueryObj,
-    query
-} = require('./query')
 
 const{getValue,
     configPathFromChainPath,
@@ -26,9 +23,7 @@ const{getValue,
     nextSortval,
     getColumnType,
     hasColumnType,
-    handleStaticDataEdit,
-    handleInteractionDataEdit,
-    handleLIDataEdit,
+    handleDataEdit,
     addAssociation,
     removeAssociation,
     getRetrieve,
@@ -37,7 +32,8 @@ const{getValue,
     buildPermObj,
     makeSoul,
     parseSoul,
-    rand
+    rand,
+    makePutObj
 } = require('./util')
 /*
 ID Length (using A-Za-z0-9)
@@ -72,22 +68,16 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
         if(invalidID.test(baseID)){
             throw new Error('baseID must only contain letters and numbers')
         }
-        gun.get(makeSoul({'!':baseID,'|':'super'})).put({[pub]:true},function(ack){
-            if(ack.err){
-                console.log(ack.err)
-            }else{
-                gun.get(makeSoul({'!':baseID,'^':'admin','|':true})).put(buildPermObj('group'))
-                
-                
-            }
-        })
-        let adminID = rand(5)
-        let anyID = rand(5)
+        gun.get(makeSoul({'!':baseID,'|':'super'})).put({[pub]:true})
+        
         const putRest = () =>{
             let perms = buildPermObj('base',pub,basePermissions)
+            let adminID = rand(5)
+            let anyID = rand(5)
             gun.get(makeSoul({'!':baseID,'|':true})).put(perms)
             gun.get(makeSoul({'!':baseID,'^':true})).put({[adminID]: 'admin', [anyID]: 'ANY'})
             gun.get(makeSoul({'!':baseID,'^':anyID,'|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
+            gun.get(makeSoul({'!':baseID,'^':adminID,'|':true})).put(buildPermObj('group'))
             gun.get('GBase').put({[baseID]: true})
             gun.get(makeSoul({'!':baseID,'%':true})).put(newBaseConfig({alias}))
         }
@@ -136,14 +126,14 @@ const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
         return false
     }
 }
-const makenewNode = (edit) => (path) => (data, cb)=>{
+const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path) => (data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let {b,t,rt} = parseSoul(path)
         let id = rand(10)
-        let fullpath = makeSoul({b,t,rt,'$':id})
-        let call = edit(fullpath,true)
-        call(data, cb)
+        let fullpath = makeSoul({b,t,rt,r:id})
+        let pObj = makePutObj(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
+        pObj.process()//starts a chain of commands that will put data in to gun or error (all or nothing)
     }catch(e){
         cb.call(this, e)
         console.log(e)
@@ -196,69 +186,35 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
         return
     }
 }
-const makeconfig = (gb, handleConfigChange, handleInteractionConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
+const makeconfig = (gb, handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        let [base,tval] = path.split('/')
-        console.log(base,tval,gb)
-        let {type} = (tval) ? getValue([base,'props',tval],gb) : {type: "static"}
-        if(type === 'static'){//static tables, or base config
-            handleConfigChange(configObj, path, backLinkCol,cb)
-        }else{//interaction tables or LI/LIcols configs
-            handleInteractionConfigChange(configObj,path,cb)
-        }
+        
+        handleConfigChange(configObj, path, backLinkCol,cb)
+        
     }catch(e){
         console.log(e)
         cb.call(this,e)
         return false
     }
 }
-const makeedit = (gun,gb,cascade,timeLog,timeIndex,getCell) => (path,newRow,newAlias,fromCascade) => (editObj, cb)=>{
+const makeedit = (gun,gb,cascade,timeLog,timeIndex) => (path,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        newRow = !!newRow
-        let {b,t,rt} = parseSoul(path)
-        let [tval,r,li,lir] = path.split('/')
-        let eSoul = makeSoul({b,t,rt})
-        
-        const runEdit = (verifiedPath) =>{
-            let tpath = configPathFromChainPath(eSoul)
-            let ppath = tpath.slice()
-            ppath.push('props')
-            let cols = getValue(ppath, gb)
-            let putObj = {}
-            //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
-            for (const palias in editObj) {
-                let pval = findID(cols, palias) 
-                if (pval) {
-                    putObj[pval] = editObj[palias]; 
-                }else{
-                    let err = ' Cannot find column with name: '+ palias +'. Edit aborted'
-                    throw new Error(err)
-                }
-            }
-            handleStaticDataEdit(gun,gb,cascade,timeLog,timeIndex,verifiedPath,newRow,newAlias,fromCascade,putObj,cb)
-        }
-        const checkExistence = (soul)=>{
-            gun.get(eSoul).get(soul).get(function(msg,eve){
-                let value = msg.put
-                eve.off()
-                if(value === undefined){
-                    throw new Error('RowID does not exist, must create a new one through ".newRow()" api.')
-                }else if(value === false){//check existence
-                    throw new Error('RowID is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
-                }else{
-                    runEdit(soul)
-                }    
-            })
-            
-        }
-        if(!newRow){
-            checkExistence(path)
-        }else if(newRow || fromCascade){
-            runEdit(path)
-        }
-        
+        let {b,t,rt,r} = parseSoul(path)
+        let eSoul = makeSoul({b,t,rt,':':true})//look for a created time for this id, might be archived.
+        gun.get(eSoul).get(path).get(function(msg,eve){
+            let value = msg.put
+            eve.off()
+            if(value === undefined){
+                throw new Error('RowID does not exist, must create a new one through ".newRow()" api.')
+            }else if(value === false){//check existence
+                throw new Error('RowID is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
+            }else{
+                let pObj = makePutObj(gun,gb,cascade,timeLog,timeIndex,path,false,fromCascade,editObj,cb)
+                pObj.process()
+            }    
+        })
     }catch(e){
         console.log(e)
         cb.call(this, e)
@@ -392,18 +348,14 @@ const makeretrieveQuery = (gb,setupQuery) => (path) => (cb, colArr, queryArr) =>
     }
 }
 const makesubscribeQuery = (gb,setupQuery) => (path) => (cb, colArr, queryArr,subID) =>{
-    try{//path = base/tval CAN ONLY QUERY TABLES
-        let [base,tval] = path.split('/')
-        let {props} = getValue([base,'props',tval],gb)
+    try{//path = !# CAN ONLY QUERY TABLES
+        let {props} = getValue(configPathFromChainPath(path),gb)
         let pvalArr = []
-        if(!colArr){
-            colArr = getAllColumns(gb,path)
-            colArr.sort((a,b)=>a.slice(1)-b.slice(1))
-        }
+        colArr = colArr || getAllColumns(gb,path)
+        queryArr = queryArr || []
         for (const palias of colArr) { 
             pvalArr.push(findID(props, palias))
         }
-        queryArr = queryArr || []
         setupQuery(path,pvalArr,queryArr,cb,true,subID)
     }catch(e){
         console.warn(e)
@@ -613,17 +565,17 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTES
     handleTableImportPuts(gun, path, result, cb)
 }
 const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, tAlias, cb)=>{
-    //gbase[base].importNewTable(rawTSV, 'New Table Alias')
+    //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
     try{
         let {b} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
         let cpath = configPathFromChainPath(path)
         checkUniqueAlias(gb,cpath, tAlias)
-        let dataArr = tsvJSONgb(tsv)
+        let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
         let t = rand(6)
         let tconfig = newTableConfig({alias: tAlias})
         gun.get(makeSoul({b,t,'%':true})).put(tconfig)
-        let result = {}, ti = {}, tl = {}
+        let result = {}, ti = {}
         let headers = dataArr[0]
         let headerPvals = handleImportColCreation(gun, gb, b, t, headers, dataArr[1], true)
         for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
@@ -631,39 +583,28 @@ const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (pa
             let r = rand(10)
             let rowsoul = makeSoul({b,t,r})
             ti[rowsoul] = true
-            tl[rowsoul] = {}
             for (let j = 0; j < rowArr.length; j++) {
                 const value = rowArr[j];
                 if(value !== ""){//ignore empty strings only
                     const header = headers[j]
                     const headerPval = headerPvals[header]
-                    tl[rowsoul][headerPval] = value
-                    if(typeof result[rowsoul] !== 'object'){
-                        result[rowsoul] = {}
-                    }
+                    if(typeof result[rowsoul] !== 'object')result[rowsoul] = {}
                     result[rowsoul][headerPval] = value
                 }
             }
         }
         let tval = '#' + t
         let tpath = makeSoul({b,t})
-        gun.get(tpath).put({[tval]: true})
-
-
-        timeIndex(tpath,ti,new Date())
-
-
-        handleTableImportPuts(gun, result, cb)
-
-
-
-        for (const soul in tl) {
-            const logObj = tl[soul];
-            timeLog(soul,logObj)
+        gun.get(path).put({[tval]: true})//table on base index
+        handleTableImportPuts(gun, result, cb)//put data on each node
+        let now = new Date()
+        for (const newSoul in result) {
+            let put = result[newSoul]
+            timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
+            timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
         }
 
-
-        triggerConfigUpdate(tpath)
+        triggerConfigUpdate(tpath)//fire callback for app code to get new config data.
     }catch(e){
         console.log(e)
         cb.call(this,e)
@@ -686,7 +627,7 @@ const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache) => (path) =>
         for (const rowid in data) {
             const value = data[rowid];
             if (value !== null) {//null means there is no data for that rowid in gun currently
-                out[rowid] = convertValueToType(gb,"", type, rowid)
+                out[rowid] = convertValueToType("", type, rowid)
             }
         }
         console.log(csoul, out)

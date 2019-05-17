@@ -18,7 +18,7 @@ function cachePathFromChainPath(thisPath){
     //valid paths: !, !#, !-, !#.$, !-.$
     if((thisPath.includes('.') && !thisPath.includes('$')))throw new Error('Must specify a row to get this prop')
     let pathArgs = parseSoul(thisPath)
-    let order = ['b','t','tr','r','p']//put r before p
+    let order = ['b','t','rt','r','p']//put r before p
     let depth = []
     for (const arg of order) {
         let hasID = pathArgs[arg]
@@ -26,7 +26,7 @@ function cachePathFromChainPath(thisPath){
             if(arg === 't'){
                 depth.push('nodeTypes')
                 depth.push(hasID)
-            }else if(arg === 'tr'){
+            }else if(arg === 'rt'){
                 depth.push('relations')
                 depth.push(hasID)
             }else{
@@ -47,12 +47,12 @@ function configPathFromSoul(soul){
 function configPathFromChainPath(thisPath){
     //valid paths: !, !#, !-, !^, !#., !-.
     //group is always reference by alias, never by ID
-    let {b,t,tr,p,g} = parseSoul(thisPath)
+    let {b,t,rt,p,g} = parseSoul(thisPath)
     let configpath = [b]
     if(thisPath.includes('#')){//nodeType
         configpath = [...configpath, 'props',t]
     }else if(thisPath.includes('-')){
-        configpath = [...configpath, 'relations',tr]
+        configpath = [...configpath, 'relations',rt]
     }
     if(thisPath.includes('.')){//nodeType
         configpath = [...configpath, 'props',p]
@@ -75,9 +75,9 @@ function configSoulFromChainPath(thisPath){
 }
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
     let out = false
-    for (const key of Object.keys(obj)) {
+    for (const key in obj) {
         const alias = obj[key].alias;
-        if(alias === name){
+        if(String(alias) === String(name) || String(key) === String(name)){
             out = key
             break
         }
@@ -265,119 +265,301 @@ function getRowPropFromCache(propertyPath, obj){
         return obj[propertyPath[0]]
     }
 }
-
-function checkNewRow(gb, path, putObj){
-    let [base,tval,rval,li,lir] = path.split('/')
-    let propsPath
-    if(li === 'li'){//li table
-        propsPath = [base,'props',tval,'li']
-    }else{//top level table
-        propsPath = [base,'props',tval]
+function makePutObj(gun, gb, cascade, timeLog, timeIndex, path, isNew, fromCascade, putObj, cb){
+    let {props} = getValue(configPathFromChainPath(path),gb)
+    let needsCols = []
+    for (const pval in props) {
+        const {enforceUnique,autoIncrement} = props[pval];
+        if (enforceUnique || autoIncrement !== "") {
+            needsCols.push(pval)
+        }
     }
+    return {
+        gun,
+        gb,
+        needsCols,
+        cascade,
+        timeLog,
+        timeIndex,
+        path,
+        cb,
+        fromCascade,
+        putObj,
+        isNew,
+        increment: {}, //pval:{last: fromGun, inc: inc}
+        validatedObj: {},
+        timeIndices: {},
+        sets: {},
+        data: {},
+        uniques: {},
+        pending: {},
+        process: function(){
+            let tProps = configPathFromChainPath(this.path)
+            let {props} = getValue(tProps, this.gb)
+            let coercedPutObj = {}
+            //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
+            for (const palias in this.putObj) {
+                let pval = findID(props, palias) 
+                if (pval) {
+                    coercedPutObj[pval] = this.putObj[palias]; 
+                }else{
+                    let err = ' Cannot find column with name: '+ palias +'. Edit aborted'
+                    throw new Error(err)
+                }
+            }
+            this.putObj = coercedPutObj
+            let toV = {}
+            for (const pval in props) {
+                let input = this.putObj[pval]
+                let pconfig = props[pval]
+                let {required,defaultval,autoIncrement} = pconfig
+                if(input !== undefined 
+                || (required && this.isNew)
+                || defaultval !== null 
+                || autoIncrement !== ""){
+                    this.pending[pval] = true
+                    if(this.isNew){
+                        if(required){
+                            if(input === undefined && defaultval === null && !autoIncrement){
+                                throw new Error('Required field missing: '+ alias)
+                            }
+                        }
+                        if(input === undefined && defaultval !== null){
+                            this.putObj[pval] = defaultval
+                        }
+                    }
+                    toV[pval] = pconfig
+                }
+            }
+            for (const p in toV) {
+                const pcon = toV[p];
+                this.validateProp(p,pcon)
+            }
+        },
+        validateProp: function(pval){
+            let parse = parseSoul(this.path)
+            Object.assign(parse,{p:pval})
+            let pconfig = getValue(configPathFromChainPath(makeSoul(parse)),this.gb)
+            let {enforceUnique,autoIncrement} = pconfig
+            if (enforceUnique || (autoIncrement !== "" && this.putObj[pval] === undefined)){
+                this.handleLookup(pval,pconfig)
+            }else{
+                this.runValidation(pval,pconfig)
+            }
+            
+        },
+        handleLookup: function(pval,pconfig){
+            let {start,inc} = parseIncrement(pconfig.autoIncrement) || {inc:false}
+            let self = this
+            let current = start
+            let {b,t,rt} = parseSoul(this.path)
+            let gun = this.gun
+            let {enforceUnique, alias} = pconfig
+            let soul = makeSoul({b,t,rt,p:pval})
+            let putVal = this.putObj[pval]
+            let error
+            if((inc && this.isNew) || (enforceUnique && putVal !== undefined)){
+                gun.get(soul).get(function(msg,eve){
+                    eve.off()
+                    let list = msg.put
+                    for (const soulOnList in list) {
+                        if (soulOnList.includes('!')) {//is it a soul, could to a regex test for better assurances
+                            const value = list[soulOnList];
+                            if(inc){//this is an incrementing unique pval, we need to find the largest value and then increment that
+                                current = (current <= value) ? value+inc : current
+                            }else if(enforceUnique 
+                            && putVal !== undefined 
+                            && String(value) === String(putVal) 
+                            && soulOnList !== self.path){//other value found on a different soul
+                                error = 'Non-unique value on property: '+ alias
+                                self.cb.call(cb,error)
+                            }
+                        }
+                    }
+                    if(!error){
+                        if(inc){
+                            self.putObj[pval] = current
+                        }
+                        if(enforceUnique){
+                            let uVal
+                            if(inc){
+                                uVal = current
+                            }else{
+                                uVal = putVal
+                            }
+                            self.uniques[soul] = {[self.path]: uVal}
+                        }
+                        self.runValidation(pval,pconfig)
+                    }
+                })
+            }else{
+                delete this.pending[pval]
+                this.checkDone()//nothing to validate, so just see if anything else is left
+            }
+        },
+        runValidation: function(pval, pconfig){
+            let pathObj = parseSoul(this.path)
+            let propPath = makeSoul(Object.assign({},pathObj,{p:pval}))
+            let value = this.putObj[pval]
+            let {propType, dataType, alias, pickOptions} = pconfig
+            let specials = ["source", "target", "prev", "next", "lookup", "function"]//propTypes that can't be changed through the edit API
+
+            if(propType === undefined || dataType === undefined){
+                let err = 'Cannot find prop types for column: '+ alias +' ['+ pval+'].'
+                throw new Error(err)
+            }
+            if(propType === 'date'){
+                let testDate = new Date(value)
+                if(testDate.toString() === 'Invalid Date'){
+                    throw new Error ('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
+                }else{
+                    this.timeIndices[propPath] = testDate.getTime() //make sure it is a number (unix) for storing in db
+                }
+            }else if(dataType === 'set' && !specials.includes(propType)){
+                if(typeof value !== 'object'){
+                    throw new Error('"set" data must be specified using an Object with keys of the value and values of true/false for whether it is part of the set.')
+                }
+                if(propType === 'pickMultiple'){
+                    for (const pick in value) {
+                        const boolean = value[pick];
+                        if(boolean && !pickOptions.includes(value)){//make sure truthy ones are currently valid options
+                            throw new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
+                        }
+                            
+                    }
+
+                }
+                this.sets[propPath] = value
+            }else if(!specials.includes(propType) || this.fromCascade){
+                this.data[pval] = convertValueToType(value,dataType,this.path)//probably uneccessary in most cases, but conversion is probably quicker than checking.            
+            }
+            delete this.pending[pval]
+            this.checkDone()
+        },
+        checkDone: function(){
+            if(Object.keys(this.pending).length === 0){
+                this.done()
+            }
+        },
+        done: function(){
+            let path = this.path
+            let {b,t,rt} = parseSoul(path)
+            let typeSoul = makeSoul({b,t,rt})
+            let timeIndices = this.timeIndices
+            let sets = this.sets
+            let data = this.data
+            let uniques = this.uniques
+            timeLog(path,Object.assign({},this.data,this.timeIndices,this.sets))//log changes
+            if(this.isNew){//if new add to 'created' index for that thingType
+                console.log('new created', typeSoul, path)
+                timeIndex(typeSoul,path,new Date())
+            }
+            if(Object.keys(data)){//if this contains things other than dates or sets, put them in gun, and trigger cascade
+                gun.get(path).put(data)
+                console.log('putting data', path, data)
+                //setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,propPval) //waits 250-500ms for gun call to settle, then fires cascade
+            }
+            for (const key in timeIndices) {//for each 'date' column, index
+                const unixTS = timeIndices[key];
+                timeIndex(key,path,new Date(unixTS))
+                console.log('indexing prop', key, unixTS)
+            }
+            for (const key in sets) {//for each 'set' column, put data on the prop soul (instead of the node soul)
+                const setObj = sets[key];
+                gun.get(key).put(setObj)
+                console.log('putting set data', key, setObj)
+            }
+            for (const key in uniques) {//for each 'set' column, put data on the prop soul (instead of the node soul)
+                const uObj = uniques[key];
+                gun.get(key).put(uObj)
+                console.log('putting unique data', key, uObj)
+            }
+            this.cb.call(this, false, path)
+        }
+
+    }
+}
+
+function parseIncrement(incr){
+    let out = {}
+    if (incr !== ""){
+        out.inc = incr.split(',')[0]*1
+        out.start = (incr.split(',')[1]) ? incr.split(',')[1]*1 : 0
+        return out
+    }else{
+        return false
+    }
+}
+function checkNewRow(gb, path, putObj){//DEPRECATED
+    let propsPath = configPathFromChainPath(path)
     let {props} = getValue(propsPath, gb)
     let out = {}
     for (const pval in props) {
-        const {alias,required, defaultval, GBtype} = props[pval];
+        const {alias,required, defaultval,autoIncrement} = props[pval];
         let input = putObj[pval]
-        if(input === undefined && required && defaultval === null){
-            throw new Error('Required field missing: '+ alias)
+        if(required){
+            if(input === undefined && defaultval === null && !autoIncrement){
+                throw new Error('Required field missing: '+ alias)
+            }
         }
         if(input === undefined && defaultval !== null){
             out[pval] = defaultval
-        }else{
+        }else if(input !== undefined){
             out[pval] = input
         }
     }
     return putObj
 }
+const validateDataEdit = (gb,editThisPath, putObj, newRow, fromCascade)=>{//DEPRECATED
+    let {b,t,rt} = parseSoul(editThisPath)
+    t = t || rt
+    let output = {}
+    if(newRow){
+        putObj = checkNewRow(gb, path, putObj)//check required fields
+    }
+    for (const pval in putObj) {
+        let propPath = configPathFromChainPath(makeSoul({b,t,rt,p:pval}))
+        let value = putObj[pval]
+        let {propType, dataType, alias, pickOptions} = getValue(propPath, gb)
+        let specials = ["source", "target", "prev", "next", "lookup", "function"]//propTypes that can't be changed through the edit API
 
-const validateStaticData = (gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
-    let [base,tval] = editThisPath.split('/')
-    let output = {}
-    if(newRow){
-        putObj = checkNewRow(putObj)
-    }
-    for (const pval in putObj) {
-        let value = putObj[pval]
-        let {GBtype, alias} = getValue([base,'props', tval, 'props', pval], gb)
-        if(GBtype === undefined){
-            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
+        if(propType === undefined || dataType === undefined){
+            let err = 'Cannot find prop types for column: '+ alias +' ['+ pval+'].'
             throw new Error(err)
         }
-        let specials = ["prev", "next", "association", "tag", "function"]
-        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade){//fromCascade will always write regardless of GBtype
+        if(propType === 'date'){
+            let testDate = new Date(value)
+            if(testDate.toString() === 'Invalid Date'){
+                throw new Error ('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
+            }else{
+                value = testDate.getTime() //make sure it is a number (unix) for storing in db
+            }
+        }
+        if(dataType === 'set'){
+            if(typeof value !== 'object'){
+                throw new Error('"set" data must be specified using an Object with keys of the value and values of true/false for whether it is part of the set.')
+            }
+            if(propType === 'pickMultiple'){
+                for (const pick in value) {
+                    const boolean = value[pick];
+                    if(boolean && !pickOptions.includes(value)){//make sure truthy ones are currently valid options
+                        throw new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
+                    }
+                        
+                }
+
+            }
+        }else{
+            value = convertValueToType(value,dataType,editThisPath)//probably uneccessary in most cases, but conversion is probably quicker than checking.            
+        }
+        
+        
+        if(!specials.includes(propType) || fromCascade){//fromCascade will always write regardless of type (allows to write to a 'funciton' propType)
             output[pval] = value
-        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
-            let err = 'typeof '+ value + ' is not of type '+ GBtype
-            throw new Error(err)
         }
+
     }
     return output
-}
-const validateInteractionData =(gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
-    let [base,tval] = editThisPath.split('/')
-    let output = {}
-    if(newRow){
-        putObj = checkNewRow(putObj)
-    }
-    for (const pval in putObj) {
-        let value = putObj[pval]
-        let {GBtype, alias} = getValue([base,'props', tval, 'props', pval], gb)
-        if(GBtype === undefined){
-            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
-            throw new Error(err)
-        }
-        let specials = ["association"]
-        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade || newRow){//fromCascade will always write regardless of GBtype
-            output[pval] = value
-        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
-            let err = 'typeof '+ value + ' is not of type '+ GBtype
-            throw new Error(err)
-        }
-    }
-    return output
-}
-const validateLIData =(gb,editThisPath, putObj, newRow, fromCascade)=>{//prunes specials
-    let [base,tval,rval,li,lirid] = editThisPath.split('/')
-    let output = {}
-    if(newRow){
-        putObj = checkNewRow(putObj)
-    }
-    for (const pval in putObj) {
-        let value = putObj[pval]
-        let {GBtype, alias} = getValue([base,'props', tval, 'li', 'props', pval], gb)
-        if(GBtype === undefined){
-            let err = 'Cannot find data type for column: '+ alias +' ['+ pval+'].'
-            throw new Error(err)
-        }
-        let specials = ["association","context","contextLink","result"] //needs to be edited in special API
-        if((typeof value === GBtype && !specials.includes(GBtype)) || fromCascade || newRow){//fromCascade will always write regardless of GBtype
-            output[pval] = value
-        }else if(typeof value !== GBtype && !specials.includes(GBtype)){
-            let err = 'typeof '+ value + ' is not of type '+ GBtype
-            throw new Error(err)
-        }
-    }
-    return output
-}
-const handleRowEditUndo = (gun, gb, gbpath, editObj)=>{
-    //gbpath should = base/tval/rowid
-    //editObj = {p0: 'value, p4: 'other value', etc..}
-    let [baseID,tval,r] = gbpath.split('/')
-    let tstamp = Date.now()
-    let undo = {}
-    undo._path = gbpath
-    undo.put = editObj
-    let entry = {[tstamp]: undo}
-    let curhist = getValue([arrpath[0], 'history'], gb)
-    let fullList = (curhist) ? Object.assign({},curhist,entry) : entry
-    let lenCheck = Object.keys(fullList)
-    if(lenCheck.length > 100){
-        delete fullList[lenCheck[0]]
-    }
-    gun.get(baseID + '/state').get('history').put(JSON.stringify(fullList))
-    //node undo
-    gun.get(gbpath + '/history').get(tstamp).put(JSON.stringify(undo.put))   
 }
 const checkUniqueAlias = (gb,pathArr, alias)=>{
     let configPath = pathArr.slice()
@@ -476,17 +658,8 @@ const nextSortval = (gb,path)=>{
     nextSort += 10
     return nextSort
 }
-function convertValueToType(gb, value, newType, rowAlias){
+function convertValueToType(value, newType, rowAlias){
     let out
-    let aliasConvert = []
-    if(Array.isArray(value)){//convert links to string
-        for (let i = 0; i < value.length; i++) {
-            const rowid = value[i];
-            let[base,tval,r] = rowid.split('/')
-            aliasConvert.push(getValue([base,'props',tval,'rows', rowid], gb))
-        }
-        value = aliasConvert.join(', ')
-    }
     if(newType === 'string'){
         out = String(value)
     }else if(newType === 'number'){
@@ -514,23 +687,19 @@ function convertValueToType(gb, value, newType, rowAlias){
     }
     return out
 }
-const isMulti = (gb,colStr,toLi)=>{
+const isMulti = (gb,colStr)=>{
     let cpath = configPathFromChainPath(colStr)
-    let config = getValue(cpath,gb) || {}
-    let [b,t,li] = colStr.split('/')
-    if(toLi && li !== 'li'){
-        return true
-    }
-    if((config.linkMultiple && (config.GBtype === 'prev' || config.GBtype === 'next')) || (config.associateMultiple && config.GBtype === 'association')){
+    let {allowMultiple} = getValue(cpath,gb) || {}
+    if(allowMultiple){
         return true
     }
     return false
 }
 const getPropType = (gb,propPath)=>{
     let cpath = configPathFromChainPath(propPath)
-    let {propType,dataType} = getValue(cpath,gb) || {}
-    if(propType !== undefined && dataType !== undefined){
-        return [propType,dataType]
+    let {propType} = getValue(cpath,gb) || {}
+    if(propType !== undefined){
+        return propType
     }
     return false
 }
@@ -551,7 +720,7 @@ function tsvJSONgb(tsv){
         let currentline=lines[i].split("\t");
         for(let j=0;j<headers.length;j++){
         let value = currentline[j]
-        let valType = value*1 || value.toString() //if it is number, make it a number, else string
+        let valType = value*1 || String(value) //if it is number, make it a number, else string
         result[i][j] = valType;
         } 
     }
@@ -659,312 +828,65 @@ function hasColumnType(gb, tPathOrPpath, type){
         return false
     }
 }
-function getAllColumns(gb, tpath,bySortval){
-    let [base,tval] = tpath.split('/')
-    let tPath = [base,tval].join('/')
-    let cpath = configPathFromChainPath(tPath)
+function getAllColumns(gb, tpath){
+    let cpath = configPathFromChainPath(tpath)
     let {props} = getValue(cpath, gb)
     let out = []
-    if(!bySortval){
-        for (const p in props) {
-            const config = props[p];
-            let idx = p.slice(1)
-            if (!config.archived && !config.deleted) {
-                out[idx] = p
-            }else{
-                out[idx] = null //need to prevent empty indices
-            }
+    for (const p in props) {
+        const {archived,deleted} = props[p];
+        if (!archived && !deleted) {
+            out.push(p)
         }
-        return out.sort((a,b)=>a.slice(1)-b.slice(1))
-    }else{
-        let svals = {}
-        for (const p in props) {
-            const config = props[p];
-            if (!config.archived && !config.deleted) {
-                svals[config.sortval] = p
-            }else{
-                //don't include
-            }
-        }
-        let order = Object.keys(svals).sort((a,b)=>a-b)
-        for (const sv of order) {
-            out.push(svals[sv])
-        }
-        return out
     }
-    
+    return out
 }
 
-function handleStaticDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, newAlias, fromCascade, editObj, cb){
+function handleDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, fromCascade, validatedObj, cb){//DEPRECATED
     newRow = !!newRow
-
-
-    //update
-
-
-
-    let [base,tval] = path.split('/')
-    let validatedObj = validateStaticData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest
-    //console.log(validatedObj)
+    let {b,t,rt,r} = parseSoul(path)
+    let typeSoul = makeSoul({b,t,rt})
+    let props = getValue(typeSoul,gb)
     let timeIndices = {}
-    for (const key in validatedObj) {
-        let colSoul = base + '/' + tval + '/' + key
-        const value = validatedObj[key];
-
-        let {GBtype} = getValue([base,'props',tval,'props',key],gb)
-        if(GBtype === 'date'){
-            timeIndices[[base,tval,key].join('/')] = [path, value]
-        }
-
-        if(key !== 'p0'){//put non-row name changes
-            gun.get(colSoul).get(path).put(value)
-            setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
-            timeIndex([base,tval,'edited'].join('/'), path, new Date())
-        }else if(key === 'p0' && !newRow){
-            //check uniqueness
-            let rowpath = configPathFromChainPath(path)
-            checkUniqueAlias(gb,rowpath,value)
-            gun.get(path).get('p0').put(value)
-            gun.get(colSoul).get(path).put(value)
-        }else if(newRow && newAlias){
-            let rowpath = configPathFromChainPath(path)
-            let existsSoul = [base,tval].join('/')
-            checkUniqueAlias(gb,rowpath,newAlias)
-            gun.get(path).get('p0').put(newAlias)
-            gun.get(colSoul).get(path).put(newAlias)
-            gun.get(existsSoul).get(path).put(true)
-            timeIndex([base,tval,'created'].join('/'), path, new Date())
-            timeIndex([base,tval,'edited'].join('/'), path, new Date())
+    let sets = {}
+    let data = {}
+    let hasData = 0
+    for (const propPval in validatedObj) {
+        let propPath = makeSoul({b,t,rt,r,p:propPval})
+        const value = validatedObj[propPval];
+        let {propType,dataType} = props[propPval]
+        if(propType === 'date'){
+            timeIndices[propPath] = value
+        }else if(dataType === 'set'){
+            sets[propPath] = value
         }else{
-            throw new Error('Must specifiy at least a row alias for a new row.')
-        }      
-    }
-
-    for (const key in timeIndices) {
-        const [rowID, dateString] = timeIndices[key];
-        let date = new Date(dateString)
-        if(date.toString() === 'Invalid Date'){
-            throw new Error ('Cannot understand the date string in value, data saved, but cannot be indexed, try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
+            hasData++
+            data[propPval] = value
         }
-        timeIndex(key,rowID,date)
+    }
+    timeLog(path,validatedObj)//log changes
+    if(newRow){//if new add to 'created' index for that thingType
+        timeIndex(typeSoul,path,new Date())
+    }
+    if(hasData){//if this contains things other than dates or sets, put them in gun, and trigger cascade
+        gun.get(path).put(data)
+        //setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,propPval) //waits 250-500ms for gun call to settle, then fires cascade
+    }
+    for (const key in timeIndices) {//for each 'date' column, index
+        const unixTS = timeIndices[key];
+        timeIndex(key,rowID,new Date(unixTS))
+    }
+    for (const key in sets) {//for each 'set' column, put data on the prop soul (instead of the node soul)
+        const setObj = sets[key];
+        gun.get(key).put(setObj)
     }
     cb.call(this, false, path)
 
-    timeLog(path,validatedObj)
-}
-function handleInteractionDataEdit(gun, gb, cascade, timeLog, timeIndex, getCell, path, newRow, fromCascade, editObj, cb){
-    //soul = path
-    try{
-        let validatedObj
-        if(newRow || fromCascade){
-            validatedObj = editObj
-        }else{
-            validatedObj = validateInteractionData(gb,path,editObj,newRow,fromCascade) //strip prev, next, tags, fn keys, check typeof on rest        
-        }
-
-        if(!Object.values(validatedObj).length){
-            throw new Error('Must specify at least one (non-special) property.')
-        }
-        let timeIndices = {}
-        let assoc = []
-        let [base,tval] = path.split('/')
-        let toGun = {}
-        for (const key in validatedObj) {
-            const value = validatedObj[key];
-            let {GBtype} = getValue([base,'props',tval,'props',key],gb)
-            if(GBtype === 'date'){
-                timeIndices[[base,tval,key].join('/')] = [path, value]
-            }
-            if(GBtype === 'association' && newRow){
-                if(Array.isArray(value)){
-                    assoc = assoc.concat(value)
-                }else if(value.length){
-                    assoc.push(value)
-                }
-                continue
-            }else if (GBtype === 'association'){
-                continue
-            }
-
-            toGun[key] = value
-        }
-        for (let i = 0; i < assoc.length; i++) {
-            const toPath = assoc[i];
-            addAssociation(gun,gb,getCell,path,toPath,cb)
-        }
-        for (const key in timeIndices) {
-            const [rowID, dateString] = timeIndices[key];
-            let date = new Date(dateString)
-            if(date.toString() === 'Invalid Date'){
-                throw new Error ('Cannot understand the date string in value, data saved, but cannot be indexed, try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyy, hh:mm:ss"')
-            }
-            timeIndex(key,rowID,date)
-        }
-        for (const key in toGun) {
-            const value = toGun[key];
-            gun.get(path).get(key).put(value)
-            setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
-        }
-        cb.call(this, false, path)
-        timeIndex([base,tval,'edited'].join('/'), path, new Date())
-        timeLog(path,validatedObj)
-        if(newRow){
-            let existsSoul = [base,tval].join('/')
-            gun.get(existsSoul).get(path).put(true)
-            timeIndex([base,tval,'created'].join('/'), path, new Date())
-        }
-    }catch(e){
-        console.log(e)
-        cb.call(this,e)
-    }
-}
-function handleLIDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, fromCascade, editObj, cb){
-    //soul = path
-    try{
-        let validatedObj
-        if(newRow){
-            validatedObj = checkNewRow(gb,path,editObj)
-        }else{
-            validatedObj = validateLIData(gb,path,editObj,newRow,fromCascade) //strip illegal keys
-        }
-
-        if(!Object.values(validatedObj).length){
-            throw new Error('Must specify at least one (non-association) property.')
-        }
-        let ctx
-        let sctx
-        let [base,tval,r,li,lir] = path.split('/')
-        let liSoul = [base,tval,r,'li'].join('/')
-        let toGun = {}
-        for (const key in validatedObj) {
-            const value = validatedObj[key];
-            let {GBtype} = getValue([base,'props',tval,'li','props',key],gb)
-            if(GBtype === 'context' && newRow){
-                ctx = value
-                continue
-            }else if(GBtype === 'subContext' && newRow){
-                sctx = value
-                continue
-            }else if(["context","subContext","result","contextData"].includes(GBtype)){
-                continue
-            }else if(typeof value !== GBtype){
-                throw new Error(value + ' expected to be type: '+ GBtype)
-            }
-            toGun[key] = value
-        }
-        if(ctx){
-            addContext(gun,gb,cascade,path,ctx,sctx)
-        }
-        for (const key in toGun) {
-            const value = toGun[key];
-            gun.get(path).get(key).put(value)
-            setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
-        }
-        if(newRow){
-            gun.get(liSoul).get(path).put(true)
-            timeIndex(liSoul, path, new Date())
-        }
-        cb.call(this, false, path)
-        timeLog(path,validatedObj)
-        timeLog([base,tval,r].join('/'), {[liSoul]: true}) //need for transactions so we know if one was removed since last checkpoint
-    }catch(e){
-        console.log(e)
-        cb.call(this,e)
-    }
-}
-function addContext(gun,gb,cascade,lirPath, contextPath, subContext){
-    //newLI: from should base/tval/rval/li to should be cbase/ctval/crowid (ctval must match context tval)
-    let root = gun.back(-1)
-    let [base,tval,r,li,lir] = lirPath.split('/')
-    let [cbase,ctval,cr] = contextPath.split('/')
-    let subRequired = false, subCcol
-
-    let {context} = getValue([base,'props',tval], gb)
-    let [sbase,stval] = context.split('/')
-    if(cbase !== sbase || ctval !== stval){
-        throw new Error('You cannot associate a list item with a different table than what is specified in "context"')
-    }
-    let neededCols = []
-    let lirObj = {}
-    let licols = getValue([base,'props',tval,'li','props'], gb)
-    for (const liPval in licols) {
-        const {GBtype, fn} = licols[liPval];//repurposed fn config for context columns
-        if(GBtype === 'contextData'){
-            lirObj[liPval] = fn
-        }else if(GBtype === 'subContext'){
-            subRequired = true
-            subCcol = liPval
-            lirObj[liPval] = fn // should be 'pn' and must be linkCol(that was already checked on the way in.)
-        }
-    }
-
-    if(subRequired && subContext){
-        //check to make sure subContext matches what is available on this context node
-        let [subbase,subtval,subr] = subContext.split('/')
-        let cCols = getValue([cbase,'props',ctval,'props'],gb)
-        let cpval
-        for (const p in cCols) {
-            const {GBtype, linksTo} = cCols[p];
-            let [testbase,testtval] = linksTo.split('/')
-            if(GBtype === 'prev' && testbase === subbase && testtval === subtval){
-                cpval = p
-            }
-        }
-        if(!cpval){throw new Error('Could not find sub-context linking column to the context')}
-        let ctxSoul = [cbase,ctval,cr,'links',cpval].join('/')
-        root.get(ctxSoul).get(function(msg, ev) {
-            var links = msg.put
-            ev.off()
-            let valid = []
-            for (const link in links) {
-                if(link === '_'){
-                    continue
-                }
-                const value = links[link];
-                if (value) {
-                    valid.push(link)
-                }
-            }
-            if(valid.includes(subContext)){
-                retrieveUtil(gun,gb,contextPath,Object.values(lirObj),function(ctxObj){//get ctxObj with pvals
-                    let ctxStore = [base,tval,r,'context'].join('/')
-                    root.get(ctxStore).get(contextPath).put(JSON.stringify(ctxObj))//snapshot values at time of creation
-                    for (const lip in lirObj) {
-                        const ctxPval = lirObj[lip];
-                        if(subCcol === lip){
-                            lirObj[lip] = subContext
-                        }else{
-                            lirObj[lip] = ctxObj[ctxPval]
-                        }
-                        
-                    }
-                    for (const key in lirObj) {
-                        const value = lirObj[key];
-                        root.get(lirPath).get(key).put(value)
-                        setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
-                    }
-                })
-            }else{
-                throw new Error('Invalid Sub-Context link')
-            }
-
-        })
-    }else if(subRequired && !subContext){
-        throw new Error('Must specify a sub-context in order to create a list item so the transaction can be performed')
-    }else if(!subRequired){
-        //just need ctx
-        retrieveUtil(gun,gb,contextPath,Object.values(lirObj),function(ctxObj){
-            let ctxStore = [base,tval,r,'context'].join('/')
-            root.get(ctxStore).get(contextPath).put(JSON.stringify(ctxObj))//snapshot values at time of creation
-            for (const lip in lirObj) {
-                const ctxPval = lirObj[lip];
-                root.get(lirPath).get(lip).put(ctxObj[ctxPval])
-                setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,key) //waits 250-500ms for gun call to settle, then fires cascade
-            }
-        })
-    }
 }
 function addAssociation(gun,gb,getCell,path,toPath, cb){
+    // getCell has changed!
+
+
+
     cb = (cb instanceof Function && cb) || function(){}
     //gbaseGetRow = gbase[base][tval][rowID]
     let [base,tval,r] = path.split('/')
@@ -1265,7 +1187,8 @@ function parseSoul(soul){
         let s = curSym.pop()
         let al = alias[s]
         if(al)s=al
-        out[s] = soul.slice(last+1,toIdx)
+        let args = soul.slice(last+1,toIdx) //"" for no args
+        out[s] = args || true
     }
     return out
 }
@@ -1376,8 +1299,7 @@ module.exports = {
     setValue,
     setMergeValue,
     getValue,
-    validateStaticData,
-    handleRowEditUndo,
+    validateDataEdit,
     checkUniqueAlias,
     checkUniqueSortval,
     findNextID,
@@ -1392,9 +1314,7 @@ module.exports = {
     removeFromArr,
     findLinkingCol,
     hasColumnType,
-    handleStaticDataEdit,
-    handleInteractionDataEdit,
-    handleLIDataEdit,
+    handleDataEdit,
     addAssociation,
     removeAssociation,
     retrieveUtil,
@@ -1411,5 +1331,6 @@ module.exports = {
     buildPermObj,
     rand,
     makeSoul,
-    parseSoul
+    parseSoul,
+    makePutObj
 }

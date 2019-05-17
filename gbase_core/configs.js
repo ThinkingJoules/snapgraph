@@ -9,10 +9,12 @@ const {convertValueToType,
     checkUniqueAlias,
     checkUniqueSortval,
     findNextID,
-    rand
+    rand,
+    makeSoul,
+    parseSoul
 } = require('../gbase_core/util')
 
-const {verifyLinksAndFNs, verifyLILinksAndFNs} = require('../function_lib/function_utils')
+const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
 
 //CONFIG FUNCTIONS
 const newBaseConfig = (config) =>{
@@ -29,26 +31,29 @@ const newNodeTypeConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let log = config.log || false
-    return {alias, log, archived, deleted, timeBlockCadence}
+    return {alias, log, archived, deleted}
 }
 const newNodePropConfig = (config) =>{
     config = config || {}
-    let defType = {data:'string',date:'number',prev:'string',next:'string',ids:'string',pickList:'string',pickMultiple:'set',lookup:'string'}
+    let defType = {data:'string',date:'number',prev:'set',next:'string',ids:'string',pickList:'string',pickMultiple:'set',lookup:'string'}
     let defMulti = {prev:true,next:false,lookup:false}
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
     let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids //lookup is basically prev, but it is only a one-way link (no next on target)
     let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
+    let linksTo = config.linksTo || ""
     let required = config.required || false 
-    let defaultval = config.defaultval || null 
+    let defaultval = config.defaultval || null //null represents no default. Anything other than null will be injected at node creation.
+    let autoIncrement = config.autoIncrement || "" // must be a number, value after comma is optional start value. ie: 1,11500 (11500,11501,etc)
+    let enforceUnique = config.enforceUnique || false // can be used with autoIncrement to ensure unique, incrementing values.
     let fn = config.fn || "" 
     let usedIn = JSON.stringify([])
     let format = config.format || ""
     let pickOptions = config.pickOptions || JSON.stringify([])
     let allowMultiple = config.allowMultiple || defMulti[propType] || false
-    let humanIdentifier = config.humanIdentifier || 0 //falsy, number represents the concat-order if multiple identifiers
-    return {alias, archived, deleted, propType, dataType, required, defaultval, fn, usedIn, pickOptions, format, allowMultiple, humanIdentifier}
+    let humanIdentifier = config.humanIdentifier || 0 //falsy for no, number>0 represents that it is an identifier and the concat-order if multiple identifiers
+    return {alias, archived, deleted, propType, dataType, linksTo, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple, humanIdentifier}
 }
 const newRelationshipConfig = (config) =>{
     config = config || {}
@@ -107,60 +112,62 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
     }    
 }
 
-const makehandleConfigChange = (gun,gb,cache,gunSubs,loadColDataToCache,newColumn,cascade,solve,timeLog) => (configObj, path, backLinkCol, cb)=>{
+const makehandleConfigChange = (gun,gb,gunSubs,getCell,newColumn,cascade,solve,timeIndex,timeLog) => (configObj, path, backLinkCol, cb)=>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     cb = (cb instanceof Function && cb) || function(){}
-    const handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,cache,loadColDataToCache,cascade,solve)
-    const handleLinkColumn = makehandleLinkColumn(gun, gb,cache, gunSubs, loadColDataToCache,newColumn)
-    const changeColumnType = makechangeColumnType(gun,gb,cache,loadColDataToCache,handleLinkColumn,handleFNColumn)
+    const handleFNColumn = makehandleFNColumn(gun,gb,gunSubs,getCell,cascade,solve)
+    const handleLinkColumn = makehandleLinkColumn(gun, gb,getCell, gunSubs,newColumn)
+    const changeColumnType = makechangeColumnType(gun,gb,getCell,handleLinkColumn,handleFNColumn)
     let cpath = configPathFromChainPath(path)
     let csoul = configSoulFromChainPath(path)
     let validConfig
-    let tstamp = Date.now()
-    let history = {}
     let thisColConfig = getValue(cpath,gb)
-    if(cpath[cpath.length-1][0] === 'p'){//col
-        validConfig = newNodePropConfig()
-    }else if(cpath[cpath.length-1][0] === 't'){//table
+    let type = (path.includes('#')) ? 'node' : 'relation'
+    if(path.includes('.')){//col
+        if(path.includes('#')){//node
+            validConfig = newNodePropConfig()
+        }else{//relation
+            validConfig = newRelationshipPropConfig()
+        }
+    }else if(path.includes('#')){//node
         validConfig = newNodeTypeConfig()
+    }else if(path.includes('-')){//relation
+        validConfig = newRelationshipConfig()
     }else{//base (or row, but validConfig is not called)
         validConfig = newBaseConfig()
     }
-    if(cpath[cpath.length-2] === 'props' || cpath.length === 1){//base,table,col config change
-        //these should throw errors and stop the call if they don't pass
-        checkConfig(validConfig, configObj)
-        checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
-        checkUniqueSortval(gb,cpath, configObj.sortval)//same as alias
-        if(configObj.GBtype || configObj.linksTo || configObj.fn){//new type change or update to link of fn
-            let typeStuff = {}
-            for (const key in configObj) {//split config obj for normal configs vs type/link configs
-                if(key === 'GBtype' || key === 'linksTo' || key === 'linkMultiple' || key === "fn" || key === 'linkColumnTo'){
-                    typeStuff[key] = configObj[key]
-                    delete configObj[key]
-                }
-            }
-            if(typeStuff.GBtype && typeStuff.GBtype !== thisColConfig.GBtype){//change col type
-                if(thisColConfig.GBtype === 'function'){
-                    handleFNColumn(path, {fn: ''}, cb)
-                }
-                changeColumnType(path, typeStuff, backLinkCol,cb)
-            }else if(typeStuff.fn && thisColConfig.GBtype === 'function'){//update function
-                handleFNColumn(path, typeStuff, cb)
-            }else if(typeStuff.linksTo && ['prev', 'next'].includes(thisColConfig.GBtype)){//update linksTo
-                if(thisColConfig.usedIn.length !== 0){
-                    throw new Error('Cannot change link to this column. A function references it')
-                }else{
-                    handleLinkColumn(path,typeStuff,backLinkCol,cb)
-                }
-                
+    //these should throw errors and stop the call if they don't pass
+    checkConfig(validConfig, configObj,type)
+    checkUniqueAlias(gb, cpath, configObj.alias)//will pass if alias is not present
+    if(configObj.propType || configObj.dataType || configObj.linksTo || configObj.fn){//new type change or update to link of fn
+        let typeStuff = {}
+        for (const key in configObj) {//split config obj for normal configs vs type/link configs
+            if(key === 'propType' || key === 'dataType' || key === 'linksTo' || key === 'allowMultiple' || key === "fn"){
+                typeStuff[key] = configObj[key]
+                delete configObj[key]
             }
         }
-        if(Object.keys(configObj).length !== 0){
-            timeLog(csoul, configObj)
-            gun.get(csoul).put(configObj)
-            cb.call(this, undefined)
+        if(typeStuff.GBtype && typeStuff.GBtype !== thisColConfig.GBtype){//change col type
+            if(thisColConfig.GBtype === 'function'){
+                handleFNColumn(path, {fn: ''}, cb)
+            }
+            changeColumnType(path, typeStuff, backLinkCol,cb)
+        }else if(typeStuff.fn && thisColConfig.GBtype === 'function'){//update function
+            handleFNColumn(path, typeStuff, cb)
+        }else if(typeStuff.linksTo && ['prev', 'next'].includes(thisColConfig.GBtype)){//update linksTo
+            if(thisColConfig.usedIn.length !== 0){
+                throw new Error('Cannot change link to this column. A function references it')
+            }else{
+                handleLinkColumn(path,typeStuff,backLinkCol,cb)
+            }
+            
         }
+    }
+    if(Object.keys(configObj).length !== 0){
+        timeLog(csoul, configObj)
+        gun.get(csoul).put(configObj)
+        cb.call(this, undefined)
     }
     return true
 }
@@ -217,7 +224,7 @@ const makechangeColumnType = (gun,gb,cache,loadColDataToCache,handleLinkColumn, 
             for (const key in data) {
                 let HID = getValue([base, 'props', tval, 'rows', key], gb)
                 const value = data[key]
-                putObj[key] = convertValueToType(gb, value, newType, HID) 
+                putObj[key] = convertValueToType(value, newType, HID) 
             }
             gun.get(colSoul + '/config').get('GBtype').put(newType)
             gun.get(colSoul).put(putObj)
@@ -359,12 +366,12 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         let fn = configObj.fn
         let oldfn = thisColConfig.fn
         verifyLinksAndFNs(gb,path,fn)
-        let allLinkPattern = /\{([a-z0-9/.]+)\}/gi
+        let allLinkPattern = new RegExp(ALL_LINKS_PATTERN)
         let links = []
         let checkmatch
         while (checkmatch = allLinkPattern.exec(fn)) {
             let path = checkmatch[1]
-            links.push(path.split('.'))
+            links.push(path.split(','))
         }
         let usedInLinks = []
         for (let i = 0; i < links.length; i++) {
@@ -383,11 +390,11 @@ const makehandleFNColumn = (gun,gb,gunSubs,cache,loadColDataToCache, cascade, so
         let match
         while (match = allLinkPattern.exec(oldfn)) {
             let path = match[1]
-            oldLinksTo = oldLinksTo.concat(path.split('.'))
+            oldLinksTo = oldLinksTo.concat(path.split(','))
         }
         while (match = allLinkPattern.exec(fn)) {
             let path = match[1]
-            newLinksTo = newLinksTo.concat(path.split('.'))
+            newLinksTo = newLinksTo.concat(path.split(','))
         }
         let remove = oldLinksTo.filter(val => !newLinksTo.includes(val))
         let add = newLinksTo.filter(val => !oldLinksTo.includes(val))
@@ -631,10 +638,10 @@ const handleImportColCreation = (gun, gb, base, tval, colHeaders, datarow, appen
         const palias = String(colHeaders[i]);
         let pval = findID(cols, palias)
         if(!pval && append){
-            const colType = typeof datarow[i]
+            const colType = typeof datarow[i] //can only be 'string' or 'number', could be incorrect, if first row has a "" but is otherwise contains numbers.
             pval = rand(6)
             let pconfig = newNodePropConfig({alias: palias, dataType: colType, propType:'data'})
-            checkConfig(newNodePropConfig(), pconfig)
+            checkConfig(newNodePropConfig(), pconfig,'node')
             gun.get(makeSoul({b:base, t:tval, p:pval, '%':true})).put(pconfig)
             gun.get(makeSoul({b:base, t:tval})).put({[pval]: true})
             results[palias] = pval
