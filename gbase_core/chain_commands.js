@@ -1,6 +1,6 @@
 
 const{newBaseConfig,
-    newTableConfig,
+    newNodeTypeConfig,
     newInteractionTableConfig,
     newInteractionColumnConfig,
     newColumnConfig,
@@ -18,7 +18,7 @@ const{getValue,
     tsvJSONgb,
     watchObj,
     convertValueToType,
-    checkUniqueAlias,
+    checkUniques,
     findNextID,
     nextSortval,
     getColumnType,
@@ -33,7 +33,9 @@ const{getValue,
     makeSoul,
     parseSoul,
     rand,
-    makePutObj
+    putData,
+    newID,
+    setValue
 } = require('./util')
 /*
 ID Length (using A-Za-z0-9)
@@ -91,9 +93,9 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
 const makenewNodeType = (gun, gb) => (path) => (configObj)=>{
     try{
         let cpath = configPathFromChainPath(path)
-        let tconfig = newTableConfig(configObj)
-        checkConfig(newTableConfig(), tconfig)
-        checkUniqueAlias(gb, cpath, tconfig.alias)
+        let tconfig = newNodeTypeConfig(configObj)
+        checkConfig(newNodeTypeConfig(), tconfig)
+        checkUniques(gb, cpath, tconfig.alias)
         let tID = rand(6)
         let tList = '#' + tID //need to prepend # to show this ID is a nodeType not a relationType('-')
         gun.get(makeSoul({'!':path,'#':tID,'%':true})).put(tconfig)
@@ -117,7 +119,7 @@ const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
             pconfig = newColumnConfig({alias: pname,propType, sortval: nextSortval(gb,path)})
         }
         checkConfig(newColumnConfig(), pconfig)
-        checkUniqueAlias(gb,cpath,pconfig.alias)
+        checkUniques(gb,cpath,pconfig.alias)
         gun.get(makeSoul({b,t,rt,'.':pID,'%':true})).put(pconfig)
         gun.get(makeSoul({b,t,rt})).put({[pID]: true})
         return pID
@@ -132,25 +134,27 @@ const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path) => (data, cb)=>
         let {b,t,rt} = parseSoul(path)
         let id = rand(10)
         let fullpath = makeSoul({b,t,rt,r:id})
-        let pObj = makePutObj(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
-        pObj.process()//starts a chain of commands that will put data in to gun or error (all or nothing)
+        putData(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
     }catch(e){
         cb.call(this, e)
         console.log(e)
     }
 }
-const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLinkCol, cb)=>{
+const makepropIsChildNode = (gb, handleConfigChange) => path => (linkTableOrBackLinkCol, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        let [base,tval,pval] = path.split('/')
-        if(pval==='p0'){throw new Error("Cannot use the first column to link another table")}
-        let cpath = configPathFromChainPath(path)
-        let colType = getValue(cpath, gb).GBtype
+        let {b,t,p} = parseSoul(path)
+        let {externalID, parent} = getValue(configPathFromChainPath(makeSoul({b,t})), gb)
+        if(p === externalID){throw new Error("Cannot use the external ID prop to link another table")}
+        let {dataType,propType} = getValue(configPathFromChainPath(path), gb)
         let configObj = {}
-        if(!colType){throw new Error("Cannot find the type of this column")}
-        if(colType === 'prev' || colType === 'next'){
+        if(propType === 'child' || propType === 'parent'){
             throw new Error('Column is already a link column, to add more links, use "linkRowTo()"')
         }else{
+
+
+
+
             configObj.GBtype = 'link'
         }
         if(typeof linkTableOrBackLinkCol === 'object'){
@@ -161,7 +165,7 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
         let linkPath = linkTableOrBackLinkCol.split('/')
         let [lb, lt, lp] = linkPath
         let ltPs = getValue([lb,'props',lt,'props'], gb)
-        if(lt === tval){throw new Error('Cannot link a table to itself')}
+        if(lt === t){throw new Error('Cannot link a table to itself')}
         //check for already existing 'next' link on lt, can only have one
         for (const p in ltPs) {
             let ltpconfig = ltPs[p]
@@ -186,7 +190,7 @@ const makelinkColumnTo = (gb, handleConfigChange) => path => (linkTableOrBackLin
         return
     }
 }
-const makeconfig = (gb, handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
+const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         
@@ -211,8 +215,7 @@ const makeedit = (gun,gb,cascade,timeLog,timeIndex) => (path,fromCascade) => (ed
             }else if(value === false){//check existence
                 throw new Error('RowID is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
             }else{
-                let pObj = makePutObj(gun,gb,cascade,timeLog,timeIndex,path,false,fromCascade,editObj,cb)
-                pObj.process()
+                putData(gun,gb,cascade,timeLog,timeIndex,path,false,fromCascade,editObj,cb)
             }    
         })
     }catch(e){
@@ -564,52 +567,152 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTES
     }
     handleTableImportPuts(gun, path, result, cb)
 }
-const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, tAlias, cb)=>{
+const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{
     //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
     try{
         let {b} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
+        let {variants,externalID,delimiter} = opts
+        variants = !!variants
+        externalID = externalID || ''
+        delimiter = delimiter || ', '
+        if(variants && !externalID)throw new Error('If you want to enable variants, you must specify the property name that would have unique values to use as external IDs')
         let cpath = configPathFromChainPath(path)
-        checkUniqueAlias(gb,cpath, tAlias)
+        let tAlias = alias || 'New NodeType' + rand(2)
+        checkUniques(gb,cpath, tAlias)
         let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
-        let t = rand(6)
-        let tconfig = newTableConfig({alias: tAlias})
-        gun.get(makeSoul({b,t,'%':true})).put(tconfig)
-        let result = {}, ti = {}
+        let t = newID(gb,makeSoul({b,t:true}))
+        let tconfig = newNodeTypeConfig({alias,variants,externalID})
+        let result = {}, IDs = {}, rid = 0, fid = 0
         let headers = dataArr[0]
-        let headerPvals = handleImportColCreation(gun, gb, b, t, headers, dataArr[1], true)
-        for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
-            const rowArr = dataArr[i];
-            let r = rand(10)
-            let rowsoul = makeSoul({b,t,r})
-            ti[rowsoul] = true
-            for (let j = 0; j < rowArr.length; j++) {
-                const value = rowArr[j];
-                if(value !== ""){//ignore empty strings only
-                    const header = headers[j]
-                    const headerPval = headerPvals[header]
-                    if(typeof result[rowsoul] !== 'object')result[rowsoul] = {}
-                    result[rowsoul][headerPval] = value
+        let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, t, headers, dataArr[1],variants, externalID, true)
+        if(variants){
+            let temp = {}
+            let externalIDidx = headers.indexOf(externalID)
+            let protoData = headers.indexOf('PROTOTYPE')
+            if(externalIDidx === -1)throw new Error('Cannot find the external IDs specified')
+            if(protoData === -1)throw new Error('Cannot find the PROTOTYPE meta data property in the dataset')
+            let invalidData = {}
+
+            for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
+                const rowArr = dataArr[i];
+                let eid = rowArr[externalIDidx]
+                for (let j = 0; j < rowArr.length; j++) {
+                    let value = rowArr[j];
+                    if(!['',null,undefined].includes(value)){//ignore empty values
+                        if(!temp[eid])temp[eid] = {}
+                        if((protoData === j)){
+                            temp[eid]['PROTOTYPE'] = value
+                            assignIDs(eid,value)
+
+                        }else{
+                            const headerPval = aliasLookup[headers[j]]
+                            let {dataType} = newPconfigs[headerPval]
+                            try {
+                                value = convertValueToType(value,dataType,eid,delimiter)
+                            } catch (error) {
+                                //need to fail back to a 'string' type on this pval and re-convert all data on final time through
+                                //convert will not throw errors on 'string' everything else will.
+                                invalidData[headerPval] = dataType
+                            }
+                            temp[eid][headerPval] = value
+                        }
+                        
+                    }
+                }
+            }
+            let typeChange = Object.keys(invalidData)
+            for (const pval of typeChange) {
+                newPconfigs[pval].dataType = 'string'
+                newPconfigs[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
+            }
+            for (const eid in temp) {
+                const node = temp[eid];
+                const {PROTOTYPE} = node
+                let rowsoul
+                if(String(PROTOTYPE) === String(eid)){
+                    let r = IDs[eid]
+                    rowsoul= makeSoul({b,t,r,f:true})
+                }else{
+                    let r = IDs[PROTOTYPE]
+                    let f = IDs[eid]
+                    rowsoul= makeSoul({b,t,r,f})
+                }
+                for (const p in node) {
+                    if(p === 'PROTOTYPE')continue
+                    let {dataType} = newPconfigs[p]
+                    const v = convertValueToType(node[p],dataType,eid,delimiter)//shouldn't error
+                    if(String(PROTOTYPE) === String(eid)){//add all values
+                        setValue([rowsoul,p],v,result)
+                    }else{//figure out if they are different
+                        let prVal = getValue([PROTOTYPE,p], temp)
+                        if(prVal === undefined || JSON.stringify(prVal) !== JSON.stringify(v)){
+                            setValue([rowsoul,p],v,result)
+                        }
+                    }
+                }
+            }
+        }else{
+            assmembleData()
+        }
+        putData()
+        //console.log(newPconfigs,result)
+        triggerConfigUpdate()//fire callback for app code to get new config data.
+        function assignIDs(alias,proto){
+            if(alias === proto){
+                IDs[alias] = rid
+                rid++
+            }else{
+                IDs[alias] = fid
+                fid++
+            }
+        }
+        function assmembleData(){
+            for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
+                const rowArr = dataArr[i];
+                let r = rid
+                let rowsoul = makeSoul({b,t,r,f:''})
+                rid++
+                for (let j = 0; j < rowArr.length; j++) {
+                    const value = rowArr[j];
+                    if(!['',null,undefined].includes(value)){//ignore empty values
+                        const headerPval = aliasLookup[headers[j]]
+                        setValue([rowsoul,headerPval],value,result)
+                    }
                 }
             }
         }
-        let tval = '#' + t
-        let tpath = makeSoul({b,t})
-        gun.get(path).put({[tval]: true})//table on base index
-        handleTableImportPuts(gun, result, cb)//put data on each node
-        let now = new Date()
-        for (const newSoul in result) {
-            let put = result[newSoul]
-            timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
-            timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
+        function putData(){
+            for (const p in newPconfigs) {
+                const cObj = newPconfigs[p];
+                let {alias} = cObj
+                if(externalID && externalID === alias)tconfig.externalID = p
+                let configSoul = makeSoul({b,t,p,'%':true})
+                let listSoul = makeSoul({b,t})
+                gun.get(configSoul).put(cObj)
+                gun.get(listSoul).put({[p]:true})
+            }
+    
+    
+            gun.get(makeSoul({b,t,'%':true})).put(tconfig)
+            let tval = '#' + t
+            let tpath = makeSoul({b,t})
+            gun.get(makeSoul({b})).put({[tval]: true})//table on base index
+            handleTableImportPuts(gun, result, cb)//put data on each node
+            let now = new Date()
+            for (const newSoul in result) {
+                let put = result[newSoul]
+                timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
+                timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
+            }
+    
         }
-
-        triggerConfigUpdate(tpath)//fire callback for app code to get new config data.
     }catch(e){
         console.log(e)
         cb.call(this,e)
         return e
     }
+    
 }
 const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache) => (path) => function clearcol(cb){
     try{
@@ -761,8 +864,8 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
                 cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/')})
                 nextPval ++
             }
-            checkConfig(newTableConfig(), tconfig)
-            checkUniqueAlias(gb, cpath, tconfig.alias)
+            checkConfig(newNodeTypeConfig(), tconfig)
+            checkUniques(gb, cpath, tconfig.alias)
             gun.get(path + '/' + nextT + '/config').put(tconfig)
             let ps = {}
             for (const pval in cols) {
@@ -782,7 +885,7 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
             gun.get(path + '/t').put({[nextT]: tableType})
             return nextT
         }else if(tableType === 'interaction'){//simple interaction with a static table
-            tconfig = newTableConfig({alias: tname, type: 'interaction', sortval: nextSortval(gb,path)})
+            tconfig = newNodeTypeConfig({alias: tname, type: 'interaction', sortval: nextSortval(gb,path)})
             cols.p0 = newInteractionColumnConfig({alias: 'Interaction ID', required: true})
             cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
             let cleanPaths = assocArr.map(function(path){
@@ -812,8 +915,8 @@ const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocA
                 cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/'), associatedIndex: [path,nextT,'p1'].join('/')})
                 nextPval ++
             }
-            checkConfig(newTableConfig(), tconfig)
-            checkUniqueAlias(gb, cpath, tconfig.alias)
+            checkConfig(newNodeTypeConfig(), tconfig)
+            checkUniques(gb, cpath, tconfig.alias)
             gun.get(path + '/' + nextT + '/config').put(tconfig)
             let ps = {}
             for (const pval in cols) {
@@ -844,7 +947,7 @@ const makenewInteractionColumn = (gun, gb) => (path,config) => (pname, type)=>{
             pconfig = newInteractionColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
         }
         checkConfig(newInteractionColumnConfig(), pconfig)
-        checkUniqueAlias(gb,cpath,pconfig.alias)
+        checkUniques(gb,cpath,pconfig.alias)
         gun.get(path + '/' + nextP + '/config').put(pconfig)
         gun.get(path + '/p').put({[nextP]: true})
         return nextP
@@ -867,7 +970,7 @@ const makenewLIcolumn = (gun, gb) => (path, config) => (colName, type)=>{
             pconfig = newListItemColumnConfig({alias: colName, GBtype: type, sortval: nextSortval(gb,path)})
         }
         checkConfig(newListItemColumnConfig(), pconfig)
-        checkUniqueAlias(gb,cpath,pconfig.alias)
+        checkUniques(gb,cpath,pconfig.alias)
         gun.get(path + '/' + nextP + '/config').put(pconfig)
         gun.get(path + '/p').put({[nextP]: true})
         return nextP
@@ -1061,7 +1164,7 @@ module.exports = {
     makenewNodeType,
     makeaddProp,
     makenewNode,
-    makelinkColumnTo,
+    makelinkColumnTo: makepropIsChildNode,
     makeconfig,
     makeedit,
     makesubscribe,

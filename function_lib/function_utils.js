@@ -1,7 +1,7 @@
 const gfn = require('./functions')
 const {convertValueToType,getValue,isMulti,getPropType} = require('../gbase_core/util')
 //FUNCTION STUFF
-const ALL_LINKS_PATTERN = /\{([!#\-$.,a-z0-9]+)\}/gi
+const ALL_LINKS_PATTERN = /\{([!#\-.$&,a-z0-9]+)\}/gi
 const makesolve = (gb, getCell) =>function solve(rowID, eq, cb){
     try{//substitue links with the value they represent
         let linksObj = initialParseLinks(gb,eq,rowID)
@@ -631,22 +631,17 @@ const verifyLinksAndFNs = (gb, path, fnString)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split(',')
-
-
         let linkMulti = isMulti(gb,links[0])
         let valueType = getPropType(gb,links[0])
         let summation = false
         if(valueType === 'next'){nextUsed = true}
-        if(linkMulti){
+        if(linkMulti && ['prev','lookup'].includes(valueType)){
             let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link
             try{
                 summation = fnPattern.exec(fnString)[0]                
             }catch(e){
                 let err = 'Cannot find summation function on multiple field: '+ links[0]
                 throw new Error(err)
-            }
-            if(valueType === 'next' && summation !== 'JOIN'){
-                throw new Error('"next" Column can only be summarized with a "JOIN()" function')
             }
         }else if(valueType === 'next'){
             let fnPattern =  regexVar("[A-Z]+(?=\\(~\\))", replace, 'g')//this will find the summation name ONLY for .linked link

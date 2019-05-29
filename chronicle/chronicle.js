@@ -115,19 +115,22 @@ const timeLog = (gun) => (idxID, changeObj) =>{
   let pub = user && user.is && user.is.pub || false
   let idxDate = new Date().getTime()
   
-  let logObj = {who:pub,what:changeObj,when:idxDate}
+  let logObj = {who:pub,what:JSON.stringify(changeObj),when:idxDate}
 
   root.get(idxSoul).get('tail').get(function(msg, ev) {
     let lastEdit = msg.put
+    let newLog = (lastEdit === undefined) ? true : false
     ev.off()
-    if (lastEdit === undefined){//new object
-      root.get(idxSoul).put({head:idxDate,tail:idxDate})
-    }
     let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastEdit}))
     let nextSoul = makeSoul(Object.assign({},soulObj,{':':idxDate}))
-    Object.assign(logObj,{prev:{'#':lastSoul}})
+    let prevO = (newLog) ? {prev: null} : {prev:{'#':lastSoul}}
+    Object.assign(logObj,prevO)
+    if (newLog){//new object
+      root.get(idxSoul).put({head:idxDate})
+    }else{
+      root.get(lastSoul).put({next:{'#':nextSoul}})//old tail, update next
+    }
     root.get(idxSoul).put({tail:idxDate})//new tail
-    root.get(lastSoul).put({next:{'#':nextSoul}})//old tail, update next
     root.get(nextSoul).put(logObj)//put data and prev in new block
   })
 }

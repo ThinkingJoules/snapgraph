@@ -1,4 +1,8 @@
 //GBASE UTIL FUNCTIONS
+const NODE_SOUL_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
+const PROPERTY_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+/i
+const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
+const NULL_HASH = hash64(JSON.stringify(null))
 function bufferPathFromSoul(rowID, pval){
     //buffer is the same structure as cache
     let cpath = cachePathFromRowID(rowID,pval)
@@ -15,8 +19,8 @@ function cachePathFromRowID(rowID, pval){
     return cpath
 }
 function cachePathFromChainPath(thisPath){
-    //valid paths: !, !#, !-, !#.$, !-.$
-    if((thisPath.includes('.') && !thisPath.includes('$')))throw new Error('Must specify a row to get this prop')
+    //valid paths: !, !#, !-, !#.$&, !-.$&
+    if(thisPath.includes('.') && !thisPath.includes('$'))throw new Error('Must specify a row to get this prop')
     let pathArgs = parseSoul(thisPath)
     let order = ['b','t','rt','r','p']//put r before p
     let depth = []
@@ -29,6 +33,9 @@ function cachePathFromChainPath(thisPath){
             }else if(arg === 'rt'){
                 depth.push('relations')
                 depth.push(hasID)
+            }else if(arg === 'r'){
+                let{r,f} = pathArgs
+                depth.push(makeSoul({r,f}))
             }else{
                 depth.push(hasID)
             }
@@ -74,9 +81,9 @@ function configSoulFromChainPath(thisPath){
 
 }
 const findID = (obj, name) =>{//obj is level above .props, input human name, returns t or p value
-    let out = false
+    let out //return undefined if not found
     for (const key in obj) {
-        const alias = obj[key].alias;
+        const {alias} = obj[key]
         if(String(alias) === String(name) || String(key) === String(name)){
             out = key
             break
@@ -84,16 +91,29 @@ const findID = (obj, name) =>{//obj is level above .props, input human name, ret
     }
     return out
 }
-const findRowID = (obj, name) =>{//obj is .rows, input human name, returns rowID
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            const alias = String(obj[key])
-            if(alias === name){
-                return key
-            }
-        }
+const newID = (gb, path) =>{
+    //should be base or base, node (creating new prop) thing we are creating should be parsed as boolean
+    //props will be an incrementing integer + noise so no alias config: Number() + 'x' + rand(2)
+    let {b,t,rt,p} = parseSoul(path)
+    if(b === true){//new baseID
+        return rand(10)
+    }else if(t === true || p === true){//new nodeType
+        let {props} = getValue(configPathFromChainPath(makeSoul({b})),gb)
+        return getNext(props)
+    }else if(rt === true){
+        let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
+        return getNext(relations)
     }
-    return false
+    function getNext(obj){
+        let n = 0
+        for (const id in obj) {
+            let [val,rest] = id.split('I')
+            if(n <= val) n = val
+        }
+        n++
+        let next = n + 'I' + rand(2)
+        return next
+    }
 }
 const allUsedIn = gb =>{//could move this to a getter on the gb object?
     let out = {}
@@ -110,11 +130,6 @@ const allUsedIn = gb =>{//could move this to a getter on the gb object?
         }
     }
     return out
-}
-const findRowAlias = (gb, rowID) =>{//obj is .rows, input human name, returns rowID
-    let [base, tval] = rowID.split('/')
-    let obj = getValue([base, 'props',tval,'rows'],gb)
-    return obj[rowID]
 }
 const gbForUI = (gb) =>{
     let output = {}
@@ -179,7 +194,7 @@ const gbByAlias = (gb) =>{
     }
     return output
 }
-const linkColPvals = (gb,base,tval)=>{
+const linkColPvals = (gb,base,tval)=>{//PROBABLY COULD BE USED AGAIN, NEEDS UPDATE
     let obj = getValue([base,'props',tval,'props'], gb)
     let result = {}
     for (const key in obj) {
@@ -238,7 +253,6 @@ function setRowPropCacheValue(propertyPath, value, obj){
         return true // this is the end
     }
 }
-
 function getValue(propertyPath, obj){
     if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
     if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
@@ -251,7 +265,7 @@ function getValue(propertyPath, obj){
         return obj[propertyPath[0]]
     }
 }
-function getRowPropFromCache(propertyPath, obj){
+function getRowPropFromCache(propertyPath, obj){//DUPLICATE, BUT CURRENTLY USED
     //same as getValue currently
     //TODO:remove
     if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
@@ -265,221 +279,346 @@ function getRowPropFromCache(propertyPath, obj){
         return obj[propertyPath[0]]
     }
 }
-function makePutObj(gun, gb, cascade, timeLog, timeIndex, path, isNew, fromCascade, putObj, cb){
-    let {props} = getValue(configPathFromChainPath(path),gb)
-    let needsCols = []
-    for (const pval in props) {
-        const {enforceUnique,autoIncrement} = props[pval];
-        if (enforceUnique || autoIncrement !== "") {
-            needsCols.push(pval)
-        }
+function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascade, putObj, cb){
+    let IDobj = parseSoul(nodeID) //this is only for data Nodes, not relation nodes
+    let {b,t,r,f} = IDobj
+    let {props,log,parent} = getValue(configPathFromChainPath(nodeID),gb)
+    findPropIDs()
+    let timeIndices = {}, logObj = {}, run = [],  pending = {}, toPut = {}, linkChange = {}, err
+    let isPrototype = (f !== undefined && f !== '') ? false : true, isRoot = (parent === '') ? true : false
+    let fOwns, proto = {}
+    if(!isPrototype){
+        let protoSoul = makeSoul({b,t,r,f:''})
+        let allProps = Object.keys(putObj)
+        run.push(['getF',[null]])
+        run.push(['getProps',[protoSoul, allProps, proto]])
+        run.push(['cleanPut',[null]])
     }
-    return {
-        gun,
-        gb,
-        needsCols,
-        cascade,
-        timeLog,
-        timeIndex,
-        path,
-        cb,
-        fromCascade,
-        putObj,
-        isNew,
-        increment: {}, //pval:{last: fromGun, inc: inc}
-        validatedObj: {},
-        timeIndices: {},
-        sets: {},
-        data: {},
-        uniques: {},
-        pending: {},
-        process: function(){
-            let tProps = configPathFromChainPath(this.path)
-            let {props} = getValue(tProps, this.gb)
-            let coercedPutObj = {}
-            //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
-            for (const palias in this.putObj) {
-                let pval = findID(props, palias) 
-                if (pval) {
-                    coercedPutObj[pval] = this.putObj[palias]; 
-                }else{
-                    let err = ' Cannot find column with name: '+ palias +'. Edit aborted'
-                    throw new Error(err)
-                }
-            }
-            this.putObj = coercedPutObj
-            let toV = {}
-            for (const pval in props) {
-                let input = this.putObj[pval]
-                let pconfig = props[pval]
-                let {required,defaultval,autoIncrement} = pconfig
-                if(input !== undefined 
-                || (required && this.isNew)
-                || defaultval !== null 
-                || autoIncrement !== ""){
-                    this.pending[pval] = true
-                    if(this.isNew){
-                        if(required){
-                            if(input === undefined && defaultval === null && !autoIncrement){
-                                throw new Error('Required field missing: '+ alias)
-                            }
-                        }
-                        if(input === undefined && defaultval !== null){
-                            this.putObj[pval] = defaultval
-                        }
+    run.push(['initialCheck',[null]])
+    const util = {
+        getProps: function(soul, pvals, collector){
+            let look = pvals.length
+            let done = 0
+            for (const p of pvals) {
+                gun.get(soul).get(p).get(function(msg,eve){
+                    eve.off()
+                    let v = (msg.put === undefined || msg.put === null) ? null : msg.put
+                    if(v !== null){
+                        collector[p] = v
                     }
-                    toV[pval] = pconfig
-                }
-            }
-            for (const p in toV) {
-                const pcon = toV[p];
-                this.validateProp(p,pcon)
+                    done++
+                    if(done === look){
+                        runNext()
+                    }
+                })
             }
         },
-        validateProp: function(pval){
-            let parse = parseSoul(this.path)
-            Object.assign(parse,{p:pval})
-            let pconfig = getValue(configPathFromChainPath(makeSoul(parse)),this.gb)
-            let {enforceUnique,autoIncrement} = pconfig
-            if (enforceUnique || (autoIncrement !== "" && this.putObj[pval] === undefined)){
-                this.handleLookup(pval,pconfig)
-            }else{
-                this.runValidation(pval,pconfig)
-            }
+        getF: function(){
+            gun.get(nodeID).once(function(node){
+                if(node === undefined){
+                    isNew = true
+                    fOwns = {}
+                }else{
+                    let c = JSON.parse(JSON.stringify(node))
+                    delete c['_']
+                    fOwns = c
+                }
+                runNext()
+            })
+        },
+        updateParentLinks: function(){
+            let protoNextSoul = makeSoul({b,t,r,f:'','<':true})
+            let {p:linkProp} = parseSoul(parent)
+            let parentNode
+            gun.get(protoNextSoul).get('next').get(function(msg,eve){
+                eve.off()
+                parentNode = msg.put
+                if(parentNode === undefined){let e = new Error('Prototype is an unconnected node! (not sure how, or what to do...)');throwError(e)}
+            
+                let {b,t,r} = parseSoul(parentNode)
+                let baseSoul = {b,t,r}
+                let wProp = Object.assign({},baseSoul,{p:linkProp})
+                let parentVariantLinkSoul = makeSoul(Object.assign({},wProp,{f}))
+                gun.get(parentVariantLinkSoul).once(function(node){
+                    if(node !== undefined){
+                        fixLinks(node,false)
+                    }else{
+                        let parentProtoLinkSoul = makeSoul(Object.assign({},baseSoul,{f:''}))
+                        gun.get(parentProtoLinkSoul).once(function(node){
+                            if(node !== undefined){
+                                fixLinks(node,true)
+                            }else{
+                                let e = new Error('Cannot find parent link node. Edit Aborted')
+                                throwError(e)
+                                return
+                            }
+                        })
+                    }
+                })
+                function fixLinks(nodeObj, copy){
+                    for (const key in nodeObj) {
+                        if(key === '_')continue
+                        const v = nodeObj[key];
+                        if(v !== null && typeof v === 'object'){
+                            //this is a current link
+                            let childSoul = v['#']
+                            let {b,t,r} = parseSoul(childSoul)
+                            let lID = makeSoul(b,t,r)
+                            let compare = makeSoul(baseSoul)
+                            if(copy && lID !== compare){
+                                addToPut(parentVariantLinkSoul,{[key]:v},linkChange)
+                            }else if(lID === compare){//this is the child node we are changing
+                                addToPut(parentVariantLinkSoul,{[nodeID]:{'#': nodeID}},linkChange)
+                                if(!copy){//if not copying, then we need to falsy this since node already existed
+                                    addToPut(parentVariantLinkSoul,{[key]:false},linkChange)
+                                }
+                            }
+                            
+                        }
+                    }
+                    runNext()
+                }
+            })
             
         },
-        handleLookup: function(pval,pconfig){
-            let {start,inc} = parseIncrement(pconfig.autoIncrement) || {inc:false}
-            let self = this
-            let current = start
-            let {b,t,rt} = parseSoul(this.path)
-            let gun = this.gun
-            let {enforceUnique, alias} = pconfig
-            let soul = makeSoul({b,t,rt,p:pval})
-            let putVal = this.putObj[pval]
-            let error
-            if((inc && this.isNew) || (enforceUnique && putVal !== undefined)){
-                gun.get(soul).get(function(msg,eve){
-                    eve.off()
-                    let list = msg.put
-                    for (const soulOnList in list) {
-                        if (soulOnList.includes('!')) {//is it a soul, could to a regex test for better assurances
-                            const value = list[soulOnList];
-                            if(inc){//this is an incrementing unique pval, we need to find the largest value and then increment that
-                                current = (current <= value) ? value+inc : current
-                            }else if(enforceUnique 
-                            && putVal !== undefined 
-                            && String(value) === String(putVal) 
-                            && soulOnList !== self.path){//other value found on a different soul
-                                error = 'Non-unique value on property: '+ alias
-                                self.cb.call(cb,error)
-                            }
+        cleanPut: function(){
+            let cleanPutObj
+            for (const p in putObj) {
+                const userVal = putObj[p], fVal = fOwns[p], prVal = proto[p]
+                if([undefined,null].includes(fVal) && prVal !== userVal || ![undefined,null].includes(fVal) && fVal !== userVal){
+                    //if (prop is currently inherited but different) or (fOwns it already and userval is different)
+                    cleanPutObj[p] = userVal
+                }
+            }
+            putObj = cleanPutObj
+            if(!isRoot && isNew){
+                run.unshift(['updateParentLinks',[null]])
+            }else{
+    
+            }
+            runNext()
+        },
+        initialCheck: function(){
+            for (const pval in props) {
+                let input = putObj[pval]
+                let pconfig = props[pval]
+                let {required,defaultval,autoIncrement, enforceUnique, alias} = pconfig
+                if(input !== undefined//user putting new data in
+                    || (isNew 
+                    && (required || autoIncrement !== ""))//need to have it or create it
+                    ){//autoIncrement on this property
+                    pending[pval] = true
+                    if(isNew){
+                        if(required 
+                            && input === undefined 
+                            && defaultval === null 
+                            && (f === true || (f !== true && enforceUnique)) //is not a newFrom() or is a newFrom() w/enforceUnique and required
+                            && !autoIncrement){//must have a value or autoIncrement enabled
+                            throw new Error('Required field missing: '+ alias)
+                        }
+                        if(input === undefined && defaultval !== null){
+                            putObj[pval] = defaultval
                         }
                     }
-                    if(!error){
-                        if(inc){
-                            self.putObj[pval] = current
-                        }
-                        if(enforceUnique){
-                            let uVal
-                            if(inc){
-                                uVal = current
-                            }else{
-                                uVal = putVal
+                    if ((enforceUnique && putObj[pval] !== null && putObj[pval] !== undefined)//must be unique, and value is present OR
+                        || (autoIncrement !== "" && putObj[pval] === undefined && isNew)){//is an autoIncrement, no value provided and is a new node
+                        run.unshift(['checkUnique',[pval]])
+                    }
+                }
+            }
+            runNext()
+        },
+        checkUnique(pval){
+            let pconfig = props[pval]
+            let {start,inc} = parseIncrement(pconfig.autoIncrement) || {inc:false}
+            let {b,t,rt} = parseSoul(nodeID)
+            let {enforceUnique, alias, dataType} = pconfig//dataType can only be 'string' or 'number' w/ enforceUnique:true || 'number' w/ inc
+            let soul = makeSoul({b,t,p:pval})
+            let putVal
+            try {
+                putVal = convertValueToType(putObj[pval],dataType)
+            } catch (error) {
+                throwError(error)
+            }
+            gun.get(soul).once(function(list){
+                list = list || {}
+                let incVals = {}
+                for (const idOnList in list) {
+                    if(['_'].includes(idOnList))continue//anything to skip, add to this array
+                    const value = list[idOnList];
+                    if(inc){//this is an incrementing value, this method should also make it unique.
+                        incVals[value] = true
+                    }
+                    if(enforceUnique 
+                        && putVal !== undefined
+                        && putVal !== null
+                        && putVal !== ""//will allow multiple 'null' fields
+                        && String(value) === String(putVal) 
+                        && idOnList !== nodeID){//other value found on a different soul
+                        err = new Error('Non-unique value on property: '+ alias)
+                        throwError(err)
+                        break
+                    }
+                }
+                if(!err){
+                    if(inc && isNew && putVal === undefined){
+                        let checkVal = start, current
+                        while (current === undefined) {//look for open `start += increment` 'slots' to fill, reuse values that user edited or for 'deleted' items.
+                            if(incVals[checkVal] === undefined){
+                                current = checkVal
                             }
-                            self.uniques[soul] = {[self.path]: uVal}
+                            checkVal += inc
                         }
-                        self.runValidation(pval,pconfig)
+                        putObj[pval] = current
+                    }
+                    runNext()
+                }
+            })
+        }
+    }
+    runNext()
+    function findPropIDs(){
+        let coercedPutObj = {}
+        //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
+        for (const palias in putObj) {
+            let pval = findID(props, palias) 
+            if (pval) {
+                coercedPutObj[pval] = putObj[palias]; 
+            }else{
+                let err = ' Cannot find column with name: '+ palias +'. Edit aborted'
+                throw new Error(err)
+            }
+        }
+        putObj = coercedPutObj
+    }
+    function runNext(){
+        if(run.length){
+            let [fn, args] = run[0]
+            run.shift()
+            util[fn](...args)
+        }else{
+            let sorted
+            try {
+                sorted = sortPutObj(gb,nodeID,putObj,{fromCascade})
+            } catch (error) {
+                throwError(error)
+            }
+            toPut = sorted.toPut
+            timeIndices = sorted.tIdx
+            logObj = sorted.logObj
+            done()
+        }
+    }
+    function done(){
+        let {b,t} = parseSoul(nodeID)
+        let typeSoul = makeSoul({b,t})
+        if(log)timeLog(nodeID,logObj)//log changes
+        if(isNew){//if new add to 'created' index for that thingType
+            console.log('new created', typeSoul, nodeID)
+            timeIndex(typeSoul,nodeID,new Date())
+        }
+        for (const key in timeIndices) {//for each 'date' column, index
+            const unixTS = timeIndices[key];
+            timeIndex(key,nodeID,new Date(unixTS))
+            console.log('indexing prop', key, unixTS)
+        }
+        for (const soul in toPut) {
+            let {p} = parseSoul(soul)
+            let {dataType} = props[p]
+            const putObj = toPut[soul];
+            if(dataType === 'unorderedSet' && putObj === null){
+                gun.get(soul).once(function(setItems){
+                    if(setItems !== undefined){
+                        for (const item in setItems) {
+                            if(item === '_')continue
+                            gun.get(soul).get(item).put(false)
+                        }
                     }
                 })
             }else{
-                delete this.pending[pval]
-                this.checkDone()//nothing to validate, so just see if anything else is left
+                gun.get(soul).put(putObj)
             }
-        },
-        runValidation: function(pval, pconfig){
-            let pathObj = parseSoul(this.path)
-            let propPath = makeSoul(Object.assign({},pathObj,{p:pval}))
-            let value = this.putObj[pval]
-            let {propType, dataType, alias, pickOptions} = pconfig
-            let specials = ["source", "target", "prev", "next", "lookup", "function"]//propTypes that can't be changed through the edit API
-
-            if(propType === undefined || dataType === undefined){
-                let err = 'Cannot find prop types for column: '+ alias +' ['+ pval+'].'
-                throw new Error(err)
-            }
-            if(propType === 'date'){
-                let testDate = new Date(value)
-                if(testDate.toString() === 'Invalid Date'){
-                    throw new Error ('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
-                }else{
-                    this.timeIndices[propPath] = testDate.getTime() //make sure it is a number (unix) for storing in db
-                }
-            }else if(dataType === 'set' && !specials.includes(propType)){
-                if(typeof value !== 'object'){
-                    throw new Error('"set" data must be specified using an Object with keys of the value and values of true/false for whether it is part of the set.')
-                }
-                if(propType === 'pickMultiple'){
-                    for (const pick in value) {
-                        const boolean = value[pick];
-                        if(boolean && !pickOptions.includes(value)){//make sure truthy ones are currently valid options
-                            throw new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
-                        }
-                            
-                    }
-
-                }
-                this.sets[propPath] = value
-            }else if(!specials.includes(propType) || this.fromCascade){
-                this.data[pval] = convertValueToType(value,dataType,this.path)//probably uneccessary in most cases, but conversion is probably quicker than checking.            
-            }
-            delete this.pending[pval]
-            this.checkDone()
-        },
-        checkDone: function(){
-            if(Object.keys(this.pending).length === 0){
-                this.done()
-            }
-        },
-        done: function(){
-            let path = this.path
-            let {b,t,rt} = parseSoul(path)
-            let typeSoul = makeSoul({b,t,rt})
-            let timeIndices = this.timeIndices
-            let sets = this.sets
-            let data = this.data
-            let uniques = this.uniques
-            timeLog(path,Object.assign({},this.data,this.timeIndices,this.sets))//log changes
-            if(this.isNew){//if new add to 'created' index for that thingType
-                console.log('new created', typeSoul, path)
-                timeIndex(typeSoul,path,new Date())
-            }
-            if(Object.keys(data)){//if this contains things other than dates or sets, put them in gun, and trigger cascade
-                gun.get(path).put(data)
-                console.log('putting data', path, data)
-                //setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,propPval) //waits 250-500ms for gun call to settle, then fires cascade
-            }
-            for (const key in timeIndices) {//for each 'date' column, index
-                const unixTS = timeIndices[key];
-                timeIndex(key,path,new Date(unixTS))
-                console.log('indexing prop', key, unixTS)
-            }
-            for (const key in sets) {//for each 'set' column, put data on the prop soul (instead of the node soul)
-                const setObj = sets[key];
-                gun.get(key).put(setObj)
-                console.log('putting set data', key, setObj)
-            }
-            for (const key in uniques) {//for each 'set' column, put data on the prop soul (instead of the node soul)
-                const uObj = uniques[key];
-                gun.get(key).put(uObj)
-                console.log('putting unique data', key, uObj)
-            }
-            this.cb.call(this, false, path)
+            
+        }
+        for (const soul in linkChange) {
+            const putObj = linkChange[soul];
+            gun.get(soul).put(putObj)
         }
 
+        //run cascade here?????
+
+
+
+        cb.call(this, undefined, nodeID)
+    }
+    function throwError(errmsg){
+        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+        console.log(error)
+        cb.call(cb,error)
+    }
+
+}
+function sortPutObj(gb, nodeID, putObj, opts){
+    let pathObj = parseSoul(nodeID)
+    let {fromCascade, fromConfig} = opts
+    let {b,t,rt} = pathObj
+    let {props} = getValue(configPathFromChainPath(nodeID),gb)
+    let toPut = {}, tIdx = {}, logObj = {}
+    for (const pval in putObj) {
+        let propPath = makeSoul(Object.assign({},pathObj,{p:pval}))
+        let uniqueSoul = makeSoul({b,t,rt,p:pval})
+        let value = putObj[pval]
+        let {propType, dataType, alias, pickOptions, enforceUnique} = props[pval]
+        let v = convertValueToType(value,dataType,nodeID)//Will catch Arrays, and stringify, otherwise probably unneccessary
+        let specials = ["source", "target", "link", "lookup", "function"]//propTypes that can't be changed through the edit API
+
+        if(propType === undefined || dataType === undefined){
+            let err = new Error('Cannot find prop types for column: '+ alias +' ['+ pval+'].')
+            throw err
+        }
+        if(propType === 'date'){
+            let testDate = new Date(value)
+            if(testDate.toString() === 'Invalid Date'){
+                let err = new Error('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
+                throw err
+            }else{
+                let unix = testDate.getTime()
+                tIdx[propPath] = unix
+                addToPut(nodeID,{[pval]:unix})
+                logObj[pval] = unix
+            }
+        }else if(dataType === 'unorderedSet' && (!specials.includes(propType) || fromConfig)){
+            if(propType === 'pickMultiple' && v !== null){
+                for (const pick in v) {
+                    const boolean = v[pick];
+                    if(boolean && !pickOptions.includes(pick)){//make sure truthy ones are currently valid options
+                        let err = new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
+                        throw err
+                    }
+                }
+            }
+            addToPut(propPath,v)
+            logObj[pval] = v
+
+        }else if(!specials.includes(propType) || fromCascade || fromConfig){
+            addToPut(nodeID,{[pval]: v})
+            logObj[pval] = v
+       
+        }
+        if((enforceUnique || (autoIncrement && isNew)) && !fromConfig){
+            if(typeof v === 'object') throw new Error('Something went wrong, a unique value should be either a "string" or a "number".')
+            addToPut(uniqueSoul,{[nodeID]:v})
+        }
+    }
+    return {toPut,tIdx,logObj}
+
+
+    function addToPut(putSoul,obj){
+        let pobj = toPut[putSoul]
+        if(!pobj) pobj = {}
+        Object.assign(pobj,obj)
     }
 }
-
 function parseIncrement(incr){
     let out = {}
     if (incr !== ""){
@@ -490,157 +629,44 @@ function parseIncrement(incr){
         return false
     }
 }
-function checkNewRow(gb, path, putObj){//DEPRECATED
-    let propsPath = configPathFromChainPath(path)
-    let {props} = getValue(propsPath, gb)
-    let out = {}
-    for (const pval in props) {
-        const {alias,required, defaultval,autoIncrement} = props[pval];
-        let input = putObj[pval]
-        if(required){
-            if(input === undefined && defaultval === null && !autoIncrement){
-                throw new Error('Required field missing: '+ alias)
-            }
-        }
-        if(input === undefined && defaultval !== null){
-            out[pval] = defaultval
-        }else if(input !== undefined){
-            out[pval] = input
-        }
-    }
-    return putObj
-}
-const validateDataEdit = (gb,editThisPath, putObj, newRow, fromCascade)=>{//DEPRECATED
-    let {b,t,rt} = parseSoul(editThisPath)
-    t = t || rt
-    let output = {}
-    if(newRow){
-        putObj = checkNewRow(gb, path, putObj)//check required fields
-    }
-    for (const pval in putObj) {
-        let propPath = configPathFromChainPath(makeSoul({b,t,rt,p:pval}))
-        let value = putObj[pval]
-        let {propType, dataType, alias, pickOptions} = getValue(propPath, gb)
-        let specials = ["source", "target", "prev", "next", "lookup", "function"]//propTypes that can't be changed through the edit API
-
-        if(propType === undefined || dataType === undefined){
-            let err = 'Cannot find prop types for column: '+ alias +' ['+ pval+'].'
-            throw new Error(err)
-        }
-        if(propType === 'date'){
-            let testDate = new Date(value)
-            if(testDate.toString() === 'Invalid Date'){
-                throw new Error ('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
-            }else{
-                value = testDate.getTime() //make sure it is a number (unix) for storing in db
-            }
-        }
-        if(dataType === 'set'){
-            if(typeof value !== 'object'){
-                throw new Error('"set" data must be specified using an Object with keys of the value and values of true/false for whether it is part of the set.')
-            }
-            if(propType === 'pickMultiple'){
-                for (const pick in value) {
-                    const boolean = value[pick];
-                    if(boolean && !pickOptions.includes(value)){//make sure truthy ones are currently valid options
-                        throw new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
-                    }
-                        
-                }
-
-            }
-        }else{
-            value = convertValueToType(value,dataType,editThisPath)//probably uneccessary in most cases, but conversion is probably quicker than checking.            
-        }
-        
-        
-        if(!specials.includes(propType) || fromCascade){//fromCascade will always write regardless of type (allows to write to a 'funciton' propType)
-            output[pval] = value
-        }
-
-    }
-    return output
-}
-const checkUniqueAlias = (gb,pathArr, alias)=>{
-    let configPath = pathArr.slice()
+const checkUniques = (gb,path, cObj)=>{//for config vals that must be unique among configs
+    let uniques = ['alias','sortval']
+    let configPath = configPathFromChainPath(path)
     let endPath = configPath.pop()//go up one level
     let things = getValue(configPath, gb)
-    if(pathArr.length === 1){
-        return true //base alias, those are not unique
+    if(!path.includes('#') && !path.includes('-') && !path.includes('.')){
+        return true //base nothing unique
     }
+    let err = {}
+    let sorts = 0
     if(things !== undefined){
-        if(endPath[0] === 'p'){//base/table/col
-            for (const gbval in things) {
-                const configObj = things[gbval];
-                if (configObj && configObj.alias && configObj.alias === alias && gbval !== endPath) {
-                    let errmsg = 'Matching Alias found at: '+ gbval
-                    throw new Error(errmsg)
+        for (const id in things) {
+            if(id === endPath)continue
+            const thingPropConfig = things[id];
+            for (const prop of uniques) {
+                let cVal = thingPropConfig[prop]
+                if(prop === 'sortval'){
+                    sorts = (sorts < cVal) ? cVal : sorts
                 }
-            }
-        }else{//row
-            for (const gbval in things) {
-                const rowAlias = things[gbval];
-                if (rowAlias && rowAlias === alias && gbval !== endPath) {
-                    let errmsg = 'Matching Alias found at: '+ gbval
-                    throw new Error(errmsg)
+                let compare = cObj[prop]
+                if(cVal !== undefined && compare !== undefined && (String(cVal) === String(compare) || String(id) === String(compare))){
+                    err[prop] = true
                 }
+            
             }
+        }
+        if(err.sortval){
+            cObj.sortval = sorts++
+            delete err.sortval
+        }
+        let keys = Object.keys(err)
+        if(keys.length){
+            throw new Error('Non-unique value found on key(s): '+keys.join(', '))
         }
         return true
     }else{
         let errmsg = 'Cannot find config data at path: ' + configPath
         throw new Error(errmsg)
-    }
-}
-const checkAliasName = (nextVal, alias)=>{
-    let pOrT = nextVal[0]
-    let newVal = nextVal.slice(1)*1
-    let first = alias[0]
-    let rest = alias.slice(1)*1
-    if(first === pOrT && !isNaN(rest) && rest !== newVal){
-        throw new Error('Alias specified will conflict with internal id')
-    }
-}
-const checkUniqueSortval = (gb,pathArr, sortval)=>{
-    let configPath = pathArr.slice()
-    let endPath = configPath.pop()//go up one level
-    let things = getValue(configPath, gb)
-    if(pathArr.length === 1){
-        return true //base alias, those are not unique
-    }
-    if(things !== undefined){
-        if(endPath[0] !== 'r'){//base/table/col
-            for (const gbval in things) {
-                const configObj = things[gbval];
-                if (configObj && configObj.sortval && configObj.sortval === sortval && gbval !== endPath) {
-                    let err = 'Matching sortval found at: '+ gbval
-                    throw new Error(err)
-                }
-            }
-        }else{//row
-            //no sort on row
-        }
-        return true
-    }else{
-        let err = 'Cannot find config data at path: '+ configPath
-        throw new Error(err)
-    }
-}
-const findNextID = (gb,path)=>{
-    let curIDsPath = configPathFromChainPath(path)
-    curIDsPath.push('props')
-    let curIDs = getValue(curIDsPath, gb)
-    if(curIDs !== undefined){
-        let tOrP = Object.keys(curIDs)[0][0]
-        let ids = Object.keys(curIDs).map(id=>id.slice(1)*1)
-        let nextid = tOrP + (Math.max(...ids)+1)
-        return nextid
-    }else{
-        if(curIDsPath.length === 2){
-            return 't0'
-        }else{
-            return 'p0'
-        }
     }
 }
 const nextSortval = (gb,path)=>{
@@ -658,32 +684,137 @@ const nextSortval = (gb,path)=>{
     nextSort += 10
     return nextSort
 }
-function convertValueToType(value, newType, rowAlias){
+function convertValueToType(value, toType, rowAlias, delimiter){
     let out
-    if(newType === 'string'){
-        out = String(value)
-    }else if(newType === 'number'){
-        let num = value*1
-        if(isNaN(num)){
-            let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to a number. Fix and try again'
-            throw new Error(err)
-        }else{
-            out = num
+    if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
+    if(toType === undefined) throw new Error('Must specify what "type" you are trying to convert ' + value + ' to.')
+    delimiter = delimiter || ', '
+
+    if(toType === 'string'){
+        if(value === null) return null
+        let wasJSON
+        if(typeof value === 'string'){//could be a JSON string
+            try {
+                value = JSON.parse(value)//in case it is a string, that is stringified. Want to get rid of the the JSON
+                wasJSON = true
+            } catch (error) {
+                //do nothing, it is not JSON, `value` should still be the original 'string'
+            }
         }
-    }else if(newType === 'boolean'){
-        value = String(value)
-        let falsy = ['','0','false','null','undefined',""]
-        let truthy = ['1','true','Infinity']
-        if(falsy.includes(value)){//falsy strings
-            out = false
-        }else if (truthy.includes(value)){//truthy strings
-            out = true
+        let type = typeof value
+        if(type === 'string'){//already a string (or was a stringified 'string')
+            out = value
+        }else if(wasJSON || type === 'object'){//if they passed in anything that wasn't a string, it will be now,
+            out = JSON.stringify(value)
+        }else{//for number, boolean (technically should be valid JSON?)
+            out = String(value)
+        }
+        
+    }else if(toType === 'number'){
+        if(value === null || value === ""){
+            out = null
+        }else if(typeof value === 'number'){
+            out = value
         }else{
-            let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to boolean. enter true or false or 0 for false or 1 for true'
+            if(typeof value === 'string'){//could be a JSON string
+                try {
+                    value = JSON.parse(value)
+                } catch (error) {
+                    //do nothing, it is not JSON, `value` should still be 'string'
+                }
+            }
+            if(Array.isArray(value))value = value.length 
+            //??? Anything that is an array going to a number is going to be hard. Would avoid having to convert to string, modify all vals manually
+            //user probably wants to wipe out data if they are trying to go to a number. "count" would be only logical data extraction from an array
+            
+            let num = value*1
+            if(isNaN(num)){
+                //maybe a string of a date (mm/dd/yyyy), final attempt before error
+                let d = new Date(value)
+                if(d.toString() === 'Invalid Date'){
+                    let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to a number. Fix and try again'
+                    throw new Error(err)
+                }else{
+                    out = d.getTime()
+                }
+            }else{
+                out = num
+            }
+        }
+    }else if(toType === 'boolean'){
+        if(value === null){
+            out = null
+        }else{
+            if(typeof value === 'string'){//could be a JSON string
+                try {
+                    value = JSON.parse(value)
+                } catch (error) {
+                    
+                }
+            }
+            if(Array.isArray(value))value = value.join(delimiter)//empty array would be falsy
+            //any object is true (should never be an object passed as a value)
+            //everything should follow javascript truthy or falsy
+            let type = typeof value
+            if(type === 'string' && !["true","false"].includes(value)){
+                throw new Error('Cannot parse string in to boolean, only accepted strings are: "true" or "false".')
+                //must fail, only dataType that can't fail is 'string'
+            }else if(type === 'number' && ![0,1].includes(value)){
+                throw new Error('Cannot parse number in to boolean, only accepted numbers are: 0 (false) or 1 (true).')
+            }
+            //valid = true, false, "true", "false", 0, 1, [] (length = 0), [withOneElement] (length = 1)
+            out = !!value //boolean conversion to make sure
+        }
+        
+    }else if(toType === 'array'){
+        if (value === null){
+            out = null
+        }else if(typeof value === 'string'){
+            try {//is it already valid JSON?
+                out = JSON.stringify(JSON.parse(value))
+            } catch (error) {//nope, make array from split
+                out = JSON.stringify(value.split(delimiter))//arrays are stored as strings on puts
+            }
+        }else if (Array.isArray(value)){
+            out = JSON.stringify(value)
+        }else{
+            let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to an Array. Value must be a string with a delimiter (default delimiter: ", ")'
             throw new Error(err)
+        }
+    }else if(toType === 'unorderedSet'){
+        let temp
+        if (value === null){
+            return null //needs special handling.
+        }else if(typeof value === 'string'){
+            try {
+                let o = JSON.parse(value)
+                if((typeof o === "object" && Object.getPrototypeOf(o) === Object.getPrototypeOf({})) || Array.isArray(o)){
+                    temp = o
+                }else{//is not set like, but valid JSON
+                    let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to an unorderedSet. Value must be a string with a delimiter (default delimiter: ", "), or an Array, or an Object with truthy,falsy values'
+                    throw new Error(err)
+                }
+            } catch (error) {
+                temp = value.split(delimiter)
+            }
+        }
+        
+        if (!Array.isArray(temp)){
+            let o = {}
+            for (const key in temp) {
+                o[key] = !!temp[key]//convert boolean
+            }
+            out = o
+        }else if (Array.isArray(temp)){
+            //assuming array is to be added (for example, like on linking conversion from imported data)
+            let o = {}
+            for (const val of value) {
+                o[val] = true
+            }
+            out = o
         }
     }else{
-        throw new Error('Can only attempt to conver value to "string", "number", or "boolean" using this function')
+        throw new Error('Can only attempt to convert value to "string", "number", "boolean", "array", or "unorderedSet" using this function')
     }
     return out
 }
@@ -736,80 +867,6 @@ function removeFromArr(item,arr){
     }
     return arr
 }
-function findLinkingCol(gb, fromPath, usedInPath){
-    let [base,tval,r,li] = fromPath.split('/')
-    let [ubase,utval,...unknown] = usedInPath.split('/')
-    let uli,upval
-    if(unknown[0] === 'li'){//usedIn LI col
-        [uli,upval] = unknown
-    }else{
-        upval = unknown[0]
-    }
-    if(uli && !li){
-        throw new Error('list items can not reference anything outside of other li')
-    }
-    if(uli && li){//local li fn's
-        if(tval === utval){//local link, type should be 'function'
-            let {GBtype,usedIn, fn} = getValue([base,'props',tval,'li','props',upval], gb)
-            let res = [upval,{GBtype, fn, usedIn}]
-            return res
-        }else{
-            throw new Error('Cannot get non-local links on list items')
-        }
-    }else if(li && !uli){//transaction referencing li (like completed)
-        if(tval === utval){//local link, type should be 'function'
-            let {GBtype,usedIn, fn} = getValue([base,'props',tval,'props',upval], gb)
-            let res = [upval,{GBtype, fn, usedIn}]
-            return res
-        }else{
-            throw new Error('Can only get non list item links from same transaction table')
-        }
-    }else{//li not involved
-        let fn = getValue([ubase,'props',utval,'props',upval, 'fn'], gb)
-        if(tval === utval){//local link, type should be 'function'
-            let {GBtype,usedIn} = getValue([base,'props',tval,'props',upval], gb)
-            let res = [upval,{GBtype, fn, usedIn}]
-            return res
-        }else{
-            let cols = getValue([base,'props',tval,'props'], gb)
-            let res = []
-            for (const p in cols) {
-                const {GBtype,linksTo,linkMultiple} = cols[p];
-                //console.log(GBtype, linksTo)
-                if(['prev','next'].includes(GBtype)){
-                    let [tbase,ttval] = linksTo.split('/')
-                    //console.log(ttval, utval)
-                    if(ttval === utval){
-                        res.push(p)
-                        res.push({GBtype,linksTo,linkMultiple,fn})
-                        return res
-                    }
-                }
-            }
-        }
-    }
-}
-function findAssociatedCol(gb, fromPath, toPath){
-    let [base,tval] = fromPath.split('/')
-    let [ubase,utval] = toPath.split('/')
-    let toCols = getValue([ubase,'props',utval,'props'], gb)
-    let res = []
-    for (const p in toCols) {
-        const {GBtype, associatedWith, associateMultiple} = toCols[p];
-        //console.log(GBtype, linksTo)
-        if(GBtype === 'association'){
-            let [tbase,ttval,fromp] = associatedWith.split('/')
-            //console.log(ttval, utval)
-            if(tbase === base && ttval === tval){
-                res.push(fromp)
-                res.push(p)
-                res.push(associateMultiple)
-                return res
-            }
-        }
-    }
-    throw new Error('Could not find an associated table for paths provided. You must use "associateTables()" before you can associate rows')
-}
 function hasColumnType(gb, tPathOrPpath, type){
     let [base,tval] = tPathOrPpath.split('/')
     let tPath = [base,tval].join('/')
@@ -829,58 +886,16 @@ function hasColumnType(gb, tPathOrPpath, type){
     }
 }
 function getAllColumns(gb, tpath){
-    let cpath = configPathFromChainPath(tpath)
-    let {props} = getValue(cpath, gb)
+    let {b,t,rt} = parseSoul(tpath)
+    let {props} = getValue(configPathFromChainPath(makeSoul({b,t,rt})), gb)
     let out = []
     for (const p in props) {
-        const {archived,deleted} = props[p];
+        const {archived,deleted,sortval} = props[p];
         if (!archived && !deleted) {
-            out.push(p)
+            out[sortval] = p
         }
     }
-    return out
-}
-
-function handleDataEdit(gun, gb, cascade, timeLog, timeIndex, path, newRow, fromCascade, validatedObj, cb){//DEPRECATED
-    newRow = !!newRow
-    let {b,t,rt,r} = parseSoul(path)
-    let typeSoul = makeSoul({b,t,rt})
-    let props = getValue(typeSoul,gb)
-    let timeIndices = {}
-    let sets = {}
-    let data = {}
-    let hasData = 0
-    for (const propPval in validatedObj) {
-        let propPath = makeSoul({b,t,rt,r,p:propPval})
-        const value = validatedObj[propPval];
-        let {propType,dataType} = props[propPval]
-        if(propType === 'date'){
-            timeIndices[propPath] = value
-        }else if(dataType === 'set'){
-            sets[propPath] = value
-        }else{
-            hasData++
-            data[propPval] = value
-        }
-    }
-    timeLog(path,validatedObj)//log changes
-    if(newRow){//if new add to 'created' index for that thingType
-        timeIndex(typeSoul,path,new Date())
-    }
-    if(hasData){//if this contains things other than dates or sets, put them in gun, and trigger cascade
-        gun.get(path).put(data)
-        //setTimeout(cascade,Math.floor(Math.random() * 500) + 250,path,propPval) //waits 250-500ms for gun call to settle, then fires cascade
-    }
-    for (const key in timeIndices) {//for each 'date' column, index
-        const unixTS = timeIndices[key];
-        timeIndex(key,rowID,new Date(unixTS))
-    }
-    for (const key in sets) {//for each 'set' column, put data on the prop soul (instead of the node soul)
-        const setObj = sets[key];
-        gun.get(key).put(setObj)
-    }
-    cb.call(this, false, path)
-
+    return out.filter(n => n!==undefined)
 }
 function addAssociation(gun,gb,getCell,path,toPath, cb){
     // getCell has changed!
@@ -935,85 +950,6 @@ function removeAssociation(gun,gb,path,toPath,cb){
     gun.get(lpathLinkSoul).get(path).put(false)
     cb.call(this, undefined)
 
-}
-function retrieveUtil(gun,gb,path,colArr,callBack){//like chain retrieve but w/o DI and returns archived and deleted cols
-    //retrieve row with certain columns
-    //colArr must have pvals
-    let [base,tval,r] = path.split('/')
-    let cols = getValue([base, 'props', tval, 'props'], gb)
-    let columns = {}
-    if(colArr){// check for pvals already, or attemept to convert col array to pvals
-        for (let j = 0; j < colArr.length; j++) {
-            const pval = colArr[j];
-            columns[pval] = undefined
-        }
-    }else{//full object columns
-        for (const colp in cols) {
-            columns[colp] = undefined
-        }
-    }
-    for (const p in columns) {
-        getRetrieve(gun, gb, path, columns, p, callBack) 
-    }
-    return 
-}
-function getRetrieve(gun,gb,path,colObj,pval,callBack){
-    try{
-        let root = gun.back(-1)
-        let [base,tval,r,li,lir] = path.split('/')
-        let {type} = getValue([base,'props',tval],gb)
-        let {GBtype} = getValue([base,'props',tval,'props',pval],gb)
-        let subSoul = ''
-        //if type != static, then must look for data on node, not col
-        //if GBtype = 'prev' || 'next' || 'association', then look for data in appropriate place
-        if(['prev','next'].includes(GBtype)){
-            subSoul = 'links'
-        }
-        if(GBtype === 'association'){
-            subSoul = 'associations'
-        }
-        const collectAndSend = (msg, ev) => {
-            let data = JSON.parse(JSON.stringify(msg.put))
-            ev.off()
-            if(data === undefined){
-                colObj[pval] = null
-            }else if(!subSoul){
-                colObj[pval] = data
-            }else{
-                let arr = []
-                for (const key in data) {
-                    if(key === '_'){
-                        continue
-                    }
-                    const value = data[key];
-                    if (value) {
-                        arr.push(key)
-                    }
-                }
-                colObj[pval] = arr
-            }
-            if(Object.values(colObj).includes(undefined)){
-                return
-            }else{
-                callBack.call(this,colObj)
-            }
-        }
-        console.log(type,subSoul,li)
-        if(type === 'static' && !subSoul){
-            root.get([base,tval,pval].join('/')).get(path).get(collectAndSend)
-        }else if(type === 'static' && subSoul){
-            let soul = [base,tval,r,subSoul,pval].join('/')
-            root.get(soul).get(collectAndSend)
-        }else if(type !== 'static' && !subSoul && !li){
-            root.get([base,tval,r].join('/')).get(pval).get(collectAndSend)
-        }else if(type !== 'static' && subSoul && !li){
-            root.get([base,tval,r,subSoul,pval].join('/')).get(collectAndSend)
-        }else if(type !== 'static' && li){
-            root.get(path).get(pval).get(collectAndSend)
-        }
-    }catch(e){
-        callBack.call(this,undefined,e)
-    }
 }
 
 function parseSort(obj,colArr){
@@ -1112,6 +1048,7 @@ function formatQueryResults(results, qArr, colArr){//will export this for as a d
         return results
     }
 }
+
 function buildPermObj(type, curPubKey, usersObj,checkOnly){
     curPubKey = curPubKey || false
     let types = ['base','table','row','group']
@@ -1141,6 +1078,7 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
     }
     return out
 }
+
 function rand(len, charSet){
     var s = '';
     len = len || 24; // you are not going to make a 0 length random number, so no need to check type
@@ -1148,16 +1086,73 @@ function rand(len, charSet){
     while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
     return s;
 }
+function hash64(string){
+    let h1 = hash(string)
+    return h1 + hash(h1 + string)
+}
+function hash(key, seed) {
+	var remainder, bytes, h1, h1b, c1, c2, k1, i;
+	
+	remainder = key.length & 3; // key.length % 4
+	bytes = key.length - remainder;
+	h1 = seed;
+	c1 = 0xcc9e2d51;
+	c2 = 0x1b873593;
+	i = 0;
+	
+	while (i < bytes) {
+	  	k1 = 
+	  	  ((key.charCodeAt(i) & 0xff)) |
+	  	  ((key.charCodeAt(++i) & 0xff) << 8) |
+	  	  ((key.charCodeAt(++i) & 0xff) << 16) |
+	  	  ((key.charCodeAt(++i) & 0xff) << 24);
+		++i;
+		
+		k1 = ((((k1 & 0xffff) * c1) + ((((k1 >>> 16) * c1) & 0xffff) << 16))) & 0xffffffff;
+		k1 = (k1 << 15) | (k1 >>> 17);
+		k1 = ((((k1 & 0xffff) * c2) + ((((k1 >>> 16) * c2) & 0xffff) << 16))) & 0xffffffff;
+
+		h1 ^= k1;
+        h1 = (h1 << 13) | (h1 >>> 19);
+		h1b = ((((h1 & 0xffff) * 5) + ((((h1 >>> 16) * 5) & 0xffff) << 16))) & 0xffffffff;
+		h1 = (((h1b & 0xffff) + 0x6b64) + ((((h1b >>> 16) + 0xe654) & 0xffff) << 16));
+	}
+	
+	k1 = 0;
+	
+	switch (remainder) {
+		case 3: k1 ^= (key.charCodeAt(i + 2) & 0xff) << 16;
+		case 2: k1 ^= (key.charCodeAt(i + 1) & 0xff) << 8;
+		case 1: k1 ^= (key.charCodeAt(i) & 0xff);
+		
+		k1 = (((k1 & 0xffff) * c1) + ((((k1 >>> 16) * c1) & 0xffff) << 16)) & 0xffffffff;
+		k1 = (k1 << 15) | (k1 >>> 17);
+		k1 = (((k1 & 0xffff) * c2) + ((((k1 >>> 16) * c2) & 0xffff) << 16)) & 0xffffffff;
+		h1 ^= k1;
+	}
+	
+	h1 ^= key.length;
+
+	h1 ^= h1 >>> 16;
+	h1 = (((h1 & 0xffff) * 0x85ebca6b) + ((((h1 >>> 16) * 0x85ebca6b) & 0xffff) << 16)) & 0xffffffff;
+	h1 ^= h1 >>> 13;
+	h1 = ((((h1 & 0xffff) * 0xc2b2ae35) + ((((h1 >>> 16) * 0xc2b2ae35) & 0xffff) << 16))) & 0xffffffff;
+	h1 ^= h1 >>> 16;
+
+	return h1 >>> 0;
+}
+
+const SOUL_ALIAS = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g','&':'f'}//makes it easier to type out...
+const SOUL_SYM_ORDER = '!#-.$&^*|%[;@:/?' // , is used internally for splitting souls, _ is reserved for _source _target as special prop IDs on relationships
 function makeSoul(argObj){
-    let length = {'!':10,'#':6,'-':6,'$':10,'.':6,'^':5}
+    let length = {'!':10,'#':6,'-':6,'$':10,'.':6,'^':5,'&':7}
     let soul = ''
-    let alias = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g'}
-    for (const sym of soulSymbolOrder) {
-        let val = argObj[sym] || argObj[alias[sym]]
-        if(val){
+    for (const sym of SOUL_SYM_ORDER) {
+        let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
+        if(val !== undefined || (sym === '&' && val === '')){
             soul += sym
             if(val === 'new' && length[sym])val=rand(length[sym])
-            if(typeof val === 'string' || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
+            if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
                 soul += val
             }
         }
@@ -1166,12 +1161,11 @@ function makeSoul(argObj){
 }
 function parseSoul(soul){
     //first character of soul MUST be some symbol, or this won't work
-    let alias = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g'}
     let out = {}
     let last = 0
     let curSym = [soul[0]]
     let idx
-    for (const char of soulSymbolOrder) {
+    for (const char of SOUL_SYM_ORDER) {
         if(char === soul[0])continue
         idx = soul.indexOf(char)
         if(idx !== -1){
@@ -1185,10 +1179,11 @@ function parseSoul(soul){
     function toOut (toIdx){
         toIdx = toIdx || idx
         let s = curSym.pop()
-        let al = alias[s]
-        if(al)s=al
-        let args = soul.slice(last+1,toIdx) //"" for no args
-        out[s] = args || true
+        let al = SOUL_ALIAS[s]
+        let args = soul.slice(last+1,toIdx) || true //"", which we want for variants, else `true` for no args
+        if(s === '&' && args===true)args = ''
+        out[s] = args
+        if(al)out[al] = args //put both names in output?
     }
     return out
 }
@@ -1205,31 +1200,31 @@ const soulSchema = {
     |: permissions (just has to be present, nothing follows symbol)
     %: config (just has to be present, nothing follows symbol)
     :: timeBlock (followed by unix timestamp of beginning of block (if no timestamp, then this node contains first and last block and 'last' times for all nodeIDs))
-    [: Array/List node. Can be followed with a certain name for the type of list
-    &: expansion
+    [: Array/List node. Will have keys of hashes and values of JSON values
+    &: Variant/Fork ID (blank ID means this is the prototype)
     ;: expansion
     @: expansion
     /: scope (symbol followed by a string (allows for extention of soul name spacing)) always second to last
     ?: args (symbol followed by a string. This string is additional arguments or parameters to be used with any symbol) Must be last in soul (can contain any char)
     */
-    "!" : "just a base ID, no data at this node? Maybe just all table/relation IDs?",
+    "!" : "just a base ID, unordered set of all table/relation IDs?",
 
-    "!#" : "base and table, list of prop IDs?",
-    "!-" : "base and relation, list of prop IDs?",
+    "!#" : "base and table, unordered set of all prop IDs",
+    "!-" : "base and relation, unordered set of all prop IDs",
     "!%" : "base config",
     "!^" : "group in base (contains the list of pubkeys). If not followed by ID, then list of {ids:alias}",
     "!|" : "base level permissions",
     "!|super" : "super admin of this base",
     
     "!%:" : "base config timelog of changes??",
-    "!#." : "base, table, column. no data at this soul, but could be?",
+    "!#." : "base, table, column. Data on this is used for enforceUnique/autoIncrement, keys of nodeIDs and values of the value.",
     "!-." : "base, relation, column. no data at this soul, but could be?",
     "!#%" : "nodeType config",
     "!-%" : "relation config",
-    "!#$" : "dataNode",
+    "!#$" : "node ID. contains variant information {[!#$&]: true/false}. unordered set of currently active variants",
     "!-$" : "relationNode (required keys of '_src' & '_trgt', optional '@' if target is snapshotted)",
     "!#|" : "table permissions",
-    "!#-" : "base table relation, (if no relation ID after '>', then this soul contains a list of all connected/outgoing relations for this tableID)",
+    "!#-" : "????base table relation, (if no relation ID after '-', then this soul contains a list of all connected/outgoing relations for this tableID)",
     "!^|" : "group permissions (who can add/remove/chp)",
     "!#:" : "table time index for node 'created' (also considered 'active' list (if deleted this is falsy on list))",
     "!^*" : "user defined group list (pubkeys : t/f)",
@@ -1244,13 +1239,21 @@ const soulSchema = {
     "!#$:" : "timelog (history of edits to this node) Need to include relationship edits here, since they 'define' this node",
     "!^*|" : "user defined group permissions (add, remove, chp)",
     "!#$|" : "permissions on node itself (owner, create, read, update, destroy, chp)",
-    "!#.$" : "specific prop on soul, ONLY USED FOR NESTED NODES. (contains {[souls of sub-nodes]: true/false})",
+    "!#$;" : "';' is followed by a hash value of the array value",
+    
     "!#$-" : "contains keys of ('<' || '>') + [relationship ID] + [!-$ realtionSoul] and values of (t/f)",
+    "!#$&" : "prototype data node. If '&' has numbers after it, it is the variant ID",
+    
 
     "!#.%:" : "timelog of prop config changes??",
-    "!-.%:" : "timelog of relation prop config changes??"
+    "!-.%:" : "timelog of relation prop config changes??",
+    "!#.$&" : "node unordered set data or array hash map and length for '.' property",//if propType = 'data' dataType = 'array' and enforceUnique, it is an ordered Set
+    "!-.$&" : "relation unordered set data",
+
+    "!#.$&[" : "Will have 'length', keys of 0,1..., and hashes as keys with the values of JSON"
+    
+    
     }
-const soulSymbolOrder = '!#-.$^*|%:[&;@/?'
 
 
 function watchObj(){
@@ -1291,18 +1294,13 @@ module.exports = {
     configPathFromChainPath,
     configSoulFromChainPath,
     findID,
-    findRowID,
-    findRowAlias,
     gbForUI,
     gbByAlias,
     linkColPvals,
     setValue,
     setMergeValue,
     getValue,
-    validateDataEdit,
-    checkUniqueAlias,
-    checkUniqueSortval,
-    findNextID,
+    checkUniques,
     nextSortval,
     convertValueToType,
     isMulti,
@@ -1312,14 +1310,9 @@ module.exports = {
     watchObj,
     allUsedIn,
     removeFromArr,
-    findLinkingCol,
     hasColumnType,
-    handleDataEdit,
     addAssociation,
     removeAssociation,
-    retrieveUtil,
-    getRetrieve,
-    checkAliasName,
     getRowPropFromCache,
     cachePathFromRowID,
     setRowPropCacheValue,
@@ -1332,5 +1325,11 @@ module.exports = {
     rand,
     makeSoul,
     parseSoul,
-    makePutObj
+    putData,
+    NODE_SOUL_PATTERN,
+    PROPERTY_PATTERN,
+    ISO_DATE_PATTERN,
+    NULL_HASH,
+    sortPutObj,
+    newID
 }

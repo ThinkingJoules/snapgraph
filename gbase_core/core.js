@@ -53,7 +53,9 @@ const {
     hasColumnType,
     makeSoul,
     parseSoul,
-    rand
+    rand,
+    NULL_HASH,
+    ISO_DATE_PATTERN
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -131,7 +133,7 @@ const gunToGbase = (gunInstance,baseID) =>{
     associateTables = makeassociateTables(gun,gb)
     handleConfigChange = makehandleConfigChange(gun,gb,gunSubs,getCell,addProp,cascade,solve,tIndex,tLog)
     linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
-    config = makeconfig(gb,handleConfigChange)
+    config = makeconfig(handleConfigChange)
     qIndex = queryIndex(gun)
     associateWith = makeassociateWith(gun,gb,getCell)
     unassociate = makeunassociate(gun,gb)
@@ -471,87 +473,255 @@ function nodeChainOpt(_path){
 
 
 //CACHE
-
-function loadRowPropToCache(rowID, pval){
-    let {b,t,rt,r} = parseSoul(rowID)
-    let p = pval
-    let dataType = getDataType(gb,makeSoul({b,t,rt,p}))
-    let cpath = cachePathFromRowID(rowID,pval)
-    let propSet = makeSoul({b,t,rt,p,r})
-    let nodeSoul = makeSoul({b,t,rt,r})
+function formatData(format, pType,dType,val){
+    //returns the formatted value
+    if(format){
+        if(pType === 'date'){
+            //date formatting
+            //format should be an object
+        }else{
+            //solve()? need a subsitute
+            //might make a formatter solve so it is faster
+        }
+    }
+    return val
+}
+function loadRowPropToCache(nodeID, p){
+    let {b,t,rt,r,f} = parseSoul(nodeID)
+    let nodeSoul = makeSoul({b,t,rt,r,f})
+    let protoSoul = makeSoul({b,t,rt,r,f:true})
     let subname = nodeSoul+'+'+p
-
-    if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
-        gun.get(propSet, function(msg,eve){//check for existence only
+    let protoSub = protoSoul+'+'+p
+    let toGet = []
+    if(!gunSubs[protoSub]){//needs both (or this is proto and not subd)
+        toGet.push(protoSoul)
+    }else if(protoSub !== subname && !gunSubs[subname]){//should only run if request was for a var
+        toGet.push(nodeSoul)
+    }
+    if(toGet.length){
+        checkExist(toGet[0])
+    }
+    function checkExist(soul){
+        //if nodeID != proto nodeID, run getVar, after this
+        gun.get(soul).get(p, function(msg,eve){//check for existence only
             eve.off()
             if(msg.put === undefined){
-                setRowPropCacheValue(cpath,pval,[],cache)
+                sendToCache(soul,p,null)
+            }
+            setupSub(soul)
+            toGet.shift()
+            if(toGet.length){
+                checkExist(toGet[0])
             }
         })
-        gun.get(propSet).on(function(gundata,id){//gundata should be whole node, not just changes
-            let data = Gun.obj.copy(gundata)
-            let links = []
-            for (const key in data) {
-                if(key === '_')continue
-                const torf = data[key];
-                if (torf) {//if current link
-                    links.push(key) 
-                }
-            }
-            setRowPropCacheValue(cpath,links,cache)
-            handleNewRowPropData(rowID,pval,links) //<<
-        })
-        gunSubs[propSet] = true
-    }else if(!gunSubs[subname]){
-        gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
-            eve.off()
-            if(msg.put === undefined){
-                setRowPropCacheValue(cpath, null, cache)
-            }
-        })
-        gun.get(nodeSoul).get(p).on(function(value){
-            handleNewRowPropData(nodeSoul,pval,value) //<<
-            setRowPropCacheValue(cpath,value,cache)
-        }) 
-        gunSubs[subname] = true
-    }else{//do nothing, gun is already subscribed and cache is updating
 
     }
-}
-function getCell(rowID,pval,cb){
-    let {b,t,rt,r} = parseSoul(rowID)
-    let p = pval
-    let dataType = getDataType(gb,makeSoul({b,t,rt,p}))
-    let cpath = cachePathFromRowID(rowID,pval)
-    let propSet = makeSoul({b,t,rt,p,r})
-    let nodeSoul = makeSoul({b,t,rt,r})
-    let value = getRowPropFromCache(cpath, cache)
-    if(value === undefined){
-        loadRowPropToCache(rowID, pval)
-        if(dataType === 'set'){
-            gun.get(propSet, function(msg,eve){//check for existence only
-                eve.off()
-                let out = []
-                if(msg.put !== undefined){
-                    for (const soul in msg.put) {
-                        const boolean = msg.put[soul];
-                        if(boolean){
-                            out.push(soul)
-                        }
+    function setupSub(soul){
+        let sname = soul+'+'+p
+        let {b,t,rt} = parseSoul(soul)
+        let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,rt,p})),gb)
+    
+        gun.get(soul).get(p).on(function(value){
+            let toCache = value
+            if(dataType === 'unorderedSet'){//this will be a full object
+                let data = JSON.parse(JSON.stringify(value))
+                let links = []
+                for (const key in data) {
+                    if(key === '_')continue
+                    const boolean = data[key];
+                    if (boolean) {//if current link
+                        links.push(key) 
                     }
                 }
-                cb.call(this,out)
-            })
+                toCache = links
+            }else if(dataType = 'array'){
+                try {
+                    toCache = JSON.parse(value)
+                    for (let i = 0; i < toCache.length; i++) {
+                        const el = toCache[i];
+                        if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                            toCache[i] = new Date(el)
+                        }
+                    }
+                } catch (error) {
+                    // leave as is..
+                }
+            }
+            handleNewRowPropData(soul,p,toCache) //<< needs update
+            //setRowPropCacheValue(cpath,value,cache)
+            sendToCache(soul,p,toCache)//needs to handle object assigning/creation and prop deleting
+        }) 
+        gunSubs[sname] = true
+    }
+}
+function sendToCache(nodeID, p, value){
+    let {b,t,rt,r,f} = parseSoul(nodeID)
+    let cPath = cachePathFromChainPath(nodeID)
+    let node = getValue(cPath,cache)
+    let pObj = {[p]:value}
+    //handle found or null first
+    if(node && value !== null){
+        Object.assign(node,pObj)
+        return
+    }
+    if(value === null && f !== '' && node){
+        //if removing a value on a variant and there is a node create in cache already
+        console.log(nodeID,p,value)
+        delete node[p]
+        return
+    }
+    if(f === ''){//this is the protoType that is not in cache
+        setValue(cPath,pObj,cache)
+    }else{
+        let proto = getValue(cachePathFromChainPath(makeSoul({b,t,rt,r,f:true})),cache)
+        if(!proto){//this should really error, because it should already have found it...
+            //going to set to undefined, as any gun undefineds will be null
+            proto = {[p]:undefined}
+            setValue(cPath,proto,cache)
+        }
+        let variant = Object.create(proto)
+        if(value !== null){//if they requested a value that was null, just create the object so it can inherit through it
+            Object.assign(variant,pObj)
+        }
+        setValue(cPath,variant,cache)
+    }
+}
+
+function getCell(nodeID,p,cb,raw){
+    //will return the inheritted value if not found on own node
+    raw = !!raw //if it is true, we skip the formatting
+    let {b,t,rt,r,f} = parseSoul(nodeID)
+    let propPath = makeSoul({b,t,rt,p})
+    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
+    let cPath = cachePathFromChainPath(nodeID)
+    let node = getValue(cPath,cache)
+    if(node && node[p] !== undefined){
+        val = node[p]
+        if(!raw)val = formatData(format,propType,dataType,val)
+        cb.call(this,val)
+        return
+    }
+    let nodeSoul = makeSoul({b,t,rt,r,f})
+    let protoSoul = makeSoul({b,t,rt,r,f:true})
+    let isProto = (nodeSoul === protoSoul)
+    getData(nodeSoul)
+    function getData(soul){
+        //if nodeID != proto nodeID, run getVar, after this
+        let {b,t,rt} = parseSoul(soul)
+        let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,rt,p})),gb)
+        gun.get(soul).get(p, function(msg,eve){//check for existence only
+            eve.off()
+            loadRowPropToCache(soul, p)
+            let val = msg.put
+            if([null,undefined].includes(val) && isProto){
+                cb.call(this,null)
+                return
+            }
+            if([null,undefined].includes(val) && !isProto){
+                getData(protoSoul)
+                return
+            }
+            //so we have data on this soul and this should be returned to the cb
+            if(dataType === 'unorderedSet'){//this will be a full object
+                let data = JSON.parse(JSON.stringify(val))
+                let links = []
+                for (const key in data) {
+                    if(key === '_')continue
+                    const obj = data[key];
+                    if (typeof obj === 'object' && obj !== null) {//if current link
+                        links.push(key) 
+                    }
+                }
+                val = links
+            }else if(dataType = 'array'){
+                try {
+                    val = JSON.parse(val)
+                    for (let i = 0; i < val.length; i++) {
+                        const el = val[i];
+                        if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                            val[i] = new Date(el)
+                        }
+                    }
+                } catch (error) {
+                    // leave as is..
+                }
+            }
+            if(!raw)val = formatData(format,propType,dataType,val)
+            cb.call(this,val)
+        })
+    }
+}
+function getArray(nodeID,pval,cb){
+    //nodeID should be !#$&
+    let arrSoul = makeSoul(Object.assign(parseSoul(nodeID),{p:pval, '[':true}))
+    let arr = [], hashes = {}, length = 0, err
+    gun.get(arrSoul).get('length').get(function(msg,eve){
+        eve.off()
+        if(msg.put === undefined){
+            done()
         }else{
-            gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
+            length = msg.put*1 //coerce to number incase it is a string
+            getHashes()
+        }
+
+    })
+    function getHashes(){
+        if(length === 0 || length === NaN)done()
+        let have = 0
+        for (let i = 0; i < length; i++) {
+            gun.get(arrSoul).get(i).get(function(msg,eve){
                 eve.off()
-                let val = (msg.put === undefined) ? null : msg.put
-                cb.call(this,val)
+                let h = msg.put
+                if(msg.put === undefined){
+                    h = NULL_HASH
+                }
+                addHash(h,i)
+                have++
+                if(have === length){
+                    getValues()
+                }
+            })            
+        }
+    }
+    function getValues(){
+        let vals = Object.keys(hashes).length
+        let done = 0
+        for (const hash in hashes) {
+            gun.get(arrSoul).get(hash).get(function(msg,eve){
+                eve.off()
+                const idxArr = hashes[hash];
+                let value
+                let json = msg.put
+                if(json === undefined){
+                    value = null
+                }
+                try {
+                    value = JSON.parse(json)
+                } catch (e) {
+                    value = json //invalid json? shouldn't happen if gbase api is used
+                }
+                if(ISO_DATE_PATTERN.test(value)){//JSON takes a date object to ISO string on conversion
+                    value = new Date(value)
+                }
+                for (const idx of idxArr) {//replace hash with value to all indices in the output array
+                    arr[idx] = value
+                }
+                done++
+                if(done === vals){
+                    done()
+                }
             })
         }
-    }else{
-        cb.call(this,value)
     }
+    function done(){
+        cb.call(cb,arr)
+    }
+    function addHash(hash,idx){
+        let idxArr = hashes[hash]
+        if(!Array.isArray(idxArr))idxArr = []
+        idxArr.push(idx)
+    }
+
 }
 
 
@@ -765,7 +935,7 @@ function handleNewRowPropData(rowID,pval,value){
 function setupSub(qObj){
     //subParams will have rows object in it {range: {from,to,idx,items}, type: table,row,li, columns: {p0,p1,etc}, query: [qArr], userCB, allRows}
     let {subID,allRows,allColumns,range,type,columns,query,userCB,arrMap,data,output,needRows} = qObj
-    let [path] = subID.split('{')
+    let [path] = subID.split(',')
     let {b,t} = parseSoul(path)
     let subParams = {userCB,query,allRows,range,columns,type,allColumns,arrMap,last:output}
     console.log('setting up or updating sub: '+ subID)
@@ -1154,7 +1324,7 @@ function gatherData(qObj){
     }
 }
 function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
-    let {b,t,r} = parseSoul
+    let {b,t,r,f} = parseSoul
     let table = makeSoul({b,t})
     let type
     let hasSearch = (qArr.filter(o => o.SEARCH).length) ? true : false
@@ -1167,10 +1337,10 @@ function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
     }
     let subID
     if(sVal){
-        subID = path + '{' + sVal
+        subID = path + ',' + sVal
     }else{
         let id = rand(4)
-        subID = path + '{' + id
+        subID = path + ',' + id
     }
     let {arrMap,last} = getValue([b,t,subID],gsubsParams) || {arrMap: false,last:[]}
     return {
@@ -1293,11 +1463,11 @@ function addDataToQobj(rowID, pval, data, qObj){
     qObj.isRowDone(rowID)
 }
 function getRowProp(qObj, rowID, pval){
-    let {b,t,tr,r} = parseSoul(rowID)
+    let {b,t,tr,r,f} = parseSoul(rowID)
     let p = pval
     let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,tr,p}))//rowID will only have one or other
-    let propSet = (t) ? makeSoul({b,t,p,r}) : makeSoul({b,tr,p,r})
-    let nodeSoul = (t) ? makeSoul({b,t,r}): makeSoul({b,tr,r})
+    let propSet = (t) ? makeSoul({b,t,p,r,f}) : makeSoul({b,tr,p,r,f})
+    let nodeSoul = (t) ? makeSoul({b,t,r,f}): makeSoul({b,tr,r,f})
     let subname = nodeSoul+'+'+p
 
     if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
