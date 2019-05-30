@@ -67,7 +67,6 @@ const {makenewBase,
     makenewNodeType,
     makeaddProp,
     makenewNode,
-    makelinkColumnTo,
     makeconfig,
     makeedit,
     makelinkRowTo,
@@ -87,11 +86,14 @@ const {makenewBase,
     makenewGroup,
     makeaddUser,
     makeuserAndGroup,
-    makechp
+    makechp,
+    makeimportChildData,
+    makeaddChildProp,
+    makepropIsLookup
 } = require('./chain_commands')
-let newBase,newNodeType,addProp,newNode,linkColumnTo,config,edit
-let linkRowTo,unlinkRow,clearColumn,importData,importNewTable,associateTables,associateWith,unassociate
-let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
+let newBase,newNodeType,addProp,newNode,config,edit
+let linkRowTo,unlinkRow,importData,importNewTable,associateTables,associateWith,unassociate
+let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp,importChildData,addChildProp,propIsLookup
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubsParams)
@@ -121,6 +123,9 @@ const gunToGbase = (gunInstance,baseID) =>{
     newBase = makenewBase(gun)
     newNodeType = makenewNodeType(gun,gb)
     addProp = makeaddProp(gun,gb)
+    addChildProp = makeaddChildProp(gun,gb,triggerConfigUpdate)
+
+    propIsLookup = makepropIsLookup(gun,gb,getCell,triggerConfigUpdate)
 
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
@@ -130,9 +135,9 @@ const gunToGbase = (gunInstance,baseID) =>{
     unlinkRow = makeunlinkRow(gun,gb)
     importData = makeimportData(gun, gb)
     importNewTable = makeimportNewTable(gun,gb,tLog,tIndex,triggerConfigUpdate)
+    importChildData = makeimportChildData(gun,gb,getCell,tLog,tIndex,triggerConfigUpdate)
     associateTables = makeassociateTables(gun,gb)
     handleConfigChange = makehandleConfigChange(gun,gb,gunSubs,getCell,addProp,cascade,solve,tIndex,tLog)
-    linkColumnTo = makelinkColumnTo(gb,handleConfigChange)
     config = makeconfig(handleConfigChange)
     qIndex = queryIndex(gun)
     associateWith = makeassociateWith(gun,gb,getCell)
@@ -450,7 +455,7 @@ function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
 function nodeTypeChainOpt(_path){
-    return {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path),prop,node}
+    return {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), addChildProp: addChildProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path),prop,node}
 }
 function relationChainOpt(_path){
     return {_path, config: config(_path), newRow: newNode(_path), newColumn: addProp(_path), importData: importData(_path),prop}
@@ -459,7 +464,7 @@ function relationChainOpt(_path){
 function propChainOpt(_path, propType, dataType){
     let out = {_path, config: config(_path)}
     if(['string','number'].includes(dataType) && propType === 'data'){
-        out = Object.assign(out,{linkColumnTo: linkColumnTo(_path)})
+        out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
     }
     return out
 }
@@ -566,7 +571,6 @@ function sendToCache(nodeID, p, value){
     }
     if(value === null && f !== '' && node){
         //if removing a value on a variant and there is a node create in cache already
-        console.log(nodeID,p,value)
         delete node[p]
         return
     }
@@ -595,14 +599,15 @@ function getCell(nodeID,p,cb,raw){
     let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
     let cPath = cachePathFromChainPath(nodeID)
     let node = getValue(cPath,cache)
-    if(node && node[p] !== undefined){
-        val = node[p]
-        if(!raw)val = formatData(format,propType,dataType,val)
-        cb.call(this,val)
-        return
-    }
     let nodeSoul = makeSoul({b,t,rt,r,f})
     let protoSoul = makeSoul({b,t,rt,r,f:true})
+    if(node && node[p] !== undefined){
+        val = node[p]
+        let from = (node.hasOwnProperty(p)) ? nodeSoul : protoSoul
+        if(!raw)val = formatData(format,propType,dataType,val)
+        cb.call(this,val, from)
+        return
+    }
     let isProto = (nodeSoul === protoSoul)
     getData(nodeSoul)
     function getData(soul){
@@ -614,7 +619,7 @@ function getCell(nodeID,p,cb,raw){
             loadRowPropToCache(soul, p)
             let val = msg.put
             if([null,undefined].includes(val) && isProto){
-                cb.call(this,null)
+                cb.call(this,null,soul)
                 return
             }
             if([null,undefined].includes(val) && !isProto){
@@ -647,7 +652,7 @@ function getCell(nodeID,p,cb,raw){
                 }
             }
             if(!raw)val = formatData(format,propType,dataType,val)
-            cb.call(this,val)
+            cb.call(this,val, soul)
         })
     }
 }

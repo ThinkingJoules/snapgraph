@@ -1173,19 +1173,23 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
 
 //IMPORT STUFF
 
-const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, append)=>{
+const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, append, addBackLink)=>{
     // create configs
     let path = makeSoul({b, t})
     let gbpath = configPathFromChainPath(path)
     let colspath = gbpath.slice()
     colspath.push('props')
     let cols = getValue(colspath, gb)
+    addBackLink = !!addBackLink
     let aliasLookup = {}
     let newPconfigs = {}
     let externalIDidx
     if(eID){
         let i = colHeaders.indexOf(eID)
         externalIDidx = (i === -1) ? false : i
+    }
+    if(addBackLink){
+        colHeaders.push('Parent Node')
     }
     for (let i = 0; i < colHeaders.length; i++) {
         let col = colHeaders[i]
@@ -1202,7 +1206,7 @@ const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, ap
             const palias = String(col);
             if(variant && palias === 'PROTOTYPE')continue//importing a table with variants, this column is metadata
             let enforceUnique = (externalIDidx === i) ? true : false
-            let val = datarow[i]
+            let val = (datarow[i] === undefined) ? '' : datarow[i]//default to string
             let dataType = typeof val//if from tsv parse, can only be string or number, if user passed in an array, could be anything
             if(dataType === 'string'){
                 try {//if anything is JSON, attempt to get the real data value

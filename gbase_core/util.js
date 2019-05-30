@@ -1,5 +1,6 @@
 //GBASE UTIL FUNCTIONS
 const NODE_SOUL_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
+const PROTO_NODE_SOUL = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&[^a-z0-9]+/i
 const PROPERTY_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+/i
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const NULL_HASH = hash64(JSON.stringify(null))
@@ -95,19 +96,20 @@ const newID = (gb, path) =>{
     //should be base or base, node (creating new prop) thing we are creating should be parsed as boolean
     //props will be an incrementing integer + noise so no alias config: Number() + 'x' + rand(2)
     let {b,t,rt,p} = parseSoul(path)
-    if(b === true){//new baseID
-        return rand(10)
-    }else if(t === true || p === true){//new nodeType
+    if(t === true || p === true){//new nodeType
         let {props} = getValue(configPathFromChainPath(makeSoul({b})),gb)
         return getNext(props)
     }else if(rt === true){
         let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
         return getNext(relations)
+    }else{
+        return rand(10) //base or anything that doesn't work
     }
     function getNext(obj){
         let n = 0
         for (const id in obj) {
-            let [val,rest] = id.split('I')
+            let [val] = id.split('I')
+            if(isNaN(val))continue
             if(n <= val) n = val
         }
         n++
@@ -285,7 +287,7 @@ function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascad
     let {props,log,parent} = getValue(configPathFromChainPath(nodeID),gb)
     findPropIDs()
     let timeIndices = {}, logObj = {}, run = [],  pending = {}, toPut = {}, linkChange = {}, err
-    let isPrototype = (f !== undefined && f !== '') ? false : true, isRoot = (parent === '') ? true : false
+    let isPrototype = (f !== undefined && f !== '') ? false : true, isRoot = (parent === undefined || parent === '') ? true : false
     let fOwns, proto = {}
     if(!isPrototype){
         let protoSoul = makeSoul({b,t,r,f:''})
@@ -797,19 +799,32 @@ function convertValueToType(value, toType, rowAlias, delimiter){
             } catch (error) {
                 temp = value.split(delimiter)
             }
-        }
+        }else if(Array.isArray(value))temp=value
         
         if (!Array.isArray(temp)){
             let o = {}
             for (const key in temp) {
-                o[key] = !!temp[key]//convert boolean
+                if(NODE_SOUL_PATTERN.test(key)){//link set
+                    let boolean = temp[key]//convert boolean
+                    if(boolean){
+                        o[key] = {'#': key}
+                    }else{
+                        o[key] = boolean //falsy, could use null, 0 or other falsy values for 'archived' or 'deleted' markers?
+                    }
+                }else{
+                    o[key] = !!temp[key]//convert boolean
+                }
             }
             out = o
         }else if (Array.isArray(temp)){
             //assuming array is to be added (for example, like on linking conversion from imported data)
             let o = {}
             for (const val of value) {
-                o[val] = true
+                if(NODE_SOUL_PATTERN.test(val)){
+                    o[val] = {'#': val}
+                }else{
+                    o[val] = true
+                }
             }
             out = o
         }
@@ -1143,7 +1158,7 @@ function hash(key, seed) {
 }
 
 const SOUL_ALIAS = {'!':'b','#':'t','-':'rt','$':'r','.':'p','^':'g','&':'f'}//makes it easier to type out...
-const SOUL_SYM_ORDER = '!#-.$&^*|%[;@:/?' // , is used internally for splitting souls, _ is reserved for _source _target as special prop IDs on relationships
+const SOUL_SYM_ORDER = '!#-.$&^*|%[;@:/?' // "," is used internally for splitting souls, _ is reserved for _source _target as special prop IDs
 function makeSoul(argObj){
     let length = {'!':10,'#':6,'-':6,'$':10,'.':6,'^':5,'&':7}
     let soul = ''
@@ -1327,9 +1342,11 @@ module.exports = {
     parseSoul,
     putData,
     NODE_SOUL_PATTERN,
+    PROTO_NODE_SOUL,
     PROPERTY_PATTERN,
     ISO_DATE_PATTERN,
     NULL_HASH,
     sortPutObj,
-    newID
+    newID,
+    hash64
 }

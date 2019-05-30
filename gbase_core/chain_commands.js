@@ -3,7 +3,7 @@ const{newBaseConfig,
     newNodeTypeConfig,
     newInteractionTableConfig,
     newInteractionColumnConfig,
-    newColumnConfig,
+    newNodePropConfig,
     handleImportColCreation,
     handleTableImportPuts,
     newListItemsConfig,
@@ -35,7 +35,10 @@ const{getValue,
     rand,
     putData,
     newID,
-    setValue
+    setValue,
+    NODE_SOUL_PATTERN,
+    hash64,
+    PROTO_NODE_SOUL
 } = require('./util')
 /*
 ID Length (using A-Za-z0-9)
@@ -114,11 +117,11 @@ const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
         let pconfig
         if(config){
             config = Object.assign({alias: pname, GBtype: propType, sortval: nextSortval(gb,path)}, config)
-            pconfig = newColumnConfig(config)
+            pconfig = newNodePropConfig(config)
         }else{
-            pconfig = newColumnConfig({alias: pname,propType, sortval: nextSortval(gb,path)})
+            pconfig = newNodePropConfig({alias: pname,propType, sortval: nextSortval(gb,path)})
         }
-        checkConfig(newColumnConfig(), pconfig)
+        checkConfig(newNodePropConfig(), pconfig)
         checkUniques(gb,cpath,pconfig.alias)
         gun.get(makeSoul({b,t,rt,'.':pID,'%':true})).put(pconfig)
         gun.get(makeSoul({b,t,rt})).put({[pID]: true})
@@ -131,7 +134,13 @@ const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
 const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path) => (data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        let {b,t,rt} = parseSoul(path)
+        let {b,t,rt,p} = parseSoul(path)
+        //API can be called from:
+        /*
+        gbase.base(b).nodeType(t).newNode() << where t is a root table
+        gbase.base(b).nodeType(t).newNode() << there t is child. If child we need to check if user has provided a valid 'Parent' ID
+        gbase.item(nodeID).prop(childPropType).newNode() <<gbase can handle everything, this is the preferred method.
+        */
         let id = rand(10)
         let fullpath = makeSoul({b,t,rt,r:id})
         putData(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
@@ -140,56 +149,7 @@ const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path) => (data, cb)=>
         console.log(e)
     }
 }
-const makepropIsChildNode = (gb, handleConfigChange) => path => (linkTableOrBackLinkCol, cb)=>{
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        let {b,t,p} = parseSoul(path)
-        let {externalID, parent} = getValue(configPathFromChainPath(makeSoul({b,t})), gb)
-        if(p === externalID){throw new Error("Cannot use the external ID prop to link another table")}
-        let {dataType,propType} = getValue(configPathFromChainPath(path), gb)
-        let configObj = {}
-        if(propType === 'child' || propType === 'parent'){
-            throw new Error('Column is already a link column, to add more links, use "linkRowTo()"')
-        }else{
 
-
-
-
-            configObj.GBtype = 'link'
-        }
-        if(typeof linkTableOrBackLinkCol === 'object'){
-            linkTableOrBackLinkCol = linkTableOrBackLinkCol._path || undefined
-        }
-        if(linkTableOrBackLinkCol === undefined){throw new Error('Must pass in a gbase[baseID][tval] or gbase[baseID][tval][pval] where the pval is a column with the recipricol links')}
-        configObj.linksTo = linkTableOrBackLinkCol
-        let linkPath = linkTableOrBackLinkCol.split('/')
-        let [lb, lt, lp] = linkPath
-        let ltPs = getValue([lb,'props',lt,'props'], gb)
-        if(lt === t){throw new Error('Cannot link a table to itself')}
-        //check for already existing 'next' link on lt, can only have one
-        for (const p in ltPs) {
-            let ltpconfig = ltPs[p]
-            const type = ltpconfig.GBtype;
-            const a = ltpconfig.archived;
-            const d = ltpconfig.deleted;
-            if(type === 'next' && !a && !d){
-                let err = 'Can only have one "next" link column per table. Column: '+ ltpconfig.alias + ' is already a next column.'
-                throw new Error(err)
-            }
-        }
-        configObj.linkColumnTo = true
-        if(linkPath.length === 2 || (linkPath.length === 3 && linkPath[2] === 'p0')){//table or table key column
-            handleConfigChange(configObj, path, undefined, cb)
-        }else if (linkPath.length === 3 && linkPath[2][0] === 'p'){// it is assumed to be the actual backlinkcolumn
-            handleConfigChange(configObj, path, linkTableOrBackLinkCol, cb)
-        }else{
-            throw new Error('Cannot determine what table or column you are linking to')
-        }
-    }catch(e){
-        cb.call(this,e)
-        return
-    }
-}
 const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
@@ -371,7 +331,7 @@ const makesubscribeQuery = (gb,setupQuery) => (path) => (cb, colArr, queryArr,su
 
 
 
-const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function linkrowto(property, gbaseGetRow, cb){
+const makelinkRowTo = (gun, gb, getCell) => (path) => function linkrowto(property, gbaseGetRow, cb){
     try{
         cb = (cb instanceof Function && cb) || function(){}
         //gbaseGetRow = gbase[base][tval][rowID]
@@ -426,7 +386,7 @@ const makelinkRowTo = (gun, gb, getCell) => (path, byAlias) => function linkrowt
         cb.call(this, e)
     }
 }
-const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(property, gbaseGetRow, cb){
+const makeunlinkRow = (gun, gb) => (path) => function unlinkrow(property, gbaseGetRow, cb){
     try{
         //gbaseGetRow = gbase[base][tval][rowID]
         cb = (cb instanceof Function && cb) || function(){}
@@ -461,63 +421,9 @@ const makeunlinkRow = (gun, gb) => (path, byAlias) => function unlinkrow(propert
         cb.call(this, e)
     }
 }
-const makeassociateTables = (gun, gb) => path => (table, cb)=>{//not sure how this works in all scenarios
-    //path = baseID/tval
-    //All tables can have one associated column that points to 1 other associated table/column
-    //this will create a new column on each table that point at each other.
-    //Multiple associations should use tags as a grouping mechanism or another meta table
-    try{
-        const newColumn = makenewColumn(gun,gb)
-        const newInteractionColumn = makenewInteractionColumn(gun,gb)
-        cb = (cb instanceof Function && cb) || function(){}
-        let [base,tval] = path.split('/')
-        let {type: tType} = getValue([base,'props',tval,'type'],gb)
-        let [abase,atval] = table.split('/')
-        if(atval === tval){throw new Error ('Cannot associate a table to itself')}
-        let fromAssoc = hasColumnType(gb,path,'association')
-        let timeIndex = hasColumnType(gb,path,'date')
-        for (let i = 0; i < fromAssoc.length; i++) {
-            const p = fromAssoc[i];
-            let {associatedWith} = getValue(base,'props',tval,'props',p)
-            let [testbase,testtval] = associatedWith.split('/')
-            if(testtval === atval){
-                throw new Error('These tables are already associated')
-            }
-        }
-        //associate to config (static table)
-        let linkpath = table.split('/')
-        let linkCpath = configPathFromChainPath(table)
-        let {alias, type} = getValue(linkCpath,gb)
-        let pval = findNextID(gb,path)
-        let ipath = [base, tval, pval].join('/')
-        let call
-        if(type === "static"){
-            call = newColumn(table, {associatedWith: ipath, associatedIndex: timeIndex[0] || ""})
-        }else{
-            call = newInteractionColumn(table, {associatedWith: ipath})
-        }
-        let linkpval = call('Associated ' + tname, 'association')
-        linkpath.push(linkpval)
-        let col
-        if(tType === "static"){
-            col = newColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: nextSortval(gb,path), associatedWith: linkpath.join('/'), associatedIndex: timeIndex[0] || ""})
-        }else{
-            col = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: nextSortval(gb,path), associatedWith: linkpath.join('/'), associatedIndex: timeIndex[0] || ""})
-        }
-        
-
-        gun.get(path + '/' + tval + '/'+ pval +'/config').put(col)
-        gun.get(base + '/' + tval + '/p').put({[pval]: true})
 
 
-        cb.call(this,false,pval)
-
-    }catch(e){
-        cb.call(this,e)
-        return
-    }
-}
-const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTESTED, NEEDS WORK
+const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not updated, NEEDS WORK
     //gbase[base].importNewTable(rawTSV, 'New Table Alias')
 
     //should run all of these through .edit(), to ensure it matches schema/types
@@ -567,7 +473,8 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//UNTES
     }
     handleTableImportPuts(gun, path, result, cb)
 }
-const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{
+// vvvvv these are to build parent child relations (lookup will function much the same as parent child but can have many to many relationships)
+const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{//updated
     //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
     try{
         let {b} = parseSoul(path)
@@ -578,12 +485,12 @@ const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (pa
         delimiter = delimiter || ', '
         if(variants && !externalID)throw new Error('If you want to enable variants, you must specify the property name that would have unique values to use as external IDs')
         let cpath = configPathFromChainPath(path)
-        let tAlias = alias || 'New NodeType' + rand(2)
-        checkUniques(gb,cpath, tAlias)
+        alias = alias || 'New NodeType' + rand(2)
         let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
         let t = newID(gb,makeSoul({b,t:true}))
         let tconfig = newNodeTypeConfig({alias,variants,externalID})
-        let result = {}, IDs = {}, rid = 0, fid = 0
+        checkUniques(gb,cpath, tconfig)
+        let result = {}, fIDPut = {}, IDs = {}, rid = 0, fid = 0
         let headers = dataArr[0]
         let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, t, headers, dataArr[1],variants, externalID, true)
         if(variants){
@@ -637,6 +544,9 @@ const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (pa
                     let r = IDs[PROTOTYPE]
                     let f = IDs[eid]
                     rowsoul= makeSoul({b,t,r,f})
+                    let protoList = makeSoul({b,t,r})
+                    addToPut(protoList,{[f]:{'#':rowsoul}})
+                    
                 }
                 for (const p in node) {
                     if(p === 'PROTOTYPE')continue
@@ -705,7 +615,18 @@ const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (pa
                 timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
                 timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
             }
-    
+            for (const fList in fIDPut) {
+                const pObj = fIDPut[fList];
+                gun.get(fList).put(pObj)  
+            }
+            
+        }
+        function addToPut(soul,putObj){
+            if(!fIDPut[soul]){
+                fIDPut[soul] = putObj
+            }else{
+                Object.assign(fIDPut[soul],putObj)
+            }
         }
     }catch(e){
         console.log(e)
@@ -714,67 +635,701 @@ const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (pa
     }
     
 }
-const makeclearColumn = (gun,gb,cache, gunSubs, loadColDataToCache) => (path) => function clearcol(cb){
+const makeimportChildData = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{//updated
+    //gbase.base(baseID).nodeType(type).prop(prop).importChildData(rawTSV, 'New Table Alias')
     try{
+        let {b,t: fromt,p} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
-        let [base,tval,pval] = path.split('/')
-        let csoul = path
-        let data = getValue([base,tval,pval],cache)
-        let type = getColumnType(gb,path)
-        if(!gunSubs[path] && data === undefined){
-            loadColDataToCache(base,tval,pval)
-            setTimeout(clearcol,1000, cb)
-            return
+        let {externalID,delimiter,parentProp} = opts
+        let {propType, dataType, alias:propName} = getValue(configPathFromChainPath(makeSoul({b,t: fromt,p})),gb)
+        let {variants} = getValue(configPathFromChainPath(makeSoul({b,t: fromt})),gb)
+        parentProp = parentProp || false
+        externalID = externalID || ''
+        delimiter = delimiter || ', '
+        if(!externalID)throw new Error('You must specify the property name that has unique values to use as external IDs in order to link this data: {externalID: "some Prop Name"} ')
+        if(propType !== 'data' || (dataType !== 'string' && dataType !== 'array'))throw new Error('This property must be of type "data" and a dataType of "string" or "array".')
+        alias = alias || propName
+        let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
+        let t = newID(gb,makeSoul({b,t:true}))
+        let tconfig = newNodeTypeConfig({alias,parent:makeSoul({b,t:fromt,p}),externalID})
+        checkUniques(gb,configPathFromChainPath(makeSoul({b})), tconfig)
+        let newNodes = {},updatedNodes = {}, firstParse = {}, existingData = {}, configChanges = {},err
+        let headers = dataArr[0]
+        headers = headers.map(function(e){return String(e)})
+        if(parentProp && headers.indexOf(parentProp) === -1)throw new Error('Parent prop in new data cannot be found. Should be {parentProp: "header prop name"}')
+        let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, t, headers, dataArr[1],variants, externalID, true, !parentProp)
+        let parentPval = (parentProp) ? findID(newPconfigs, parentProp) : findID(newPconfigs, 'Parent Node')
+        newPconfigs[parentPval].dataType = 'string'
+        newPconfigs[parentPval].propType = 'parent'
+        parseInput()
+        function parseInput(){
+            console.log(externalID,headers)
+            let externalIDidx = headers.indexOf(externalID)
+            if(externalIDidx === -1)throw new Error('Cannot find the external IDs specified')
+            let invalidData = {}
+
+            for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
+                const rowArr = dataArr[i];
+                let eid = rowArr[externalIDidx]
+                for (let j = 0; j < rowArr.length; j++) {
+                    let value = rowArr[j];
+                    if(!['',null,undefined].includes(value)){//ignore empty values
+                        if(!firstParse[eid])firstParse[eid] = {}
+                        const headerPval = aliasLookup[headers[j]]
+                        let {dataType} = newPconfigs[headerPval]
+                        try {
+                            value = convertValueToType(value,dataType,eid,delimiter)
+                        } catch (error) {
+                            //need to fail back to a 'string' type on this pval and re-convert all data on final time through
+                            //convert will not throw errors on 'string' everything else will.
+                            invalidData[headerPval] = dataType
+                        }
+                        firstParse[eid][headerPval] = value
+                        
+                    }
+                }
+            }
+            let typeChange = Object.keys(invalidData)
+            for (const pval of typeChange) {
+                newPconfigs[pval].dataType = 'string'
+                newPconfigs[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
+            }
+            getExisting()
         }
-        let out = {}
-        for (const rowid in data) {
-            const value = data[rowid];
-            if (value !== null) {//null means there is no data for that rowid in gun currently
-                out[rowid] = convertValueToType("", type, rowid)
+        function getExisting(){
+            //whatPath must be !#. It should be base,nodeType/relationType,prop
+            //Check to make sure soul is correct
+            let createdSoul = makeSoul({b,t: fromt,':':true})
+            let soulList = []
+            gun.get(createdSoul).once(function(data){
+                if(data === undefined){let e = new Error('Cannot find Parent Prop Data!'); throwError(e); return}//for loop would error if not stopped
+                for (const soul in data) {
+                    if(!NODE_SOUL_PATTERN.test(soul))continue
+                    if(data[soul]){//truthy
+                        //(if something is archived we won't be operating on that data... good? bad? not sure)
+                        //in unarchive, we can run through .edit api and it will attempt to convert values to current types
+                        soulList.push(soul)
+                    }
+                }
+                let toGet = soulList.length
+                console.log(soulList)
+                for (const soul of soulList) {
+                    getCell(soul,p,function(val,from){
+                        toGet--
+                        if(from === soul){// if different, then already inherited, skip it
+                            if(dataType !== 'array')val = convertValueToType(val,'array',soul,delimiter)//is string based on earlier checks
+                            existingData[soul] = val//should be a JSON array
+                        }
+                        if(toGet <= 0){
+                            makeLinks()
+                        }
+
+                    },true)
+                }
+            })
+        }
+        function makeLinks(){
+            try {
+                if(variants){
+                    for (const soul in existingData) {//clean list further for duplicates
+                        let {b,t,r,f} = parseSoul(soul)
+                        let pSoul = makeSoul({b,t,r,f:true})
+                        if(soul === pSoul)continue
+                        const pList = existingData[pSoul]
+                        const list = existingData[soul];
+                        if(pList === list){//should be comparing JSON string arrays
+                            //list is the same, null to have it inherit from prototype
+                            addToPut(soul,{[p]:null},updatedNodes)
+                            delete existingData[soul] //get existing data down to only souls that will have lists
+                        }
+                    }
+                }
+                
+                let IDs = {}, lists = {}, allowMultiple = false
+                for (const soul in existingData) {//build/check links and make IDs
+                    let {r,f} = parseSoul(soul)
+                    let list = JSON.parse(existingData[soul]);
+                    let linkList = []
+                    for (let i = 0; i < list.length; i++) {
+                        const eid = list[i];
+                        let found = firstParse[eid]
+                        if(!found){list.splice(i,1);continue}
+                        //if we find a many to many link pattern...
+                        //two object will reference same child. User will have to manually remove the dependency if they don't want that behavior
+                        //they just need to 'remove' the link in the set and make a new child node to replace it to break the dependency.
+                        if(IDs[eid])console.warn('Many to many relationship found. A change to this '+eid+' will show up on all parents')
+                        if(!IDs[eid]){//use new new t with parent r,f. always 1-1 and we are importing so this is fine.
+                            IDs[eid] = makeSoul({b,t,r,f})
+                            firstParse[eid][parentPval] = soul //'Parent Node' prop in new data
+                        }
+                        linkList.push(IDs[eid])
+                    }
+                    lists[soul] = linkList
+                    if(linkList.length > 1)allowMultiple = true
+                }
+                let dataType = (allowMultiple) ? 'unorderedSet' : 'string'
+                let propType = 'child'
+                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType},configChanges)
+                for (const nodeID in lists) {//add all child links to be put
+                    let {r,f} = parseSoul(nodeID)
+                    const linkArr = lists[nodeID];
+                    const linkSoul = makeSoul({b,t:fromt,r,f,p})
+                    let val = convertValueToType(linkArr,dataType)//either be a string or object
+                    let nodePropVal = (allowMultiple) ? {'#': linkSoul} : val
+                    addToPut(nodeID,{[p]:nodePropVal},updatedNodes)
+                    if(allowMultiple){// add link node
+                        addToPut(linkSoul,val,updatedNodes)
+                    }
+                }
+                for (const eid in firstParse) {//add new nodes to be put
+                    const node = firstParse[eid];
+                    let soul = IDs[eid]
+                    if(!soul)continue //skip import nodes if they were not used from parent
+                    for (const p in node) {
+                        let {dataType} = newPconfigs[p]
+                        const val = convertValueToType(node[p],dataType)//second convert in case any failed the first time.
+                        addToPut(soul,{[p]:val},newNodes)
+                    }
+                }
+                console.log(newNodes,updatedNodes,configChanges)
+                if(!err){
+                    putData()
+                }
+            } catch (error) {
+                throwError(error)
             }
         }
-        console.log(csoul, out)
-        gun.get(csoul).put(out)
-        cb.call(this,undefined)
+        function putData(){
+            for (const p in newPconfigs) {
+                const cObj = newPconfigs[p];
+                let {alias} = cObj
+                if(externalID && externalID === alias)tconfig.externalID = p
+                let configSoul = makeSoul({b,t,p,'%':true})
+                let listSoul = makeSoul({b,t})
+                gun.get(configSoul).put(cObj)
+                gun.get(listSoul).put({[p]:true})
+            }
+    
+    
+            gun.get(makeSoul({b,t,'%':true})).put(tconfig)
+            let tval = '#' + t
+            let tpath = makeSoul({b,t})
+            gun.get(makeSoul({b})).put({[tval]: true})//table on base index
+            let now = new Date()
+            for (const newSoul in newNodes) {
+                let put = newNodes[newSoul]
+                gun.get(newSoul).put(put)
+                timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
+                timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
+            }
+            for (const soul in configChanges) {
+                const pObj = configChanges[soul];
+                gun.get(soul).put(pObj)  
+            }
+            for (const soul in updatedNodes) {
+                const pObj = updatedNodes[soul];
+                gun.get(soul).put(pObj)  
+            }
+            triggerConfigUpdate()//fire callback for app code to get new config data.
+        }
+        function addToPut(soul,putObj,toObj){
+            if(!toObj[soul]){
+                toObj[soul] = putObj
+            }else{
+                Object.assign(toObj[soul],putObj)
+            }
+        }
+        function throwError(errmsg){
+            let e = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+            err = e
+            cb.call(cb,err)
+            console.log(e)
+        }
     }catch(e){
         console.log(e)
         cb.call(this,e)
+        return e
     }
+    
 }
-const makeassociateWith = (gun, gb, getCell) => (path) => (gbaseGetRow, cb) =>{
+const makeaddChildProp = (gun,gb,triggerConfigUpdate) => (path) => (propNameArr, alias, opts, cb)=>{//updated
+    //gbase.base(baseID).nodeType(type).prop(prop).importChildData(rawTSV, 'New Table Alias')
     try{
+        let {b,t} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
-        //gbaseGetRow = gbase[base][tval][rowID]
-        let toPath
-        if(typeof gbaseGetRow === 'object'){
-            toPath = gbaseGetRow._path
-        }else if(gbaseGetRow.split('/').length === 3){
-            toPath = gbaseGetRow
-        }else{
-            throw new Error('Cannot detect what row you are trying to link to. For the second argument pass in the gbase chain for the link row: gbase[baseID][table][row]')
+        let {allowMultiple} = opts
+        allowMultiple = !!allowMultiple
+        let {externalID,alias:fromAlias} = getValue(configPathFromChainPath(makeSoul({b,t})),gb)
+        if(!externalID)throw new Error('The existing nodeType must have an External ID')
+        alias = alias || 'New NodeType' + rand(2)
+        let configChanges = {}
+        let sortval = nextSortval(gb,path)
+        let pconfig = newNodePropConfig({alias,sortval,propType: 'child',allowMultiple})
+        let p = newID(gb,makeSoul({b,t,p:true}))
+        checkUniques(gb,makeSoul({b,t}), pconfig)
+        addToPut(makeSoul({b,t,p,'%':true}),pconfig,configChanges)//update config
+        let headers = propNameArr || []
+        let backLink = fromAlias
+        headers.unshift(backLink)
+        headers = headers.map(function(e){return String(e)})
+        let tnew = newID(gb,makeSoul({b,t:true}))
+        let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, tnew, headers, [],false, backLink, true, false)
+        let parentPval = aliasLookup[backLink]
+        newPconfigs[parentPval].dataType = 'string'
+        newPconfigs[parentPval].propType = 'parent'
+
+        let tconfig = newNodeTypeConfig({alias,parent:makeSoul({b,t,p}),externalID:parentPval})//using parent as both an ID and the parent prop...
+        checkUniques(gb,makeSoul({b}),tconfig)
+        addToPut(makeSoul({b,t:tnew,'%':true}),tconfig,configChanges)//new config
+        let tl = '#' + tnew
+        addToPut(makeSoul({b}),{[tl]:true},configChanges)//startup list
+        //console.log(configChanges,newPconfigs)
+        putData()
+        
+        function putData(){
+            for (const p in newPconfigs) {
+                const cObj = newPconfigs[p];
+                let configSoul = makeSoul({b,t:tnew,p,'%':true})
+                let listSoul = makeSoul({b,t:tnew})
+                gun.get(configSoul).put(cObj)
+                gun.get(listSoul).put({[p]:true})
+            }
+            for (const soul in configChanges) {
+                const pObj = configChanges[soul];
+                gun.get(soul).put(pObj)  
+            }
+            triggerConfigUpdate()//fire callback for app code to get new config data.
         }
-        addAssociation(gun,gb,getCell,path,toPath,cb)
+        function addToPut(soul,putObj,toObj){
+            if(!toObj[soul]){
+                toObj[soul] = putObj
+            }else{
+                Object.assign(toObj[soul],putObj)
+            }
+        }
     }catch(e){
-        cb.call(this, e)
+        console.log(e)
+        cb.call(this,e)
+        return e
     }
+    
 }
-const makeunassociate = (gun,gb) => (path) => (gbaseGetRow,cb) =>{
+const makepropIsLookup = (gun,gb,getCell,triggerConfigUpdate) => (path) => (nodeTypePath,opts, cb)=>{//untested
+    //gbase.base(baseID).nodeType(type).prop(prop).importChildData(rawTSV, 'New Table Alias')
     try{
+        let {b,t: fromt,p: fromp} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
-        //gbaseGetRow = gbase[base][tval][rowID]
-        let toPath
-        if(typeof gbaseGetRow === 'object'){
-            toPath = gbaseGetRow._path
-        }else if(gbaseGetRow.split('/').length === 3){
-            toPath = gbaseGetRow
-        }else{
-            throw new Error('Cannot detect what row you are trying to link to. For the second argument pass in the gbase chain for the link row: gbase[baseID][table][row]')
+        let {delimiter} = opts
+        nodeTypePath = (typeof nodeTypePath === 'object') ? parseSoul(nodeTypePath._path) : parseSoul(nodeTypePath)
+        let {t} = nodeTypePath
+        let {externalID: p} = getValue(configPathFromChainPath(makeSoul({b,t})),gb)
+        if(!p)throw new Error('Target nodeType must have an external identifier')
+        let {propType, dataType, alias:propName} = getValue(configPathFromChainPath(makeSoul({b,t:fromt,p: fromp})),gb)
+        if(propType !== 'data' || (dataType !== 'string' && dataType !== 'array'))throw new Error('This property must be of type "data" and a dataType of "string" or "array".')
+        delimiter = delimiter || ', '
+        let newNodes = {},updatedNodes = {}, trgtEIDs = {}, existingData = {}, configChanges = {},err
+        getTarget()
+        function getTarget(){
+            let createdSoul = makeSoul({b,t,':':true})
+            let soulList = []
+            gun.get(createdSoul).once(function(data){
+                if(data === undefined){let e = new Error('Cannot find Parent Prop Data!'); throwError(e); return}//for loop would error if not stopped
+                for (const soul in data) {
+                    if(!NODE_SOUL_PATTERN.test(soul))continue
+                    if(data[soul]){//truthy
+                        //(if something is archived we won't be operating on that data... good? bad? not sure)
+                        //in unarchive, we can run through .edit api and it will attempt to convert values to current types
+                        soulList.push(soul)
+                    }
+                }
+                let toGet = soulList.length
+                console.log(soulList)
+                for (const soul of soulList) {
+                    getCell(soul,fromp,function(val,from){
+                        toGet--
+                        if(from === soul){// if different, then already inherited, skip it
+                            trgtEIDs[val] = soul
+                        }
+                        if(toGet <= 0){
+                            getExisting()
+                        }
+                    },true)
+                }
+            })
         }
-        removeAssociation(gun,gb,path,toPath,cb)
+        function getExisting(){
+            //whatPath must be !#. It should be base,nodeType/relationType,prop
+            //Check to make sure soul is correct
+            let createdSoul = makeSoul({b,t: fromt,':':true})
+            let soulList = []
+            gun.get(createdSoul).once(function(data){
+                if(data === undefined){let e = new Error('Cannot find Parent Prop Data!'); throwError(e); return}//for loop would error if not stopped
+                for (const soul in data) {
+                    if(!NODE_SOUL_PATTERN.test(soul))continue
+                    if(data[soul]){//truthy
+                        //(if something is archived we won't be operating on that data... good? bad? not sure)
+                        //in unarchive, we can run through .edit api and it will attempt to convert values to current types
+                        soulList.push(soul)
+                    }
+                }
+                let toGet = soulList.length
+                for (const soul of soulList) {
+                    getCell(soul,fromp,function(val,from){
+                        toGet--
+                        if(from === soul){// if different, then already inherited, skip it
+                            if(dataType !== 'array')val = convertValueToType(val,'array',soul,delimiter)//is string based on earlier checks
+                            existingData[soul] = val//should be a JSON array
+                        }
+                        if(toGet <= 0){
+                            makeLinks()
+                        }
+
+                    },true)
+                }
+            })
+        }
+        function makeLinks(){
+            try {
+                let nextLinks = {}, lists = {}, allowMultiple = false
+                for (const soul in existingData) {//build/check links and make IDs
+                    let list = JSON.parse(existingData[soul]);
+                    let linkList = []
+                    for (let i = 0; i < list.length; i++) {
+                        const eid = list[i];
+                        let found = trgtEIDs[eid]
+                        if(!found){list.splice(i,1);continue}
+                        linkList.push(found)//add soul to new array
+                        addToPut(found,{[soul]:true},nextLinks)//just merging locally not acutally for put.
+                    }
+                    lists[soul] = linkList
+                    if(linkList.length > 1)allowMultiple = true
+                }
+                let dataType = (allowMultiple) ? 'unorderedSet' : 'string'
+                let propType = 'child'
+                addToPut(makeSoul({b,t:fromt,p: fromp,'%':true}),{allowMultiple,propType,dataType},configChanges)
+                for (const nodeID in lists) {//add all child links to be put
+                    let {b,t,r,f} = parseSoul(nodeID)
+                    const linkArr = lists[nodeID];
+                    const linkSoul = makeSoul({b,t,r,f,p:fromp})
+                    let val = convertValueToType(linkArr,dataType)//either be a string or object
+                    let nodePropVal = (allowMultiple) ? {'#': linkSoul} : val
+                    addToPut(nodeID,{[fromp]:nodePropVal},updatedNodes)
+                    if(allowMultiple){// add link node
+                        addToPut(linkSoul,val,updatedNodes)
+                    }
+                }
+                for (const trgtNodeID in nextLinks) {//add new nodes to be put
+                    let set = nextLinks[trgtNodeID]
+                    let {b,t,r,rt,f} = parseSoul(trgtNodeID)//adding rt since you could 'lookup' on a relationship??
+                    let putSoul = makeSoul({b,t,r,rt,f,p:'_nexts'})//special propID, basically a hidden property that is only used for 'nexts'
+                    addToPut(putSoul,convertValueToType(set,'unorderedSet'),newNodes)
+                }
+                console.log(newNodes,updatedNodes,configChanges)
+                if(!err){
+                    putData()
+                }
+            } catch (error) {
+                throwError(error)
+            }
+        }
+        function putData(){
+            
+            for (const newSoul in newNodes) {
+                let put = newNodes[newSoul]
+                gun.get(newSoul).put(put)
+            }
+            for (const soul in configChanges) {
+                const pObj = configChanges[soul];
+                gun.get(soul).put(pObj)  
+            }
+            for (const soul in updatedNodes) {
+                const pObj = updatedNodes[soul];
+                gun.get(soul).put(pObj)  
+            }
+            triggerConfigUpdate()//fire callback for app code to get new config data.
+        }
+        function addToPut(soul,putObj,toObj){
+            if(!toObj[soul]){
+                toObj[soul] = putObj
+            }else{
+                Object.assign(toObj[soul],putObj)
+            }
+        }
+        function throwError(errmsg){
+            let e = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+            err = e
+            cb.call(cb,err)
+            console.log(e)
+        }
     }catch(e){
-        cb.call(this, e)
+        console.log(e)
+        cb.call(this,e)
+        return e
     }
+    
 }
+const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate) => (path) => (alias,opts, cb)=>{//untested
+    //gbase.base(baseID).nodeType(type).prop(prop).importChildData(rawTSV, 'New Table Alias')
+    try{
+        let {b,t:fromt,p} = parseSoul(path)
+        cb = (cb instanceof Function && cb) || function(){}
+        let {delimiter} = opts
+        let {propType, dataType, alias:propName} = getValue(configPathFromChainPath(makeSoul({b,t: fromt,p})),gb)
+        let {variants, externalID} = getValue(configPathFromChainPath(makeSoul({b,t: fromt})),gb)
+        delimiter = delimiter || ', '
+        if(!externalID)throw new Error('The parent nodeType should have an external identifier specified')
+        if(propType !== 'data' || (dataType !== 'string' && dataType !== 'array'))throw new Error('This property must be of type "data" and a dataType of "string" or "array".')
+        alias = alias || propName
+        let t = newID(gb,makeSoul({b,t:true}))
+        //need to get all the arrays of objects before the rest can be done
+        let newPconfigs,aliasLookup,tconfig,parentPval,allowMultiple
+
+        let newNodes = {},updatedNodes = {}, firstParse = {}, existingData = {}, configChanges = {}, err
+        
+        getExisting()
+        function parseInput(){
+            let externalIDidx = headers.indexOf(externalID)
+            if(externalIDidx === -1)throw new Error('Cannot find the external IDs specified')
+            let invalidData = {}
+
+            for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
+                const rowArr = dataArr[i];
+                let eid = rowArr[externalIDidx]
+                for (let j = 0; j < rowArr.length; j++) {
+                    let value = rowArr[j];
+                    if(!['',null,undefined].includes(value)){//ignore empty values
+                        if(!firstParse[eid])firstParse[eid] = {}
+                        const headerPval = aliasLookup[headers[j]]
+                        let {dataType} = newPconfigs[headerPval]
+                        try {
+                            value = convertValueToType(value,dataType,eid,delimiter)
+                        } catch (error) {
+                            //need to fail back to a 'string' type on this pval and re-convert all data on final time through
+                            //convert will not throw errors on 'string' everything else will.
+                            invalidData[headerPval] = dataType
+                        }
+                        firstParse[eid][headerPval] = value
+                        
+                    }
+                }
+            }
+            let typeChange = Object.keys(invalidData)
+            for (const pval of typeChange) {
+                newPconfigs[pval].dataType = 'string'
+                newPconfigs[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
+            }
+            getExisting()
+        }
+        function getExisting(){
+            //whatPath must be !#. It should be base,nodeType/relationType,prop
+            //Check to make sure soul is correct
+            let createdSoul = makeSoul({b,t: fromt,':':true})
+            let soulList = []
+            gun.get(createdSoul).once(function(data){
+                if(data === undefined){let e = new Error('Cannot find Parent Prop Data!'); throwError(e); return}//for loop would error if not stopped
+                for (const soul in data) {
+                    if(!NODE_SOUL_PATTERN.test(soul))continue
+                    if(data[soul]){//truthy
+                        //(if something is archived we won't be operating on that data... good? bad? not sure)
+                        //in unarchive, we can run through .edit api and it will attempt to convert values to current types
+                        soulList.push(soul)
+                    }
+                }
+                let toGet = soulList.length
+                for (const soul of soulList) {
+                    getCell(soul,p,function(val,from){
+                        toGet--
+                        if(from === soul){// if different, then already inherited, skip it
+                            if(dataType !== 'array')val = convertValueToType(val,'array',soul,delimiter)//is string based on earlier checks
+                            existingData[soul] = val//should be a JSON array
+                        }
+                        if(toGet <= 0){
+                            makeObjects()
+                        }
+
+                    },true)
+                }
+            })
+        }
+        function makeObjects(){
+            try {
+                let propAndType = {}
+                for (const soul in existingData) {
+                    const arr = JSON.parse(existingData[soul]);
+                    let links = []
+                    for (const obj of arr) {
+                        if(typeof obj !== 'object')throwError(new Error('Must be an array of objects in order to create nodes.'))
+                        for (const palias in obj) {
+                            const val = obj[palias];
+                            if(!propAndType[palias])propAndType[palias] = null
+                            let type = typeof val
+                            if(propAndType[palias] === null) propAndType[palias] = type
+                            if(propAndType[palias] !== null && propAndType[palias] !== 'string' && propAndType[palias] !== type) propAndType[palias] = 'string'
+                            //goal is to set it as things that aren't sting's and if a second one is different, then default to 'string'
+                        }
+                    }
+                    if(links.length > 1)allowMultiple = true
+                }
+    
+                let headers = Object.keys(propAndType)
+                headers.unshift(propName)
+                headers = headers.map(function(e){return String(e)})
+                
+                let res = handleImportColCreation(gb, b, t, headers, [],false, propName, true, false)
+                newPconfigs = res.newPconfigs//so we can get outside of fn scope
+                aliasLookup = res.aliasLookup
+                parentPval = aliasLookup[propName]
+                newPconfigs[parentPval].dataType = 'string'
+                newPconfigs[parentPval].propType = 'parent'
+                for (const palias in propAndType) {
+                    const dataType = propAndType[palias];
+                    let p = aliasLookup[palias]
+                    newPconfigs[p].dataType = dataType
+                }
+    
+                tconfig = newNodeTypeConfig({alias,parent:makeSoul({b,t:fromt,p}),externalID:parentPval})
+                checkUniques(gb,configPathFromChainPath(makeSoul({b})), tconfig)
+                if(variants){
+                    dedup()
+                }else{
+                    makeLinks()
+                }
+            } catch (error) {
+                throwError(error)
+            }
+
+        }
+        function dedup(){
+            //only here if variants
+            //find all protos first and get them with JSON objs in an array
+            //go through again and check each obj on variants, splice out dupes
+            let protos = {}
+            for (const soul in existingData) {
+                if(!PROTO_NODE_SOUL.test(soul))continue
+                let list = protos[soul] = []
+                const arr = JSON.parse(existingData[soul]);
+                for (const obj of arr) {
+                    list.push(JSON.stringify(obj))
+                }
+            }
+            for (const soul in existingData) {//round 2, looking at variants only
+                if(PROTO_NODE_SOUL.test(soul))continue
+                let {b,t,r} = parseSoul(soul)
+                let protoSoul = makeSoul({b,t,r,f:''})
+                let arr = JSON.parse(existingData[soul]);
+                for (let i = 0; i < arr.length; i++) {
+                    const obj = arr[i];
+                    let oStr = JSON.stringify(obj)
+                    if(protos[protoSoul].includes(oStr)){//more performant than hashing? I would imagine a string compare is quick?
+                        arr.splice(i,1)//remove this object
+                    }
+                }
+                existingData[soul] = JSON.stringify(arr)//should be mutated now, replacing on soul. Should only have 'own' objects
+            }
+            makeLinks()
+        }
+        function makeLinks(){
+            try {
+                let lists = {}, id = 0
+                for (const soul in existingData) {//build/check links and make IDs
+                    let {f} = parseSoul(soul)
+                    let list = JSON.parse(existingData[soul]);
+                    let linkList = []
+                    for (const obj of list) {
+                        let newSoul = makeSoul({b,t,r:id,f})
+                        linkList.push(newSoul)
+                        id++
+                        for (const palias in obj) {
+                            let p = aliasLookup[palias]
+                            let {dataType} = newPconfigs[p]
+                            const val = convertValueToType(obj[palias],dataType)
+                            addToPut(newSoul,{[p]:val},newNodes)//need to replace alias with ids on p, final type convert
+                        }
+                        addToPut(newSoul,{[parentPval]:soul},newNodes)//add data to object, 'parent' property
+                    }
+                    lists[soul] = linkList
+                    if(linkList.length > 1)allowMultiple = true
+                }
+                let dataType = (allowMultiple) ? 'unorderedSet' : 'string'
+                let propType = 'child'
+                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType},configChanges)
+                for (const nodeID in lists) {//add all child links to be put
+                    let {r,f} = parseSoul(nodeID)
+                    const linkArr = lists[nodeID];
+                    const linkSoul = makeSoul({b,t:fromt,r,f,p})
+                    let val = convertValueToType(linkArr,dataType)//either be a string or object
+                    let nodePropVal = (allowMultiple) ? {'#': linkSoul} : val
+                    addToPut(nodeID,{[p]:nodePropVal},updatedNodes)
+                    if(allowMultiple){// add link node
+                        addToPut(linkSoul,val,updatedNodes)
+                    }
+                }
+                console.log(newNodes,updatedNodes,configChanges)
+                if(!err){
+                    putData()
+                }
+            } catch (error) {
+                throwError(error)
+            }
+        }
+        function putData(){
+            for (const p in newPconfigs) {
+                const cObj = newPconfigs[p];
+                let {alias} = cObj
+                if(externalID && externalID === alias)tconfig.externalID = p
+                let configSoul = makeSoul({b,t,p,'%':true})
+                let listSoul = makeSoul({b,t})
+                gun.get(configSoul).put(cObj)
+                gun.get(listSoul).put({[p]:true})
+            }
+    
+    
+            gun.get(makeSoul({b,t,'%':true})).put(tconfig)
+            let tval = '#' + t
+            let tpath = makeSoul({b,t})
+            gun.get(makeSoul({b})).put({[tval]: true})//table on base index
+            let now = new Date()
+            let {log} = tconfig
+            for (const newSoul in newNodes) {
+                let put = newNodes[newSoul]
+                gun.get(newSoul).put(put)
+                timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
+                if(log){
+                    timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
+                }
+            }
+            for (const soul in configChanges) {
+                const pObj = configChanges[soul];
+                gun.get(soul).put(pObj)  
+            }
+            for (const soul in updatedNodes) {
+                const pObj = updatedNodes[soul];
+                gun.get(soul).put(pObj)  
+            }
+            triggerConfigUpdate()//fire callback for app code to get new config data.
+        }
+        function addToPut(soul,putObj,toObj){
+            if(!toObj[soul]){
+                toObj[soul] = putObj
+            }else{
+                Object.assign(toObj[soul],putObj)
+            }
+        }
+        function throwError(errmsg){
+            let e = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+            err = e
+            cb.call(cb,err)
+            console.log(e)
+        }
+    }catch(e){
+        console.log(e)
+        cb.call(this,e)
+        return e
+    }
+    
+}
+
+
 const makearchive = (gun,gb) => path => () =>{
 
 }
@@ -782,267 +1337,6 @@ const makedelete = (gun,gb) => path => () =>{
 
 }
 
-
-
-//INTERACTION APIs
-const validInteraction = ['transaction', 'interaction']
-const makenewInteractionTable = (gun, gb) => (path) => (tname, tableType, assocArr, contextRef, ref)=>{
-    //path = baseID
-    //assocArr = ['baseID/tval', 'baseID/tval2] //associations can be other interaction tables
-    
-    try{
-        const newColumn = makenewColumn(gun,gb)
-        const newInteractionColumn = makenewInteractionColumn(gun,gb)
-        if(!validInteraction.includes(tableType)){
-            throw new Error('Either no table type specified, or specified value is not one of: '+ validInteraction.join(', '))
-        }
-        let cpath = configPathFromChainPath(path)
-        assocArr = assocArr || []
-        let tconfig
-        let liconfig
-        let cols = {}
-        let liCols = {}
-        let nextT = findNextID(gb,path)
-        let nextPval = 0
-        checkAliasName(nextT,tname)
-        if(tableType === 'transaction'){//this is a transactional interaction
-            if(!contextRef){throw new Error('Must specify a static table to use as context for all of these transactions.')}
-            let contextCpath = configPathFromChainPath(contextRef)
-            let {alias} = getValue(contextCpath,gb)
-            tconfig = newInteractionTableConfig({alias: tname, type: 'transaction', context: contextRef ,sortval: nextSortval(gb,path)})
-            cols.p0 = newInteractionColumnConfig({alias: 'Transaction ID', required: true, sortval: 0})
-            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', GBtype: 'date', required: true, sortval: 10})
-            let lip1Ref = '{' + [base,nextT,'li','p1'].join('/') + '}'
-            let lip2Ref = '{' + [base,nextT,'li','p2'].join('/') + '}'
-            let lip3Ref = '{' + [base,nextT,'li','p3'].join('/') + '}'
-            let liRef = '{' + [base,nextT,'li'].join('/') + '.' + [base,nextT,'li','p3'].join('/') + '}'
-            cols.p2 = newInteractionColumnConfig({alias: 'Completed', GBtype: 'function', fn: 'IF(AND('+liRef+'),TRUE(),FALSE())', sortval: 20 })
-            liCols.p0 = newListItemColumnConfig({alias, sortval: 0, GBtype: 'context'})
-            liCols.p1 = newListItemColumnConfig({alias: 'Quantity', sortval: 10, GBtype: 'number', defaultval: 1, usedIn:[lip3Ref] })
-            liCols.p2 = newListItemColumnConfig({alias: 'Completed ' + alias, sortval: 20, GBtype: 'result', usedIn:[lip3Ref]})
-            liCols.p3 = newListItemColumnConfig({alias: 'Completed', sortval: 30, GBtype: 'function', fn: 'IF('+lip1Ref+'='+lip2Ref+',TRUE(),FALSE())', usedIn:[[path, nextT, 'p2'].join('/')] })
-            liconfig = newListItemsConfig({total: 'p2', completed: 'p3'})
-            nextPval = 3
-            if(ref){//this new transaction table is trying to be linked to another transaction/interaction
-                let [rbase,rtval] = ref.split('/')//clean to make sure no pval specified
-                let refTpath = [rbase,rtval].join('/')
-                let refCpath = configPathFromChainPath(refTpath)
-                let {type, context} = getValue(refCpath,gb)
-                if(type === 'transaction'){//linking transaction to transaction
-                    if(context !== contextRef && context !== 'COA'){throw new Error(context + '!=' + contextRef +' : Cannot reference a transaction with a different context')}
-                    //bring in associations from ref
-                    assocArr = assocArr.concat(hasColumnType(gb,refTpath,'association'))
-                    tconfig.reference = refTpath
-                }else{
-                    throw new Error('A transaction can only reference another transaction? Can they reference an interaction? Cannot see why.')
-                }
-            }
-            let cleanPaths = assocArr.map(function(path){
-                let [base,tval] = path.split('/')
-                let clean = [base,tval].join('/')
-                return clean
-            })
-            let uniq = [ ...new Set(cleanPaths) ] //remove duplicate references
-            if(!uniq.length){
-                throw new Error('Must specify at least 1 association with a new transaction')
-            }
-            for (let i = 0; i < uniq.length; i++) {//create bi-directional associations
-                const tpath = uniq[i];
-                let linkpath = tpath.split('/')
-                let linkCpath = configPathFromChainPath(tpath)
-                let {alias, type} = getValue(linkCpath,gb)
-                let pval = 'p' + nextPval
-                let ipath = [path, nextT, pval].join('/')
-                let call
-                if(type === "static"){
-                    call = newColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
-                }else{
-                    call = newInteractionColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
-                }
-                let linkpval = call('Associated ' + tname, 'association')
-                linkpath.push(linkpval)
-                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/')})
-                nextPval ++
-            }
-            checkConfig(newNodeTypeConfig(), tconfig)
-            checkUniques(gb, cpath, tconfig.alias)
-            gun.get(path + '/' + nextT + '/config').put(tconfig)
-            let ps = {}
-            for (const pval in cols) {
-                const colConfig = cols[pval];
-                ps[pval] = true
-                gun.get(path + '/' + nextT + '/'+ pval +'/config').put(colConfig)
-            }
-            gun.get(path + '/' + nextT + '/li/config').put(liconfig)
-            let lips = {}
-            for (const pval in liCols) {
-                const colConfig = liCols[pval];
-                lips[pval] = true
-                gun.get(path + '/' + nextT + '/li/'+ pval +'/config').put(colConfig)
-            }
-            gun.get(path + '/' + nextT + '/p').put(ps)
-            gun.get(path + '/' + nextT + '/li').put(lips)
-            gun.get(path + '/t').put({[nextT]: tableType})
-            return nextT
-        }else if(tableType === 'interaction'){//simple interaction with a static table
-            tconfig = newNodeTypeConfig({alias: tname, type: 'interaction', sortval: nextSortval(gb,path)})
-            cols.p0 = newInteractionColumnConfig({alias: 'Interaction ID', required: true})
-            cols.p1 = newInteractionColumnConfig({alias: 'Date Index 1', dateIndex: true, GBtype: 'date', required: true})
-            let cleanPaths = assocArr.map(function(path){
-                let [base,tval] = path.split('/')
-                let clean = [base,tval].join('/')
-                return clean
-            })
-            let uniq = [ ...new Set(cleanPaths) ]
-            if(!uniq.length){
-                throw new Error('Must specify at least 1 association with a new transaction')
-            }
-            for (let i = 0; i < uniq.length; i++) {//create bi-directional associations
-                const tpath = uniq[i];
-                let linkpath = tpath.split('/')
-                let linkCpath = configPathFromChainPath(tpath)
-                let {alias, type} = getValue(linkCpath,gb)
-                let pval = 'p' + nextPval
-                let ipath = [path, nextT, pval].join('/')
-                let call
-                if(type === "static"){
-                    call = newColumn(tpath, {associatedWith: ipath})
-                }else{
-                    call = newInteractionColumn(tpath, {associatedWith: ipath, associatedIndex: [path,nextT,'p1'].join('/')})
-                }
-                let linkpval = call('Associated ' + tname, 'association')
-                linkpath.push(linkpval)
-                cols[pval] = newInteractionColumnConfig({alias: 'Associated ' + alias, GBtype: 'association', sortval: pval * 10, associatedWith: linkpath.join('/'), associatedIndex: [path,nextT,'p1'].join('/')})
-                nextPval ++
-            }
-            checkConfig(newNodeTypeConfig(), tconfig)
-            checkUniques(gb, cpath, tconfig.alias)
-            gun.get(path + '/' + nextT + '/config').put(tconfig)
-            let ps = {}
-            for (const pval in cols) {
-                const colConfig = cols[pval];
-                ps[pval] = true
-                gun.get(path + '/' + nextT + '/'+ pval +'/config').put(colConfig)
-            }
-            gun.get(path + '/' + nextT + '/p').put(ps)
-            gun.get(path + '/t').put({[nextT]: tableType})
-            return nextT
-        }
-    }catch(e){
-        console.log(e)
-        return e
-    }
-}
-const makenewInteractionColumn = (gun, gb) => (path,config) => (pname, type)=>{
-    try{
-        
-        let cpath = configPathFromChainPath(path)
-        let nextP = findNextID(gb,path)
-        checkAliasName(nextP,pname)
-        let pconfig
-        if(config){
-            config = Object.assign({alias: pname, GBtype: type, sortval: nextSortval(gb,path)}, config)
-            pconfig = newInteractionColumnConfig(config)
-        }else{
-            pconfig = newInteractionColumnConfig({alias: pname, GBtype: type, sortval: nextSortval(gb,path)})
-        }
-        checkConfig(newInteractionColumnConfig(), pconfig)
-        checkUniques(gb,cpath,pconfig.alias)
-        gun.get(path + '/' + nextP + '/config').put(pconfig)
-        gun.get(path + '/p').put({[nextP]: true})
-        return nextP
-    }catch(e){
-        console.log(e)
-        return false
-    }
-}
-const makenewLIcolumn = (gun, gb) => (path, config) => (colName, type)=>{
-    //path = baseID/tval
-    try{
-        let cpath = configPathFromChainPath(path)
-        let nextP = findNextID(gb,path)
-        checkAliasName(nextP,colName)
-        let pconfig
-        if(config){
-            config = Object.assign({alias: colName, GBtype: type, sortval: nextSortval(gb,path)}, config)
-            pconfig = newListItemColumnConfig(config)
-        }else{
-            pconfig = newListItemColumnConfig({alias: colName, GBtype: type, sortval: nextSortval(gb,path)})
-        }
-        checkConfig(newListItemColumnConfig(), pconfig)
-        checkUniques(gb,cpath,pconfig.alias)
-        gun.get(path + '/' + nextP + '/config').put(pconfig)
-        gun.get(path + '/p').put({[nextP]: true})
-        return nextP
-    }catch(e){
-        console.log(e)
-        return e
-    }
-}
-const makeaddContextLinkColumn = (gun, gb) => path => (pname, pval) =>{
-    let newLICol = makenewLIcolumn(gun,gb)
-    let cLink = pval
-    if(cLink[0] !== 'p' || isNaN(cLink.slice(1) * 1)){
-        throw new Error('must provide: "p" + Number(). Must be a "prev" column with a "next" as {linkMultiple: false} relation')
-    }
-    let [base,tval,li,lipval] = path.split('/')
-    let {context} = getValue([base,'props',tval], gb)
-    let [cbase,ctval] = context.split('/')
-    let {GBtype, linksTo} = getValue([cbase,'props',ctval,'props',cLink],gb)
-    if(GBtype !== 'prev'){
-        throw new Error('contextLink can only be to a "prev" link')
-    }
-    let [lbase,lt,lp] = linksTo.split('/')
-    let {linkMultiple} = getValue([lbase,'props',lt,'props',lp],gb)
-    if(linkMultiple){
-        throw new Error('Can only use a contextLink that connects to a table with "next" as {linkMultiple: false}')
-    }
-    let call = newLICol(path,{fn: pval})
-    let newP = call(pname,contextLink)
-    return newP
-}
-const makenewInteraction = (gb, edit) => path => (rowObj, liArr, cb) =>{//like newRow, but for int/tr tables
-    //object with pvals for the 'interaction header'
-    //arr of obj to pass into `addListItems`
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        let tpath = path
-        let[base,tval] = path.split('/')
-        let{type} = getValue([base,'props',tval],gb)
-        let id = 'r' + Gun.text.random(6)
-        let fullpath = tpath + '/' + id
-        let call = edit(fullpath,true)
-        call(rowObj, cb)
-        if(type === 'transaction' && Array.isArray(liArr) && liArr.length){
-            const addListItems = makeaddListItems(edit)
-            const callLI = addListItems(fullpath)
-            callLI(liArr,cb)
-        }
-    }catch(e){
-        cb.call(this, e)
-        console.log(e)
-    }
-}
-
-const makeaddListItems = (edit) => path => (arr,cb) =>{//add subtable data for tr
-    //array of objects, so you can add many LI at once
-    for (let i = 0; i < arr.length; i++) {
-        const lirowObj = arr[i];
-        let lirow = path + '/li/r'+ Gun.text.random(3)
-        let licall = edit(lirow,true)
-        licall(lirowObj,cb)
-    }
-}
-const makeremoveListItems = (gun,timeLog) => path => (arr) =>{//remove one or more subtable data for tr
-    //array of LI row paths > "base/tval/rval/li/lirval"
-    let [base,tval,r] = path.split('/')
-    let liSoul = [base,tval,r,'li'].join('/')
-    for (let i = 0; i < arr.length; i++) {
-        const lirSoul = arr[i];
-        gun.get(liSoul).get(lirSoul).put(false)
-        timeLog(path,{[lirSoul]: false})
-    }
-}
 
 
 //PERMISSION APIs
@@ -1164,7 +1458,6 @@ module.exports = {
     makenewNodeType,
     makeaddProp,
     makenewNode,
-    makelinkColumnTo: makepropIsChildNode,
     makeconfig,
     makeedit,
     makesubscribe,
@@ -1177,20 +1470,14 @@ module.exports = {
     makeshowgsub,
     makeshowgunsub,
     makeunlinkRow,
-    makeclearColumn,
-    makeassociateTables,
-    makenewLIcolumn,
-    makeaddContextLinkColumn,
-    makeassociateWith,
-    makenewInteraction,
-    makeaddListItems,
-    makeremoveListItems,
-    makeunassociate,
     makesubscribeQuery,
     makeretrieveQuery,
     makesetAdmin,
     makenewGroup,
     makeaddUser,
     makeuserAndGroup,
-    makechp
+    makechp,
+    makeimportChildData,
+    makeaddChildProp,
+    makepropIsLookup
 }
