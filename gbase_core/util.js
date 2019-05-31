@@ -1,6 +1,10 @@
 //GBASE UTIL FUNCTIONS
-const NODE_SOUL_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
+const ALL_INSTANCE_NODES = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
+const DATA_INSTANCE_NODE = /![a-z0-9]+#[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
+const RELATION_INSTANCE_NODE = /![a-z0-9]+-[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/i
 const PROTO_NODE_SOUL = /![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9]+\&[^a-z0-9]+/i
+const DATA_PROP_SOUL = /![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/
+const RELATION_PROP_SOUL = /![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9]+\&([a-z0-9]+)?/
 const PROPERTY_PATTERN = /![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+/i
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const NULL_HASH = hash64(JSON.stringify(null))
@@ -96,26 +100,28 @@ const newID = (gb, path) =>{
     //should be base or base, node (creating new prop) thing we are creating should be parsed as boolean
     //props will be an incrementing integer + noise so no alias config: Number() + 'x' + rand(2)
     let {b,t,rt,p} = parseSoul(path)
-    if(t === true || p === true){//new nodeType
+    let n = 0
+    let things
+    if(p === true){//new nodeType
+        let {props} = getValue(configPathFromChainPath(makeSoul({b,t,rt})),gb)
+        things=props
+    }else if(t === true){
         let {props} = getValue(configPathFromChainPath(makeSoul({b})),gb)
-        return getNext(props)
+        things = props
     }else if(rt === true){
         let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
-        return getNext(relations)
+        things = relations
     }else{
         return rand(10) //base or anything that doesn't work
     }
-    function getNext(obj){
-        let n = 0
-        for (const id in obj) {
-            let [val] = id.split('I')
-            if(isNaN(val))continue
-            if(n <= val) n = val
-        }
-        n++
-        let next = n + 'I' + rand(2)
-        return next
+    for (const id in things) {
+        let [val] = id.split('I')
+        val = val*1 //get to a number
+        if(isNaN(val))continue
+        if(n <= val) n = val
     }
+    n++
+    return n + 'I' + rand(2)
 }
 const allUsedIn = gb =>{//could move this to a getter on the gb object?
     let out = {}
@@ -281,15 +287,25 @@ function getRowPropFromCache(propertyPath, obj){//DUPLICATE, BUT CURRENTLY USED
         return obj[propertyPath[0]]
     }
 }
-function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascade, putObj, cb){
+function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, childOf, putObj, cb){
     let IDobj = parseSoul(nodeID) //this is only for data Nodes, not relation nodes
     let {b,t,r,f} = IDobj
     let {props,log,parent} = getValue(configPathFromChainPath(nodeID),gb)
     findPropIDs()
     let timeIndices = {}, logObj = {}, run = [],  pending = {}, toPut = {}, linkChange = {}, err
     let isPrototype = (f !== undefined && f !== '') ? false : true, isRoot = (parent === undefined || parent === '') ? true : false
+    if(isNew && !isRoot){//check childOf value
+        if(!ALL_INSTANCE_NODES.test(childOf)){
+            throw new Error('Invalid NodeID specified for linking new node to its parent')
+        }
+        let {t:ct} = parseSoul(childOf)
+        let {t:tp} = parseSoul(parent)
+        if(tp !== ct){//should point at each other
+            throw new Error('NodeID specified for linking new node to, is not the "parent" type')
+        }
+    }
     let fOwns, proto = {}
-    if(!isPrototype){
+    if(!isPrototype && !isNew){
         let protoSoul = makeSoul({b,t,r,f:''})
         let allProps = Object.keys(putObj)
         run.push(['getF',[null]])
@@ -435,14 +451,14 @@ function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascad
             let {start,inc} = parseIncrement(pconfig.autoIncrement) || {inc:false}
             let {b,t,rt} = parseSoul(nodeID)
             let {enforceUnique, alias, dataType} = pconfig//dataType can only be 'string' or 'number' w/ enforceUnique:true || 'number' w/ inc
-            let soul = makeSoul({b,t,p:pval})
             let putVal
+            let listID = makeSoul({b,t,rt,p:pval})
             try {
                 putVal = convertValueToType(putObj[pval],dataType)
             } catch (error) {
                 throwError(error)
             }
-            gun.get(soul).once(function(list){
+            getList(listID,function(list){
                 list = list || {}
                 let incVals = {}
                 for (const idOnList in list) {
@@ -476,6 +492,32 @@ function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascad
                     runNext()
                 }
             })
+            function getList(whatPath,cb){
+                let {b,t,rt,p} = parseSoul(whatPath)
+                let createdSoul = makeSoul({b,t,rt,':':true})
+                let toObj = {}
+                gun.get(createdSoul).once(function(data){
+                    if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
+                    for (const soul in data) {
+                        if(!ALL_INSTANCE_NODES.test(soul))continue
+                        if(data[soul] !== null){//not Deleted
+                            //this means `false` will pass through, so archived items will still keep increment and unique values enforced
+                            soulList.push(soul)
+                        }
+                    }
+                    let toGet = soulList.length
+                    for (const soul of soulList) {
+                        getCell(soul,p,function(val,from){
+                            toGet--
+                            toObj[from] = val
+                            if(toGet <= 0){
+                                cb.call(cb,toObj)
+                            }
+    
+                        },true)
+                    }
+                })
+            }
         }
     }
     runNext()
@@ -501,7 +543,7 @@ function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascad
         }else{
             let sorted
             try {
-                sorted = sortPutObj(gb,nodeID,putObj,{fromCascade})
+                sorted = sortPutObj(gb,nodeID,putObj)
             } catch (error) {
                 throwError(error)
             }
@@ -561,18 +603,17 @@ function putData(gun, gb, cascade, timeLog, timeIndex, nodeID, isNew, fromCascad
 
 }
 function sortPutObj(gb, nodeID, putObj, opts){
+    opts = opts || {}
     let pathObj = parseSoul(nodeID)
-    let {fromCascade, fromConfig} = opts
-    let {b,t,rt} = pathObj
+    let {fromConfig} = opts
     let {props} = getValue(configPathFromChainPath(nodeID),gb)
     let toPut = {}, tIdx = {}, logObj = {}
     for (const pval in putObj) {
         let propPath = makeSoul(Object.assign({},pathObj,{p:pval}))
-        let uniqueSoul = makeSoul({b,t,rt,p:pval})
         let value = putObj[pval]
-        let {propType, dataType, alias, pickOptions, enforceUnique} = props[pval]
+        let {propType, dataType, alias, pickOptions} = props[pval]
         let v = convertValueToType(value,dataType,nodeID)//Will catch Arrays, and stringify, otherwise probably unneccessary
-        let specials = ["source", "target", "link", "lookup", "function"]//propTypes that can't be changed through the edit API
+        let specials = ["source", "target", "parent", "child", "lookup", "function"]//propTypes that can't be changed through the edit API
 
         if(propType === undefined || dataType === undefined){
             let err = new Error('Cannot find prop types for column: '+ alias +' ['+ pval+'].')
@@ -602,15 +643,12 @@ function sortPutObj(gb, nodeID, putObj, opts){
             addToPut(propPath,v)
             logObj[pval] = v
 
-        }else if(!specials.includes(propType) || fromCascade || fromConfig){
+        }else if(!specials.includes(propType) || fromConfig){
             addToPut(nodeID,{[pval]: v})
             logObj[pval] = v
        
         }
-        if((enforceUnique || (autoIncrement && isNew)) && !fromConfig){
-            if(typeof v === 'object') throw new Error('Something went wrong, a unique value should be either a "string" or a "number".')
-            addToPut(uniqueSoul,{[nodeID]:v})
-        }
+
     }
     return {toPut,tIdx,logObj}
 
@@ -804,7 +842,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
         if (!Array.isArray(temp)){
             let o = {}
             for (const key in temp) {
-                if(NODE_SOUL_PATTERN.test(key)){//link set
+                if(ALL_INSTANCE_NODES.test(key)){//link set
                     let boolean = temp[key]//convert boolean
                     if(boolean){
                         o[key] = {'#': key}
@@ -820,7 +858,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
             //assuming array is to be added (for example, like on linking conversion from imported data)
             let o = {}
             for (const val of value) {
-                if(NODE_SOUL_PATTERN.test(val)){
+                if(ALL_INSTANCE_NODES.test(val)){
                     o[val] = {'#': val}
                 }else{
                     o[val] = true
@@ -1341,7 +1379,11 @@ module.exports = {
     makeSoul,
     parseSoul,
     putData,
-    NODE_SOUL_PATTERN,
+    ALL_INSTANCE_NODES,
+    DATA_INSTANCE_NODE,
+    RELATION_INSTANCE_NODE,
+    DATA_PROP_SOUL,
+    RELATION_PROP_SOUL,
     PROTO_NODE_SOUL,
     PROPERTY_PATTERN,
     ISO_DATE_PATTERN,

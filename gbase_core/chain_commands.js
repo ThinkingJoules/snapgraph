@@ -131,19 +131,36 @@ const makeaddProp = (gun, gb) => (path, config) => (pname, propType)=>{
         return false
     }
 }
-const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path) => (data, cb)=>{
+const makenewNode = (gun,gb,cascade,timeLog,timeIndex) => (path,ctx) => (data, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         let {b,t,rt,p} = parseSoul(path)
         //API can be called from:
         /*
-        gbase.base(b).nodeType(t).newNode() << where t is a root table
-        gbase.base(b).nodeType(t).newNode() << there t is child. If child we need to check if user has provided a valid 'Parent' ID
-        gbase.item(nodeID).prop(childPropType).newNode() <<gbase can handle everything, this is the preferred method.
+        gbase.base(b).nodeType(t).newNode() << where t is a root table, as-is api
+        gbase.node(nodeID).prop(childPropType).newNode() <<gbase can handle everything, this is the preferred method.
         */
         let id = rand(10)
         let fullpath = makeSoul({b,t,rt,r:id})
         putData(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
+    }catch(e){
+        cb.call(this, e)
+        console.log(e)
+    }
+}
+const makenewFrom = (gun,gb,cascade,timeLog,timeIndex) => (path,ctx) => (data, cb)=>{//TODO
+    try{
+        cb = (cb instanceof Function && cb) || function(){}
+        let {b,t,rt,p} = parseSoul(path)
+        //API can be called from:
+        /*
+        gbase.base(b).nodeType(t).node(ID).newFrom() << where t is a root table, as-is api
+        gbase.base(b).nodeType(t).node(ID).newFrom() << there t is child. If child we need to check if user has provided a valid 'Parent' ID
+        gbase.node(ID).newFrom() <<gbase can handle everything, this is the preferred method.
+        */
+        let id = rand(10)
+        let fullpath = makeSoul({b,t,rt,r:id})
+        //putData(gun,gb,cascade,timeLog,timeIndex,fullpath,true,false,data,cb)
     }catch(e){
         cb.call(this, e)
         console.log(e)
@@ -165,18 +182,23 @@ const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb)
 const makeedit = (gun,gb,cascade,timeLog,timeIndex) => (path,fromCascade) => (editObj, cb)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        let {b,t,rt,r} = parseSoul(path)
+        let {b,t,rt} = parseSoul(path)
         let eSoul = makeSoul({b,t,rt,':':true})//look for a created time for this id, might be archived.
         gun.get(eSoul).get(path).get(function(msg,eve){
             let value = msg.put
             eve.off()
+            let e
             if(value === undefined){
-                throw new Error('RowID does not exist, must create a new one through ".newRow()" api.')
+                e = new Error('Node does not exist, must create a new one through ".newRow()" api.')
             }else if(value === false){//check existence
-                throw new Error('RowID is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
-            }else{
+                e = new Error('Node is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
+            }else if(value === null){//check existence
+                e = new Error('Node is deleted. Must create a new one through ".newNode()"')
+            }else if(!e){
                 putData(gun,gb,cascade,timeLog,timeIndex,path,false,fromCascade,editObj,cb)
-            }    
+            }
+            console.log(e)
+            cb.call(cb,e) 
         })
     }catch(e){
         console.log(e)
@@ -474,7 +496,8 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not u
     handleTableImportPuts(gun, path, result, cb)
 }
 // vvvvv these are to build parent child relations (lookup will function much the same as parent child but can have many to many relationships)
-const makeimportNewTable = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{//updated
+//TODO: ALL OF THESE NEED TO STORE THE UNIQUE DATA ON THE PROPER SOUL
+const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{//updated
     //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
     try{
         let {b} = parseSoul(path)
@@ -661,6 +684,7 @@ const makeimportChildData = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdat
         let parentPval = (parentProp) ? findID(newPconfigs, parentProp) : findID(newPconfigs, 'Parent Node')
         newPconfigs[parentPval].dataType = 'string'
         newPconfigs[parentPval].propType = 'parent'
+        newPconfigs[parentPval].linksTo = makeSoul({b,t:fromt,p})
         parseInput()
         function parseInput(){
             console.log(externalID,headers)
@@ -730,25 +754,26 @@ const makeimportChildData = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdat
         }
         function makeLinks(){
             try {
-                if(variants){
-                    for (const soul in existingData) {//clean list further for duplicates
+                let nextLinks = {}, IDs = {}, lists = {}, allowMultiple = false
+                for (const soul in existingData) {//build/check links and make IDs
+                    let skip = false, isVar = false, pList
+                    let list = JSON.parse(existingData[soul]).sort();
+                    if(variants){//parent type has 'variants' enabled
                         let {b,t,r,f} = parseSoul(soul)
                         let pSoul = makeSoul({b,t,r,f:true})
-                        if(soul === pSoul)continue
-                        const pList = existingData[pSoul]
-                        const list = existingData[soul];
-                        if(pList === list){//should be comparing JSON string arrays
-                            //list is the same, null to have it inherit from prototype
-                            addToPut(soul,{[p]:null},updatedNodes)
-                            delete existingData[soul] //get existing data down to only souls that will have lists
+                        if(soul !== pSoul){//is a variant of a prototype
+                            isVar = true
+                            pList = JSON.parse(existingData[pSoul]).sort()
+                            if(JSON.stringify(pList) === JSON.stringify(list)){//should be comparing JSON string arrays
+                                //list is the same, null to have it inherit from prototype
+                                //we can skip inputting this list in since it is the same as it's prototype
+                                addToPut(soul,{[p]:null},updatedNodes)
+                                skip = true
+                            }
                         }
                     }
-                }
-                
-                let IDs = {}, lists = {}, allowMultiple = false
-                for (const soul in existingData) {//build/check links and make IDs
+                    if(skip)continue
                     let {r,f} = parseSoul(soul)
-                    let list = JSON.parse(existingData[soul]);
                     let linkList = []
                     for (let i = 0; i < list.length; i++) {
                         const eid = list[i];
@@ -762,14 +787,19 @@ const makeimportChildData = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdat
                             IDs[eid] = makeSoul({b,t,r,f})
                             firstParse[eid][parentPval] = soul //'Parent Node' prop in new data
                         }
+                        if(!isVar || (isVar && eid != pList[i])){//this is a variant, and this eid differs from it's prototype
+                            //is a proto or this is a variant, and this eid differs from it's prototype
+                            //we need to add a 'UP' link on the prototype to this (prototype || variant) soul, so functions will cascade to it.
+                            addToPut(makeSoul({b,t,r,f:''}),{[soul]:true},nextLinks)//just merging locally not acutally for put.
+                        }
                         linkList.push(IDs[eid])
                     }
                     lists[soul] = linkList
-                    if(linkList.length > 1)allowMultiple = true
+                    if(!allowMultiple && linkList.length > 1)allowMultiple = true
                 }
                 let dataType = (allowMultiple) ? 'unorderedSet' : 'string'
                 let propType = 'child'
-                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType},configChanges)
+                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType,linksTo:makeSoul({b,t,p:parentPval})},configChanges)
                 for (const nodeID in lists) {//add all child links to be put
                     let {r,f} = parseSoul(nodeID)
                     const linkArr = lists[nodeID];
@@ -790,6 +820,12 @@ const makeimportChildData = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdat
                         const val = convertValueToType(node[p],dataType)//second convert in case any failed the first time.
                         addToPut(soul,{[p]:val},newNodes)
                     }
+                }
+                for (const trgtNodeID in nextLinks) {//add new nodes to be put
+                    let set = nextLinks[trgtNodeID]
+                    let {b,t,r,f} = parseSoul(trgtNodeID)
+                    let putSoul = makeSoul({b,t,r,f,p:'UP'})//special propID, basically a hidden property that is only used for 'nexts'
+                    addToPut(putSoul,convertValueToType(set,'unorderedSet'),newNodes)
                 }
                 console.log(newNodes,updatedNodes,configChanges)
                 if(!err){
@@ -863,11 +899,8 @@ const makeaddChildProp = (gun,gb,triggerConfigUpdate) => (path) => (propNameArr,
         if(!externalID)throw new Error('The existing nodeType must have an External ID')
         alias = alias || 'New NodeType' + rand(2)
         let configChanges = {}
-        let sortval = nextSortval(gb,path)
-        let pconfig = newNodePropConfig({alias,sortval,propType: 'child',allowMultiple})
         let p = newID(gb,makeSoul({b,t,p:true}))
-        checkUniques(gb,makeSoul({b,t}), pconfig)
-        addToPut(makeSoul({b,t,p,'%':true}),pconfig,configChanges)//update config
+        
         let headers = propNameArr || []
         let backLink = fromAlias
         headers.unshift(backLink)
@@ -875,8 +908,14 @@ const makeaddChildProp = (gun,gb,triggerConfigUpdate) => (path) => (propNameArr,
         let tnew = newID(gb,makeSoul({b,t:true}))
         let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, tnew, headers, [],false, backLink, true, false)
         let parentPval = aliasLookup[backLink]
+        let sortval = nextSortval(gb,path)
+        let pconfig = newNodePropConfig({alias,sortval,propType: 'child',linksTo:makeSoul({b,t,p:parentPval}),allowMultiple})
+        checkUniques(gb,makeSoul({b,t}), pconfig)
+        addToPut(makeSoul({b,t,p,'%':true}),pconfig,configChanges)//update config
+        addToPut(makeSoul({b,t}),{[p]:true},configChanges)
         newPconfigs[parentPval].dataType = 'string'
         newPconfigs[parentPval].propType = 'parent'
+        newPconfigs[parentPval].linksTo = makeSoul({b,t,p})
 
         let tconfig = newNodeTypeConfig({alias,parent:makeSoul({b,t,p}),externalID:parentPval})//using parent as both an ID and the parent prop...
         checkUniques(gb,makeSoul({b}),tconfig)
@@ -943,7 +982,6 @@ const makepropIsLookup = (gun,gb,getCell,triggerConfigUpdate) => (path) => (node
                     }
                 }
                 let toGet = soulList.length
-                console.log(soulList)
                 for (const soul of soulList) {
                     getCell(soul,fromp,function(val,from){
                         toGet--
@@ -1021,7 +1059,7 @@ const makepropIsLookup = (gun,gb,getCell,triggerConfigUpdate) => (path) => (node
                 for (const trgtNodeID in nextLinks) {//add new nodes to be put
                     let set = nextLinks[trgtNodeID]
                     let {b,t,r,rt,f} = parseSoul(trgtNodeID)//adding rt since you could 'lookup' on a relationship??
-                    let putSoul = makeSoul({b,t,r,rt,f,p:'_nexts'})//special propID, basically a hidden property that is only used for 'nexts'
+                    let putSoul = makeSoul({b,t,r,rt,f,p:'UP'})//special propID, basically a hidden property that is only used for 'nexts'
                     addToPut(putSoul,convertValueToType(set,'unorderedSet'),newNodes)
                 }
                 console.log(newNodes,updatedNodes,configChanges)
@@ -1084,42 +1122,10 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
         //need to get all the arrays of objects before the rest can be done
         let newPconfigs,aliasLookup,tconfig,parentPval,allowMultiple
 
-        let newNodes = {},updatedNodes = {}, firstParse = {}, existingData = {}, configChanges = {}, err
+        let newNodes = {},updatedNodes = {}, existingData = {}, configChanges = {}, err
+        let childNodes = {}, forVarDeDup = {}, hashes = {}
         
         getExisting()
-        function parseInput(){
-            let externalIDidx = headers.indexOf(externalID)
-            if(externalIDidx === -1)throw new Error('Cannot find the external IDs specified')
-            let invalidData = {}
-
-            for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
-                const rowArr = dataArr[i];
-                let eid = rowArr[externalIDidx]
-                for (let j = 0; j < rowArr.length; j++) {
-                    let value = rowArr[j];
-                    if(!['',null,undefined].includes(value)){//ignore empty values
-                        if(!firstParse[eid])firstParse[eid] = {}
-                        const headerPval = aliasLookup[headers[j]]
-                        let {dataType} = newPconfigs[headerPval]
-                        try {
-                            value = convertValueToType(value,dataType,eid,delimiter)
-                        } catch (error) {
-                            //need to fail back to a 'string' type on this pval and re-convert all data on final time through
-                            //convert will not throw errors on 'string' everything else will.
-                            invalidData[headerPval] = dataType
-                        }
-                        firstParse[eid][headerPval] = value
-                        
-                    }
-                }
-            }
-            let typeChange = Object.keys(invalidData)
-            for (const pval of typeChange) {
-                newPconfigs[pval].dataType = 'string'
-                newPconfigs[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
-            }
-            getExisting()
-        }
         function getExisting(){
             //whatPath must be !#. It should be base,nodeType/relationType,prop
             //Check to make sure soul is correct
@@ -1154,21 +1160,39 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
         function makeObjects(){
             try {
                 let propAndType = {}
+                let id = 0
                 for (const soul in existingData) {
+                    let {f} = parseSoul(soul)
                     const arr = JSON.parse(existingData[soul]);
                     let links = []
                     for (const obj of arr) {
                         if(typeof obj !== 'object')throwError(new Error('Must be an array of objects in order to create nodes.'))
+                        let newSoul = makeSoul({b,t,r:id,f})
+                        childNodes[newSoul] = {}
+                        id++
                         for (const palias in obj) {
                             const val = obj[palias];
+                            childNodes[newSoul][palias] = val
+
                             if(!propAndType[palias])propAndType[palias] = null
                             let type = typeof val
                             if(propAndType[palias] === null) propAndType[palias] = type
                             if(propAndType[palias] !== null && propAndType[palias] !== 'string' && propAndType[palias] !== type) propAndType[palias] = 'string'
                             //goal is to set it as things that aren't sting's and if a second one is different, then default to 'string'
                         }
+                        if(variants){
+                            let h = hash64(JSON.stringify(obj))
+                            hashes[h] = newSoul
+                            links.push(h) 
+                        }else{
+                            links.push(newSoul)
+                        }
                     }
-                    if(links.length > 1)allowMultiple = true
+                    if(variants){
+                        forVarDeDup[soul] = links
+                    }
+                    existingData[soul] = links
+                    if(!allowMultiple && links.length > 1)allowMultiple = true
                 }
     
                 let headers = Object.keys(propAndType)
@@ -1181,6 +1205,7 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
                 parentPval = aliasLookup[propName]
                 newPconfigs[parentPval].dataType = 'string'
                 newPconfigs[parentPval].propType = 'parent'
+                newPconfigs[parentPval].linksTo = makeSoul({b,t:fromt,p})
                 for (const palias in propAndType) {
                     const dataType = propAndType[palias];
                     let p = aliasLookup[palias]
@@ -1203,56 +1228,60 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
             //only here if variants
             //find all protos first and get them with JSON objs in an array
             //go through again and check each obj on variants, splice out dupes
-            let protos = {}
-            for (const soul in existingData) {
-                if(!PROTO_NODE_SOUL.test(soul))continue
-                let list = protos[soul] = []
-                const arr = JSON.parse(existingData[soul]);
-                for (const obj of arr) {
-                    list.push(JSON.stringify(obj))
-                }
-            }
             for (const soul in existingData) {//round 2, looking at variants only
                 if(PROTO_NODE_SOUL.test(soul))continue
+                let tempUP = {}
                 let {b,t,r} = parseSoul(soul)
                 let protoSoul = makeSoul({b,t,r,f:''})
-                let arr = JSON.parse(existingData[soul]);
-                for (let i = 0; i < arr.length; i++) {
-                    const obj = arr[i];
-                    let oStr = JSON.stringify(obj)
-                    if(protos[protoSoul].includes(oStr)){//more performant than hashing? I would imagine a string compare is quick?
-                        arr.splice(i,1)//remove this object
+                let arrOfHashes = existingData[soul]
+                let list = []
+                for (const hash of arrOfHashes) {
+                    let childSoul = hashes[hash]
+                    if(forVarDeDup[protoSoul].includes(hash)){
+                        //we need to add an UP to this
+                        let childSoul = hashes[hash]
+                        tempUP[childSoul] = {[soul]:true}
+                    }else{
+                        list.push(childSoul)
                     }
                 }
-                existingData[soul] = JSON.stringify(arr)//should be mutated now, replacing on soul. Should only have 'own' objects
+                if(list.length){
+                    Object.assign(nextLinks,tempUP)
+                    existingData[soul] = list//should be mutated now, replacing on soul. Should only have 'own' objects
+                }else{//ignore tempUP, since it all looks to the proto
+                    addToPut(soul,{[p]:null},updatedNodes)//will now inherit from proto
+                    delete existingData[soul]
+                }
             }
             makeLinks()
         }
         function makeLinks(){
             try {
-                let lists = {}, id = 0
+                let lists = {}
                 for (const soul in existingData) {//build/check links and make IDs
-                    let {f} = parseSoul(soul)
-                    let list = JSON.parse(existingData[soul]);
-                    let linkList = []
-                    for (const obj of list) {
-                        let newSoul = makeSoul({b,t,r:id,f})
-                        linkList.push(newSoul)
+                    let list = existingData[soul]
+                    for (const newSoul of list) {
                         id++
+                        let obj = childNodes[newSoul]
                         for (const palias in obj) {
                             let p = aliasLookup[palias]
                             let {dataType} = newPconfigs[p]
                             const val = convertValueToType(obj[palias],dataType)
                             addToPut(newSoul,{[p]:val},newNodes)//need to replace alias with ids on p, final type convert
                         }
+                        
                         addToPut(newSoul,{[parentPval]:soul},newNodes)//add data to object, 'parent' property
+                        //is a proto or this is a variant, and is only in this for loop if it had differs from it's prototype
+                        //we need to add a 'UP' link on it regardless so functions will cascade to it.
+                        addToPut(newSoul,{[soul]:true},nextLinks)//just merging locally not acutally for put.
                     }
-                    lists[soul] = linkList
-                    if(linkList.length > 1)allowMultiple = true
+                    
+                    lists[soul] = list
+                    if(!allowMultiple && list.length > 1)allowMultiple = true
                 }
                 let dataType = (allowMultiple) ? 'unorderedSet' : 'string'
                 let propType = 'child'
-                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType},configChanges)
+                addToPut(makeSoul({b,t:fromt,p,'%':true}),{allowMultiple,propType,dataType,linksTo:makeSoul({b,t,p:parentPval})},configChanges)
                 for (const nodeID in lists) {//add all child links to be put
                     let {r,f} = parseSoul(nodeID)
                     const linkArr = lists[nodeID];
@@ -1263,6 +1292,12 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
                     if(allowMultiple){// add link node
                         addToPut(linkSoul,val,updatedNodes)
                     }
+                }
+                for (const trgtNodeID in nextLinks) {//add new nodes to be put
+                    let set = nextLinks[trgtNodeID]//should be array of souls
+                    let {b,t,r,f} = parseSoul(trgtNodeID)
+                    let putSoul = makeSoul({b,t,r,f,p:'UP'})//special propID, basically a hidden property that is only used for 'nexts'
+                    addToPut(putSoul,convertValueToType(set,'unorderedSet'),newNodes)
                 }
                 console.log(newNodes,updatedNodes,configChanges)
                 if(!err){
@@ -1330,13 +1365,28 @@ const makechildFromProp = (gun,gb,getCell,timeLog,timeIndex,triggerConfigUpdate)
 }
 
 
-const makearchive = (gun,gb) => path => () =>{
+const makearchive = (gun,gb) => path => () =>{//TODO
 
 }
-const makedelete = (gun,gb) => path => () =>{
+const makeunarchive = (gun,gb) => path => () =>{//TODO
+
+}
+const makedelete = (gun,gb) => path => () =>{//TODO
+
+}
+const makenullValue = (gun) => path => () =>{//TODO
 
 }
 
+//relationship
+const makerelatesTo = (gun,gb,getCell) => path => (trgt,rt,rtProps) =>{//TODO
+    let path = this._path
+    let {b} = parseSoul(path)
+    rtProps = rtProps || false
+    let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
+    rt = findID(relations,rt)//rt will be '-'id
+    
+}
 
 
 //PERMISSION APIs
@@ -1458,13 +1508,14 @@ module.exports = {
     makenewNodeType,
     makeaddProp,
     makenewNode,
+    makenewFrom,
     makeconfig,
     makeedit,
     makesubscribe,
     makeretrieve,
     makelinkRowTo,
     makeimportData,
-    makeimportNewTable,
+    makeimportNewNodeType,
     makeshowgb,
     makeshowcache,
     makeshowgsub,
@@ -1479,5 +1530,10 @@ module.exports = {
     makechp,
     makeimportChildData,
     makeaddChildProp,
-    makepropIsLookup
+    makepropIsLookup,
+    makearchive,
+    makeunarchive,
+    makedelete,
+    makenullValue,
+    makerelatesTo
 }

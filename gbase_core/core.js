@@ -55,7 +55,12 @@ const {
     parseSoul,
     rand,
     NULL_HASH,
-    ISO_DATE_PATTERN
+    ISO_DATE_PATTERN,
+    ALL_INSTANCE_NODES,
+    DATA_INSTANCE_NODE,
+    RELATION_INSTANCE_NODE,
+    DATA_PROP_SOUL,
+    RELATION_PROP_SOUL
 } = require('./util.js')
 
 const {makehandleConfigChange,
@@ -67,19 +72,15 @@ const {makenewBase,
     makenewNodeType,
     makeaddProp,
     makenewNode,
+    makenewFrom,
     makeconfig,
     makeedit,
-    makelinkRowTo,
     makeimportData,
-    makeimportNewTable,
+    makeimportNewNodeType,
     makeshowgb,
     makeshowcache,
     makeshowgsub,
     makeshowgunsub,
-    makeunlinkRow,
-    makeassociateTables,
-    makeassociateWith,
-    makeunassociate,
     makesubscribeQuery,
     makeretrieveQuery,
     makesetAdmin,
@@ -89,10 +90,15 @@ const {makenewBase,
     makechp,
     makeimportChildData,
     makeaddChildProp,
-    makepropIsLookup
+    makepropIsLookup,
+    makearchive,
+    makeunarchive,
+    makedelete,
+    makenullValue,
+    makerelatesTo
 } = require('./chain_commands')
-let newBase,newNodeType,addProp,newNode,config,edit
-let linkRowTo,unlinkRow,importData,importNewTable,associateTables,associateWith,unassociate
+let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
+let importData,importNewNodeType,archive,unarchive,deleteNode
 let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp,importChildData,addChildProp,propIsLookup
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
@@ -120,28 +126,38 @@ const gunToGbase = (gunInstance,baseID) =>{
     gun = gunInstance
     startGunConfigSubs(baseID)
     //DI after gunInstance is received from outside
-    newBase = makenewBase(gun)
-    newNodeType = makenewNodeType(gun,gb)
-    addProp = makeaddProp(gun,gb)
-    addChildProp = makeaddChildProp(gun,gb,triggerConfigUpdate)
-
-    propIsLookup = makepropIsLookup(gun,gb,getCell,triggerConfigUpdate)
-
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
-    edit = makeedit(gun,gb,cascade,tLog,tIndex)
-    newNode = makenewNode(gun,gb,cascade,tLog,tIndex)
-    linkRowTo = makelinkRowTo(gun,gb,getCell)
-    unlinkRow = makeunlinkRow(gun,gb)
-    importData = makeimportData(gun, gb)
-    importNewTable = makeimportNewTable(gun,gb,tLog,tIndex,triggerConfigUpdate)
+    qIndex = queryIndex(gun)
+
+
+
+
+    newBase = makenewBase(gun)
+    newNodeType = makenewNodeType(gun,gb)
+    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate)
+    addProp = makeaddProp(gun,gb)
+    addChildProp = makeaddChildProp(gun,gb,triggerConfigUpdate)
     importChildData = makeimportChildData(gun,gb,getCell,tLog,tIndex,triggerConfigUpdate)
-    associateTables = makeassociateTables(gun,gb)
+
+
+    propIsLookup = makepropIsLookup(gun,gb,getCell,triggerConfigUpdate)
+    
+    
+    newNode = makenewNode(gun,gb,cascade,tLog,tIndex)    
+    edit = makeedit(gun,gb,cascade,tLog,tIndex)
+    relatesTo = makerelatesTo(gun,gb,getCell)  
+    archive = makearchive(gun,gb)
+    unarchive = makeunarchive(gun,gb)
+    deleteNode = makedelete(gun,gb)
+    nullValue = makenullValue(gun)
+
+
+  
+
+    importData = makeimportData(gun, gb)
     handleConfigChange = makehandleConfigChange(gun,gb,gunSubs,getCell,addProp,cascade,solve,tIndex,tLog)
     config = makeconfig(handleConfigChange)
-    qIndex = queryIndex(gun)
-    associateWith = makeassociateWith(gun,gb,getCell)
-    unassociate = makeunassociate(gun,gb)
     subscribeQuery = makesubscribeQuery(gb,setupQuery)
     retrieveQuery = makeretrieveQuery(gb,setupQuery)
     setAdmin = makesetAdmin(gun)
@@ -149,6 +165,8 @@ const gunToGbase = (gunInstance,baseID) =>{
     addUser = makeaddUser(gun)
     userAndGroup = makeuserAndGroup(gun)
     chp = makechp(gun)
+
+
     gbase.newBase = newBase
     gbase.ti = tIndex
     gbase.tl = tLog
@@ -281,9 +299,8 @@ function handleGunSubConfig(subSoul){
             gunSubs[subSoul] = true
             let data = Gun.obj.copy(gundata)
             delete data['_']
-            if(data.usedIn){
-                data.usedIn = JSON.parse(data.usedIn)
-            }
+            if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
+            if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
             setMergeValue(configpath,data,gb)
             triggerConfigUpdate(id)
         })
@@ -339,16 +356,17 @@ function nodeType(label){
     //return depending on table type, return correct tableChainOpt
     let base = this._path
     let {b} = parseSoul(this._path)
-    let id
+    let id,isRoot
     let tvals = gb[b].props
     let check = getValue([b,'props',label],gb)
     if(check !== undefined){
         id = label
     }else{
         for (const tval in tvals) {
-            const {alias} = tvals[tval];
+            const {alias,parent} = tvals[tval];
             if(label === alias){
                 id = tval
+                isRoot = (parent === '') ? true : false
                 break
             }
         }
@@ -357,8 +375,8 @@ function nodeType(label){
         throw new Error('Cannot find corresponding ID for nodeType alias supplied')
     }
     let out
-    let newPath = [base,'#',id].join('')
-    out = nodeTypeChainOpt(newPath)
+    let newPath = makeSoul({b,t:id})
+    out = nodeTypeChainOpt(newPath, isRoot)
     return out
 }
 function relation(label){
@@ -398,7 +416,8 @@ function prop(prop){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct columnChainOpt
     let path = this._path
-    let {b,t,rt} = parseSoul(path)
+    let pathO = parseSoul(path)
+    let {b,t,rt,r} = pathO
     let id
     let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,rt})),gb)
     let isNode = path.includes('#')
@@ -416,30 +435,48 @@ function prop(prop){
         throw new Error('Cannot find corresponding ID for prop alias supplied')
     }
     let out
-    let newPath = makeSoul({b,t,rt,p:id})
-    if(isNode){
+    let newPath = makeSoul(Object.assign(pathO,{p:id}))
+    if(isNode && !r){
         out = propChainOpt(newPath, ptype, dtype)
-    }else{
+    }else if(!r){
         out = relationPropChainOpt(newPath, ptype, dtype)
+    }else{//called prop from gbase.node(ID).prop(name)
+        let isChild = false
+        if(isNode){
+            isChild = (ptype === 'child') ? true : false
+        }
+        out = nodeValueOpt(newPath, isChild)
     }
     return out
 }
 function node(nodeID){
     //can be with just id of or could be whole string (!#$ or !-$)
     //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
-    let out
-    let newPath
-    if(nodeID.includes('!') && nodeID.includes('#') && nodeID.includes('$')){
-        newPath = nodeID
-    }else if(this._path && nodeID.length === 10){//assumes nodeID is standard 10 digit idval
-        let path = this._path
-        newPath = [path,'$',nodeID].join('')
+    let path = this._path
+    let testPath = nodeID
+    if(path){
+        testPath = parseSoul(path)
+        Object.assign(testPath,{r:testPath})
+        testPath = makeSoul(testPath)
+    }
+
+    if(DATA_INSTANCE_NODE.test(testPath)){
+        return nodeChainOpt(testPath,true)
+    }else if(RELATION_INSTANCE_NODE.test(testPath)){
+        return nodeChainOpt(testPath,false)
+    }else if(DATA_PROP_SOUL.test(testPath)){//is a nodeProp
+        let {b,t,p} = parseSoul(testPath)
+        let {propType} = getValue(configPathFromChainPath(makeSoul(b,t,p)),gb)
+        let isChild = (propType === 'child') ? true : false
+        return nodeValueOpt(testPath,isChild)
+    }else if(RELATION_PROP_SOUL.test(testPath)){//is a relationProp
+        return nodeValueOpt(testPath,false)
     }else{
         throw new Error('Cannot decipher rowID given')
     }
-    out = nodeChainOpt(newPath)
-    return out
 }
+
+
 
 
 
@@ -449,13 +486,17 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), newNodeType: newNodeType(_path), importNewTable: importNewTable(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path, config: config(_path), newNodeType: newNodeType(_path), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
 }
 function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
-function nodeTypeChainOpt(_path){
-    return {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), addChildProp: addChildProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), associateTables: associateTables(_path),prop,node}
+function nodeTypeChainOpt(_path,isRoot){
+    let out = {_path, config: config(_path), addProp: addProp(_path), addChildProp: addChildProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path),prop,node}
+    if(isRoot){
+        Object.assign(out,{newNode: newNode(_path)})
+    }
+    return out
 }
 function relationChainOpt(_path){
     return {_path, config: config(_path), newRow: newNode(_path), newColumn: addProp(_path), importData: importData(_path),prop}
@@ -472,8 +513,19 @@ function relationPropChainOpt(_path){
     let out = {_path, config: config(_path)}
     return out
 }
-function nodeChainOpt(_path){
-    return {_path, edit: edit(_path,false,false), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path), linkRowTo: linkRowTo(_path), unlinkRow: unlinkRow(_path), associateWith: associateWith(_path), unassociate: unassociate(_path)}
+function nodeChainOpt(_path, isData){
+    let out = {_path, edit: edit(_path,false,false), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
+    if(isData){
+        Object.assign(out,{newFrom:newFrom(_path),relatesTo:relatesTo(_path)})
+    }
+    return out
+}
+function nodeValueOpt(_path, isChild){
+    let out = {_path, edit: edit(_path,false,false), clearValue:nullValue(_path)}
+    if(isChild){
+        Object.assign(out,{newNode:newNode(_path)})
+    }
+    return out
 }
 
 
@@ -808,8 +860,11 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
                 const rowid = rows[i];
                 let fnresult = solve(rowid,fn)
                 console.log(rowID, ' >>> result for >>> ' + rowid +': ', fnresult)
-                let call = edit(rowid,false,false,true)
-                call({[upval]: fnresult})//edit will call cascade if needed
+                //use a stripped down version of the putData util
+                //have cascade call itself, so once called it will... cascade until it can't
+                
+                //let call = edit(rowid,false,false,true)
+                //call({[upval]: fnresult})//edit will call cascade if needed
             }
         }
     }catch(e){
@@ -2142,125 +2197,6 @@ function loadGBaseConfig(cb){
 
 //WIP___________________________________________________
 
-
-
-
-
-//OLD WRANGLER STUFF
-
-
-function archive(){
-    let gun = this;
-    let gunRoot = this.back(-1)
-    let result = {}
-    let type
-    let nodeSoul = gun['_']['soul'] || false
-    if(!nodeSoul){
-        return console.log('Must select a node with known nodeType. ie; .get("nodeType/00someID00").archive()')}
-    gun.on(function(archiveNode){
-        type = archiveNode['!TYPE']
-        let forceDelete = archiveNode['!DELETED'] || false
-        let props = GB[type].whereTag
-        for (let i = 0; i < props.length; i++){
-            result[props[i]] = {add: [],remove: []}
-            gun.get(props[i]).once(function(tags){
-                for (const key in tags) {
-                    if(forceDelete && tags[key] !== '_' && tags[key] !== '!ARCHIVED'){
-                        result[props[i]].remove.push(key) //null all tags even if they are '0'
-                    }else if(tags[key] == 1){
-                        gun.get(props[i]).get('!ARCHIVED').get(key).put(1)
-                        result[props[i]].remove.push(key)
-                    }
-                }
-            })
-        }
-        gun.get('!DELETED').put(true)
-        gunRoot.get('!TYPE/'+type).get(nodeSoul).put(null)
-        gunRoot.get('!TYPE/'+type+'/ARCHIVED').get(nodeSoul).put({'#': nodeSoul})
-        console.log(result)
-
-    })
-    console.log(result)
-    handleTags(gun,result,type)
-}
-function unarchive(){
-    let gun = this;
-    let gunRoot = this.back(-1)
-    let type
-    let result = {}
-    let nodeSoul = gun['_']['soul'] || false
-    if(!nodeSoul){
-        return console.log('Must select a node with known nodeType. ie; .get("nodeType/00someID00").archive()')}
-    gun.on(function(archiveNode){
-        type = archiveNode['!TYPE']
-        let props = GB[type].whereTag
-        for (let i = 0; i < props.length; i++){
-            result[props[i]] = {add: [],remove: []}
-            gun.get(props[i]).get('!ARCHIVED').once(function(tags){
-                for (const key in tags) {
-                    if(tags[key] == 1){
-                        
-                        result[props[i]].add.push(key)
-                    }
-                }
-            })
-            gun.get(props[i]).get('!ARCHIVED').put(null)
-        }
-        gun.get('!DELETED').put(false)
-        gunRoot.get('!TYPE/'+type).get(nodeSoul).put({'#': nodeSoul})
-        gunRoot.get('!TYPE/'+type+'/ARCHIVED').get(nodeSoul).put(null)
-
-    })
-    console.log(result)
-    handleTags(gun,result,type)
-}
-function deleteNode(){
-    let gun = this;
-    let gunRoot = this.back(-1)
-    let fromNodeSoul = gun['_']['soul'] || false
-    if(!fromNodeSoul){
-        return console.log('Must select a node with known nodeType. ie; gun.get("nodeType/654someID123").delete()')}
-    let check = new Promise( (resolve, reject) => {
-        let exist = gun.then()
-        resolve(exist)
-    })
-    check.then( (data) => {
-        let fromType = data['!TYPE']
-        let nextKey = Object.keys(GB[fromType]['next'])[0] //should only ever be a sinlge next key
-        let prevKeys = Object.keys(GB[fromType]['prev'])
-        gun.get(nextKey).on( (ids) => {
-                for (const key in ids) {
-                    if(ids[key] !== null){
-                        gun.get(key).unlink(gunRoot.get(fromNodeSoul))
-                    }
-                }
-            })
-        for (let i = 0; i < prevKeys.length; i++) {
-            const prop = prevKeys[i];
-            gun.get(prop).on(function(ids){
-                for (const key in ids) {
-                    if(ids[key] !== null){
-                        gun.get(fromNodeSoul).unlink(gunRoot.get(key))
-                    }
-                }
-            })
-        }
-
-
-
-        // gun.once(function(archiveNode){//null out fields
-        //     let type = archiveNode['!TYPE']
-        //     gunRoot.get('!TYPE/'+type+'/ARCHIVED').get(fromNodeSoul).put(null)
-        //     gunRoot.get('!TYPE/'+type+'/DELETED').get(fromNodeSoul).put({'#': fromNodeSoul})
-        //     for (const key in archiveNode) {
-        //         if(key !== '_' || key !== '!DELETED'){//otherwise we break things
-        //             gun.get(key).put(null)
-        //         }
-        //     }
-            
-        // })
-    })
-}
 
 
 async function assembleTree(gun, node, fromID, archived, max, inc, arr){
