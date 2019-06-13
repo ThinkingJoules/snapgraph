@@ -1,5 +1,5 @@
 'use strict'
-const {getValue, setValue, makeSoul, parseSoul,configPathFromChainPath} = require('../gbase_core/util')
+const {getValue, setValue, makeSoul, parseSoul,configPathFromChainPath} = require('../gbase_core/util.js')
 function getBlockTime(unix){
   let date = new Date(unix)
   //console.log(date.toString())
@@ -45,27 +45,83 @@ function newQueryObj(cb,from,to,items,order){
     rangeOrder,
     traverse,
     dumpResult: function(){
-      let out = []
-      let order = Object.keys(this.result)
-      if (this.rangeOrder === '>'){
-        order.sort(function(a, b){return a - b})
-      }else{
-        order.sort(function(a, b){return b - a})
-      }
-      for (const ts of order) {
-        out = out.concat(this.result[ts])
-      }
-      this.done(out)
+      // let out = []
+      // let order = Object.keys(this.result)
+      // if (this.rangeOrder === '>'){
+      //   order.sort(function(a, b){return a - b})
+      // }else{
+      //   order.sort(function(a, b){return b - a})
+      // }
+      // for (const ts of order) {
+      //   out = out.concat(this.result[ts])
+      // }
+      this.done(this.result)
     },
     
     done : cb || function(){}
   }
+}
+const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =>{
+  //relationSoul = must be !-$ soul
+  //idxData = Must be unique for the entire index, this is the string (usually a gun soul) that you are indexing at ...VV
+  //idxDate = This is the timestamp you are indexing the idxData at. 
+  let root = gun.back(-1)
+  let {b,r} = parseSoul(relationSoul)
+  let {archive, deleteThis} = opts
+  let idxSoul = makeSoul({b,r,':':true})
+  let soulObj = parseSoul(makeSoul({b,r,'>':srcTypeID,'<':trgtTypeID}))
+  let idxData = relationSoul
+  idxDate = idxDate || Date.now() //index as 'now' such for creation
+  if (!(idxDate instanceof Date) || isNaN(idxDate*1)){ // TODO: Do magic
+    console.warn('Warning: Improper idxDate used. Must be a Date Object or unix time')
+  }
+  if(idxDate instanceof Date)idxDate = idxDate.getTime()
+  let correctBlock = getBlockTime(idxDate)
+  const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
+  //console.log(correctBlock,correctSoul)
+
+  root.get(idxSoul).get(idxData).get(function(msg, ev) {
+    let prevIdx = msg.put
+    ev.off()
+    if (prevIdx !== undefined){//false old index in case of changing
+      let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
+      root.get(oldSoul).put({[idxData]: false})
+    }
+    if(archive || deleteThis)return
+    root.get(idxSoul).get('tail').get(function(msg, ev) {//new idxData, check last block time to see if we add to that block or create new block
+      let lastBlock = msg.put //unix
+      ev.off()
+      if (lastBlock !== undefined){//lastBlock exists
+        if(correctBlock === lastBlock){//add to block
+          root.get(correctSoul).put({[idxData]:idxDate})
+        }else{//make new block 
+          let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastBlock}))
+          root.get(idxSoul).put({tail:correctBlock})//new tail
+          root.get(lastSoul).put({next:correctSoul})//old tail, update next
+          root.get(correctSoul).put({prev:lastSoul ,next: null, [idxData]:idxDate})//put data and prev in new block
+        }
+      }else{//first block for index, make head === tail on idxSoul
+        let base = {b,r,'>':srcTypeID,':':true}
+        let src = makeSoul(base)
+        root.get(idxSoul).put({[src]:{'#':src},head:correctBlock,tail:correctBlock})
+        root.get(correctSoul).put({prev:null,next:null,[idxData]:idxDate})
+        //need to back create links so we can find the list        
+        let trgt = makeSoul(Object.assign({},base,{'<':trgt}))
+        root.get(src).put({[trgt]:{'#':trgt}})
+        root.get(trgt).put({[correctSoul]: {'#':correctSoul}})
+      }
+      root.get(idxSoul).put({[idxData]:idxDate})//'last' index
+    })
+  })
 }
 
 const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
   //idxID = Can be anything, it is just a reference to this specific index, it is usually a 'list' soul
   //idxData = Must be unique for the entire index, this is the string (usually a gun soul) that you are indexing at ...VV
   //idxDate = This is the timestamp you are indexing the idxData at. 
+
+  //NEED TO FACTOR IN POSSIBILITY OF A DATE BEING BEFORE HEAD
+
   let root = gun.back(-1)
   let soulObj = parseSoul(idxID)
   let idxSoul = makeSoul(Object.assign({}, soulObj,{':':true}))
@@ -88,14 +144,25 @@ const timeIndex = (gun) => (idxID, idxData, idxDate) =>{
       let lastBlock = msg.put //unix
       ev.off()
       if (lastBlock !== undefined){//lastBlock exists
-        if(correctBlock === lastBlock){//add to block
-          root.get(correctSoul).put({[idxData]:idxDate})
-        }else{//make new block 
-          let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastBlock}))
-          root.get(idxSoul).put({tail:correctBlock})//new tail
-          root.get(lastSoul).put({next:correctSoul})//old tail, update next
-          root.get(correctSoul).put({prev:lastSoul ,next: null, [idxData]:idxDate})//put data and prev in new block
-        }
+        root.get(idxSoul).get('head').get(function(msg, ev) {//need head to know what to do
+          let firstBlock = msg.put //unix
+          ev.off()
+          //if between first and last, add to correct block
+          //if before first, make new block, change head, link to prev head
+          //if after last, make new block, change tail, link prev tail
+
+
+
+
+          if(correctBlock === lastBlock){//add to block
+            root.get(correctSoul).put({[idxData]:idxDate})
+          }else{//make new block 
+            let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastBlock}))
+            root.get(idxSoul).put({tail:correctBlock})//new tail
+            root.get(lastSoul).put({next:correctSoul})//old tail, update next
+            root.get(correctSoul).put({prev:lastSoul ,next: null, [idxData]:idxDate})//put data and prev in new block
+          }
+        })
       }else{//first block for index, make head === tail on idxSoul
         root.get(idxSoul).put({head:correctBlock,tail:correctBlock})
         root.get(correctSoul).put({prev:null,next:null,[idxData]:idxDate})
@@ -114,8 +181,9 @@ const timeLog = (gun) => (idxID, changeObj) =>{
   let user = root.user()
   let pub = user && user.is && user.is.pub || false
   let idxDate = new Date().getTime()
+  changeObj = (typeof changeObj === 'object') ? JSON.stringify(changeObj) : changeObj
   
-  let logObj = {who:pub,what:JSON.stringify(changeObj),when:idxDate}
+  let logObj = {who:pub,what:changeObj,when:idxDate}
 
   root.get(idxSoul).get('tail').get(function(msg, ev) {
     let lastEdit = msg.put
@@ -134,7 +202,65 @@ const timeLog = (gun) => (idxID, changeObj) =>{
     root.get(nextSoul).put(logObj)//put data and prev in new block
   })
 }
+const makecrawlIndex = (gun) => (idxID,unix, towardTail, cb) =>{
+  cb = (cb instanceof Function && cb) || function(){}
+  if(unix === undefined){
+    if(towardTail){
+      unix = -Infinity
+    }else{
+      unix = Infinity
+    }
+  }
+  let bt, traverseStart,isSoul
+  if(isNaN(unix) && typeof unix === 'string'){
+    traverseStart = unix //need to add check to make sure it is a valid block soul
+    getBlock()
+    return
+  }
+  if(unix === Infinity){
+    unix = 'tail' // tail
+  }else if(unix ===-Infinity){
+    unix = 'head' // head?
+  }  
+  let idxSoul = makeSoul(Object.assign({},parseSoul(idxID),{':': true}))
+  gun.get(idxSoul).get('head',function(msg,eve){
+    eve.off()
+    let head = msg.put
+    gun.get(idxSoul).get('tail',function(msg,eve){
+      eve.off()
+      let tail = msg.put
+      if(unix === 'head'){
+        bt = getBlockTime(head)
+      } else if(unix === 'tail'){
+        bt = getBlockTime(tail)
+      }else if(unix >= tail && unix <= head){
+        bt = getBlockTime(unix)
+      }else if(unix <= head){
+        bt = getBlockTime(head)
+      }else if(unix >= tail){
+        bt = getBlockTime(tail)
+      }
+      traverseStart = makeSoul(Object.assign({},parseSoul(idxID),{':': bt}))
+      getBlock()
+    })
+  })
+  function getBlock(){
+    // need to get head and tail to see if it is in range, or if we start at one end.
+    gun.get(traverseStart).once(function(block){
+      let copy = JSON.parse(JSON.stringify(block))
+      let {prev, next} = copy
+      delete copy.prev
+      delete copy.next
+      delete copy['_']
+      copy = Object.entries(copy)
+      copy = (towardTail) ? copy.sort(function(a, b){return a[1] - b[1]}) : copy.sort(function(a, b){return b[1] - a[1]})
+      copy = copy.map(x => x[0])//get rid of timestamp, ids are now ordered by unix
+      let dir = (towardTail) ? next : prev
+      cb(copy,dir)
+    })
+}
 
+}
 const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCoffset) => {//need to add a filter so it only matches a certain item
   //UTCoffset is in hours that you want to interpret the start and stop dates
   let begin,end,dateShift
@@ -184,10 +310,17 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCof
     gun.get(soul).get(function(msg,eve){
       eve.off()
       let data = msg.put
-      for (const soul in data) {
-        if(['_','head','tail'].includes(soul))continue
-        const ts = data[soul];
-        if(ts){
+      let order = Object.entries(data)
+      if (query.rangeOrder === '>'){
+        order.sort(function(a, b){return a[1] - b[1]})
+      }else{
+        order.sort(function(a, b){return b[1] - a[1]})
+      }
+      let low = query.range.low
+      let high = query.range.high
+      for (const [soul,ts] of order) {
+        if(['_','prev','next','head','tail'].includes(soul))continue
+        if(ts && ts >= low && ts <= high && query.result.length < query.max){
           query.result.push(soul)
         }
       }
@@ -419,6 +552,8 @@ function timeTransform(cb) {
 }
 module.exports = {
   timeIndex,
+  relationIndex,
   queryIndex,
-  timeLog
+  timeLog,
+  makecrawlIndex
 }

@@ -647,7 +647,7 @@ For more info see the [Query](#query) section.
 `subscribe()` and `.retrieve()` called on a **table** accepts an `array` of query argument `objects`. Below are how they work:
 _________
 ### RANGE
-**{RANGE: [*index*, *from*, *to*, *items*,*relativeTime*,*toDate*,*lastRange*,*firstDayOfWeek*]}**  
+**{RANGE: [*index*, *from*, *to*, *relativeTime*,*toDate*,*lastRange*,*firstDayOfWeek*]}**  
 All arguments are optional, however if some are specified others cannot be:
 * if you specifiy `relativeTime`, `toDate`, or `lastRange` you cannot specify a `from` or `to`
 
@@ -655,7 +655,6 @@ Explanation of arguments:
 * **index** - What time index to use for the query, metadata indices are 'created' and 'edited'. Normally you would specify a pval column as an argument: `baseID/tval/pval` for 'created' (edited is the same format): `baseID/tval/'created'`. If specifying a column, that column must be `{GBtype: 'date'}`
 * **from** - This can be an `instanceof Date` or anything that `new Date()` can construct a date object with. For example a unix time or properly formatted date string.
 * **to** - same as **from**
-* **items** - `Number()` of items to stop gathering at. So if you want only the most recent 50 items, this argument would be `50`
 * **relativeTime** - if specified it will derive **from** by `Date.now()`. **to** will be set to `Infinity` so new items will still match this query. This argument is formatted as follows: `Number()` + flag. Valid flags are:
 ```
 y = year (Number() * 365 days)
@@ -675,8 +674,13 @@ examples:
 'day'
 ```
 * **lastRange** - This is a preset for relative previous time chunks. For example if this is set to 'month', **from** and **to** will be set to the first millisecond in the previous month, and the last millisecond in the previous month. This has the same valid options as **toDate** with the addition of `'quarter'` 
-* **fristDayOfWeek** - This is used for the **toDate** and **lastRange** `week` argument. `0` is default and represents Sunday.
+* **firstDayOfWeek** - This is used for the **toDate** and **lastRange** `week` argument. `0` is default and represents Sunday.
 
+_________
+### LIMIT
+**{LIMIT: [*number*]}**  
+**number** Integer for number of items.
+NOTE: This will limit the result count. Query starts based on your RANGE parameters (from, to, direction) and returns matching items when limit is met.
 
 _________
 ### SEARCH
@@ -703,7 +707,6 @@ _________
 **{GROUP: [*column*]}**  
 **column** is a pval that contains the values to group by.  
 NOTE: if you include a a **GROUP** to any formatting query it will change the form of the output return value. Instead of the result format from the `subscribe()` or `retrieve()`, this will return an object with keys of the grouped by value and the value for that key will be in the format from `subscribe()` or `retrieve()` return.
-
 
 
 

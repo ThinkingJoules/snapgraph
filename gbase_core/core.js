@@ -22,7 +22,6 @@ if(typeof window === "undefined"){//if this is running on a server
 let gun
 let gbase = {}
 let gb = {}
-let cache = {} 
 let gsubs = {}
 let gsubsParams = {}
 let gunSubs = {}
@@ -47,10 +46,10 @@ const {
     cachePathFromRowID,
     setRowPropCacheValue,
     bufferPathFromSoul,
-    getAllColumns,
-    watchObj,
+    getAllActiveProps,
+    Cache,
     formatQueryResults,
-    hasColumnType,
+    hasPropType,
     makeSoul,
     parseSoul,
     rand,
@@ -60,8 +59,18 @@ const {
     DATA_INSTANCE_NODE,
     RELATION_INSTANCE_NODE,
     DATA_PROP_SOUL,
-    RELATION_PROP_SOUL
+    RELATION_PROP_SOUL,
+    PROPERTY_PATTERN,
+    ENQ,
+    INSTANCE_OR_ADDRESS,
+    isEnq,
+    makeEnq,
+    toAddress,
+    lookupID
 } = require('./util.js')
+const cache = new Cache()
+const upDeps = {}
+const downDeps = {}
 
 const {makehandleConfigChange,
     basicFNvalidity
@@ -95,10 +104,10 @@ const {makenewBase,
     makeunarchive,
     makedelete,
     makenullValue,
-    makerelatesTo
+    makerelatesTo,
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
-let importData,importNewNodeType,archive,unarchive,deleteNode
+let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
 let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp,importChildData,addChildProp,propIsLookup
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
@@ -116,9 +125,10 @@ const solve = makesolve(gb, getCell)
 
 const {timeIndex,
     queryIndex,
-    timeLog
+    timeLog,
+    makecrawlIndex
 } = require('../chronicle/chronicle')
-let qIndex,tIndex,tLog
+let qIndex,tIndex,tLog,crawlIndex
 
 
 
@@ -129,37 +139,42 @@ const gunToGbase = (gunInstance,baseID) =>{
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
     qIndex = queryIndex(gun)
+    crawlIndex = makecrawlIndex(gun)
 
 
 
 
     newBase = makenewBase(gun)
-    newNodeType = makenewNodeType(gun,gb)
+    newNodeType = makenewNodeType(gun,gb,tLog)
     importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate)
-    addProp = makeaddProp(gun,gb)
-    addChildProp = makeaddChildProp(gun,gb,triggerConfigUpdate)
+    addProp = makeaddProp(gun,gb,tLog)
+    addChildProp = makeaddChildProp(gun,gb,tLog,triggerConfigUpdate)
     importChildData = makeimportChildData(gun,gb,getCell,tLog,tIndex,triggerConfigUpdate)
 
 
     propIsLookup = makepropIsLookup(gun,gb,getCell,triggerConfigUpdate)
     
     
-    newNode = makenewNode(gun,gb,cascade,tLog,tIndex)    
-    edit = makeedit(gun,gb,cascade,tLog,tIndex)
-    relatesTo = makerelatesTo(gun,gb,getCell)  
-    archive = makearchive(gun,gb)
-    unarchive = makeunarchive(gun,gb)
-    deleteNode = makedelete(gun,gb)
+    newNode = makenewNode(gun,gb,getCell,cascade,tLog,tIndex)   
+    newFrom = makenewFrom(gun,gb,getCell,cascade,tLog,tIndex) 
+    edit = makeedit(gun,gb,getCell,cascade,tLog,tIndex)
+    relatesTo = makerelatesTo(gun,gb,getCell,tLog,tIndex)  
+    archive = makearchive(gun,gb,getCell,tLog,tIndex)
+    unarchive = makeunarchive(gun,gb,getCell,tLog,tIndex)
+    deleteNode = makedelete(gun,gb,getCell,tLog,tIndex)
     nullValue = makenullValue(gun)
 
 
   
 
     importData = makeimportData(gun, gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,gunSubs,getCell,addProp,cascade,solve,tIndex,tLog)
+    handleConfigChange = makehandleConfigChange(gun,gb,getCell,cascade,solve,tLog)
     config = makeconfig(handleConfigChange)
     subscribeQuery = makesubscribeQuery(gb,setupQuery)
     retrieveQuery = makeretrieveQuery(gb,setupQuery)
+
+
+
     setAdmin = makesetAdmin(gun)
     newGroup = makenewGroup(gun)
     addUser = makeaddUser(gun)
@@ -168,6 +183,7 @@ const gunToGbase = (gunInstance,baseID) =>{
 
 
     gbase.newBase = newBase
+    gbase.node = node
     gbase.ti = tIndex
     gbase.tl = tLog
     gbase.qi = qIndex
@@ -226,6 +242,9 @@ function startGunConfigSubs(baseID){
                         gunSubs[baseconfig] = true
                         let data = Gun.obj.copy(gundata)
                         delete data['_']
+                        data.props = {}
+                        data.groups = {}
+                        data.relations = {}
                         let configpath = configPathFromSoul(id)
                         setMergeValue(configpath,data,gb)
                         setupTypesSubs(baseID)
@@ -261,9 +280,9 @@ function setupTypesSubs(baseID){
         for (const tval in data) {//tval '#' + id
             const value = data[tval];
             if(value){
-                let {t,rt} = parseSoul(tval)
-                handleGunSubConfig(makeSoul({b:baseID,t,rt,'%':true}))//will sub if not already subed and merge in gb
-                setupPropSubs(makeSoul({b:baseID,t,rt}))
+                let {t,r} = parseSoul(tval)
+                handleGunSubConfig(makeSoul({b:baseID,t,r,'%':true}))//will sub if not already subed and merge in gb
+                setupPropSubs(makeSoul({b:baseID,t,r}))
             }
         }
     })
@@ -272,14 +291,14 @@ function setupTypesSubs(baseID){
 }
 function setupPropSubs(tpath){
     //tpath should be either !# or !-   
-    let {b,t,rt} = parseSoul(tpath) 
+    let {b,t,r} = parseSoul(tpath) 
     gun.get(tpath).on(function(gundata, id){
         let data = Gun.obj.copy(gundata)
         delete data['_']
         for (const pval in data) { // pval = id
             const value = data[pval];
             if (value) {
-                handleGunSubConfig(makeSoul({b,t,rt,p:pval,'%':true}))//will sub if not already subed
+                handleGunSubConfig(makeSoul({b,t,r,p:pval,'%':true}))//will sub if not already subed
             }
         }
     })
@@ -354,7 +373,6 @@ function base(base){
 function nodeType(label){
     //check base for name in gb to find ID, or base is already ID
     //return depending on table type, return correct tableChainOpt
-    let base = this._path
     let {b} = parseSoul(this._path)
     let id,isRoot
     let tvals = gb[b].props
@@ -417,9 +435,9 @@ function prop(prop){
     //return depending on table type, return correct columnChainOpt
     let path = this._path
     let pathO = parseSoul(path)
-    let {b,t,rt,r} = pathO
+    let {b,t,r,i} = pathO
     let id
-    let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,rt})),gb)
+    let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
     let isNode = path.includes('#')
     let ptype,dtype
     for (const pval in pvals) {
@@ -436,9 +454,9 @@ function prop(prop){
     }
     let out
     let newPath = makeSoul(Object.assign(pathO,{p:id}))
-    if(isNode && !r){
+    if(isNode && !i){
         out = propChainOpt(newPath, ptype, dtype)
-    }else if(!r){
+    }else if(!i){
         out = relationPropChainOpt(newPath, ptype, dtype)
     }else{//called prop from gbase.node(ID).prop(name)
         let isChild = false
@@ -454,19 +472,27 @@ function node(nodeID){
     //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
     let path = this._path
     let testPath = nodeID
-    if(path){
-        testPath = parseSoul(path)
-        Object.assign(testPath,{r:testPath})
-        testPath = makeSoul(testPath)
+    if(path){//only if coming from base.nodeType.node
+        if(!INSTANCE_OR_ADDRESS.test(nodeID)){
+            testPath = parseSoul(path)
+            Object.assign(testPath,{i:testPath})
+            testPath = makeSoul(testPath)
+        } 
     }
+    let {b,t,p} = parseSoul(testPath)
 
     if(DATA_INSTANCE_NODE.test(testPath)){
-        return nodeChainOpt(testPath,true)
+        let {parent} = getValue(configPathFromChainPath(makeSoul({b,t})),gb)
+        let allowNewFrom = !parent //if '' then true if 'value' then false
+        if(!allowNewFrom){//is child table, but see if allowMultiple = true
+            let {allowMultiple} = getValue(configPathFromChainPath(parent),gb)
+            allowNewFrom = allowMultiple
+        }
+        return nodeChainOpt(testPath,true,allowNewFrom)
     }else if(RELATION_INSTANCE_NODE.test(testPath)){
         return nodeChainOpt(testPath,false)
     }else if(DATA_PROP_SOUL.test(testPath)){//is a nodeProp
-        let {b,t,p} = parseSoul(testPath)
-        let {propType} = getValue(configPathFromChainPath(makeSoul(b,t,p)),gb)
+        let {propType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
         let isChild = (propType === 'child') ? true : false
         return nodeValueOpt(testPath,isChild)
     }else if(RELATION_PROP_SOUL.test(testPath)){//is a relationProp
@@ -513,10 +539,13 @@ function relationPropChainOpt(_path){
     let out = {_path, config: config(_path)}
     return out
 }
-function nodeChainOpt(_path, isData){
+function nodeChainOpt(_path, isData, allowNewFrom){
     let out = {_path, edit: edit(_path,false,false), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
     if(isData){
-        Object.assign(out,{newFrom:newFrom(_path),relatesTo:relatesTo(_path)})
+        Object.assign(out,{relatesTo:relatesTo(_path)})
+    }
+    if(allowNewFrom){
+        Object.assign(out,{newFrom:newFrom(_path)})
     }
     return out
 }
@@ -543,139 +572,143 @@ function formatData(format, pType,dType,val){
     }
     return val
 }
-function loadRowPropToCache(nodeID, p){
-    let {b,t,rt,r,f} = parseSoul(nodeID)
-    let nodeSoul = makeSoul({b,t,rt,r,f})
-    let protoSoul = makeSoul({b,t,rt,r,f:true})
-    let subname = nodeSoul+'+'+p
-    let protoSub = protoSoul+'+'+p
-    let toGet = []
-    if(!gunSubs[protoSub]){//needs both (or this is proto and not subd)
-        toGet.push(protoSoul)
-    }else if(protoSub !== subname && !gunSubs[subname]){//should only run if request was for a var
-        toGet.push(nodeSoul)
+function handleCacheDep(nodeID, p, val){
+    const address = toAddress(nodeID,p)
+    let inheritsNodeID = isEnq(val)
+    if(!inheritsNodeID){//could have changed from Enq to val
+        removeDep()
+        return false
     }
-    if(toGet.length){
-        checkExist(toGet[0])
-    }
-    function checkExist(soul){
-        //if nodeID != proto nodeID, run getVar, after this
-        gun.get(soul).get(p, function(msg,eve){//check for existence only
-            eve.off()
-            if(msg.put === undefined){
-                sendToCache(soul,p,null)
-            }
-            setupSub(soul)
-            toGet.shift()
-            if(toGet.length){
-                checkExist(toGet[0])
-            }
-        })
-
-    }
-    function setupSub(soul){
-        let sname = soul+'+'+p
-        let {b,t,rt} = parseSoul(soul)
-        let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,rt,p})),gb)
+    const looksAtAddress = toAddress(inheritsNodeID,p)
     
-        gun.get(soul).get(p).on(function(value){
-            let toCache = value
-            if(dataType === 'unorderedSet'){//this will be a full object
-                let data = JSON.parse(JSON.stringify(value))
-                let links = []
-                for (const key in data) {
-                    if(key === '_')continue
-                    const boolean = data[key];
-                    if (boolean) {//if current link
-                        links.push(key) 
-                    }
-                }
-                toCache = links
-            }else if(dataType = 'array'){
-                try {
-                    toCache = JSON.parse(value)
-                    for (let i = 0; i < toCache.length; i++) {
-                        const el = toCache[i];
-                        if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
-                            toCache[i] = new Date(el)
-                        }
-                    }
-                } catch (error) {
-                    // leave as is..
-                }
-            }
-            handleNewRowPropData(soul,p,toCache) //<< needs update
-            //setRowPropCacheValue(cpath,value,cache)
-            sendToCache(soul,p,toCache)//needs to handle object assigning/creation and prop deleting
-        }) 
-        gunSubs[sname] = true
+    if(!downDeps[address]){//add
+        addDep()
+        return true
+    }
+    if(downDeps[address] && downDeps[address] !== inheritsNodeID){//change if different
+        removeDep()
+        addDep()
+        return true
+    }
+    return false
+    function addDep(){
+        downDeps[address] = looksAtAddress
+        if(!upDeps[looksAtAddress])upDeps[looksAtAddress] = {[address]: true}
+        else Object.assign(upDeps[looksAtAddress], {[address]: true})
+    }
+    function removeDep(){
+        let oldDep = downDeps[address]
+        if(oldDep && upDeps[oldDep]) delete upDeps[oldDep][address]
+        if(oldDep) delete downDeps[address]
     }
 }
+function setupSub(soul, p){
+    let sname = soul+'+'+p
+    if(gunSubs[subname])return
+    let {b,t,r} = parseSoul(soul)
+    let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
+
+    gun.get(soul).get(p).on(function(value){
+        let toCache = value
+        if(dataType === 'unorderedSet'){//this will be a full object
+            let data = JSON.parse(JSON.stringify(value))
+            let links = []
+            for (const key in data) {
+                if(key === '_')continue
+                const boolean = data[key];
+                if (boolean) {//if current link
+                    links.push(key) 
+                }
+            }
+            toCache = links
+        }else if(dataType = 'array'){
+            try {
+                toCache = JSON.parse(value)
+                for (let i = 0; i < toCache.length; i++) {
+                    const el = toCache[i];
+                    if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                        toCache[i] = new Date(el)
+                    }
+                }
+            } catch (error) {
+                // leave as is...?
+            }
+        }
+        if(toCache === undefined)toCache = null
+        sendToCache(soul,p,toCache)//needs to handle object assigning/creation and prop deleting
+    }) 
+    gunSubs[sname] = true
+}
 function sendToCache(nodeID, p, value){
-    let {b,t,rt,r,f} = parseSoul(nodeID)
-    let cPath = cachePathFromChainPath(nodeID)
-    let node = getValue(cPath,cache)
-    let pObj = {[p]:value}
-    //handle found or null first
-    if(node && value !== null){
-        Object.assign(node,pObj)
+    let newEnq = handleCacheDep(nodeID,p,value)//will get deps correct so we can return proper data to buffer
+    let {b,t,r,i} = parseSoul(nodeID)
+    let address = makeSoul({b,t,r,i,p})
+    let [from,v] = cache[address] || []//if it is inherited we want the value to go out to buffer
+
+    if(v === undefined){
+        cache.watch(address,handlePropDataChange)
+    }
+    if(newEnq || (from === address && value !== v)){//this is some sort of new/changed value
+        cache[address] = value//should fire the watch cb
         return
     }
-    if(value === null && f !== '' && node){
-        //if removing a value on a variant and there is a node create in cache already
-        delete node[p]
-        return
-    }
-    if(f === ''){//this is the protoType that is not in cache
-        setValue(cPath,pObj,cache)
-    }else{
-        let proto = getValue(cachePathFromChainPath(makeSoul({b,t,rt,r,f:true})),cache)
-        if(!proto){//this should really error, because it should already have found it...
-            //going to set to undefined, as any gun undefineds will be null
-            proto = {[p]:undefined}
-            setValue(cPath,proto,cache)
+    function handlePropDataChange(address,getterVal){
+        let [from,v] = getterVal
+        let {p} = address
+        let startAddress = (address === from) ? from : address
+        let nodeID = removeP(startAddress)
+        handleNewPropData(nodeID,p,v)
+        checkDeps(startAddress)
+        function checkDeps(changedAddress){
+            let deps = upDeps[changedAddress]
+            if(deps){
+                for (const depAddr in deps) {
+                    let nodeID = removeP(depAddr)
+                    handleNewPropData(nodeID,p,v)
+                    checkDeps(startAddress)//recur... until it can't
+                }
+            }
         }
-        let variant = Object.create(proto)
-        if(value !== null){//if they requested a value that was null, just create the object so it can inherit through it
-            Object.assign(variant,pObj)
+        function removeP(address){
+            let idObj = parseSoul(address)
+            delete idObj.p
+            delete idObj['.']
+            return makeSoul(idObj)
         }
-        setValue(cPath,variant,cache)
     }
 }
 
 function getCell(nodeID,p,cb,raw){
     //will return the inheritted value if not found on own node
     raw = !!raw //if it is true, we skip the formatting
-    let {b,t,rt,r,f} = parseSoul(nodeID)
-    let propPath = makeSoul({b,t,rt,p})
+    cb = (cb instanceof Function && cb) || function(){}
+    let {b,t,r,i} = parseSoul(nodeID)
+    let propPath = makeSoul({b,t,r,p})
     let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
-    let cPath = cachePathFromChainPath(nodeID)
-    let node = getValue(cPath,cache)
-    let nodeSoul = makeSoul({b,t,rt,r,f})
-    let protoSoul = makeSoul({b,t,rt,r,f:true})
-    if(node && node[p] !== undefined){
-        val = node[p]
-        let from = (node.hasOwnProperty(p)) ? nodeSoul : protoSoul
-        if(!raw)val = formatData(format,propType,dataType,val)
-        cb.call(this,val, from)
+    let address = makeSoul({b,t,r,i,p})
+    let [from, cVal] = cache[address] || []
+    if(cVal !== undefined){
+        if(!raw)cVal = formatData(format,propType,dataType,cVal)
+        cb.call(this,cVal, from)
         return
     }
-    let isProto = (nodeSoul === protoSoul)
-    getData(nodeSoul)
+    getData(nodeID)
     function getData(soul){
         //if nodeID != proto nodeID, run getVar, after this
-        let {b,t,rt} = parseSoul(soul)
-        let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,rt,p})),gb)
+        let {b,t,r} = parseSoul(soul)
+        let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
         gun.get(soul).get(p, function(msg,eve){//check for existence only
             eve.off()
-            loadRowPropToCache(soul, p)
             let val = msg.put
-            if([null,undefined].includes(val) && isProto){
+            setupSub(soul,p)
+            if([null,undefined].includes(val)){
+                sendToCache(soul,p,null)
                 cb.call(this,null,soul)
                 return
-            }
-            if([null,undefined].includes(val) && !isProto){
-                getData(protoSoul)
+            }else if(isEnq(val)){//will keep getting inherited props until we get to data.
+                let inheritFrom = val.slice(1)
+                sendToCache(soul,p,val)//put the lookup in cache
+                getData(inheritFrom)
                 return
             }
             //so we have data on this soul and this should be returned to the cb
@@ -703,6 +736,7 @@ function getCell(nodeID,p,cb,raw){
                     // leave as is..
                 }
             }
+            sendToCache(soul,p,val)
             if(!raw)val = formatData(format,propType,dataType,val)
             cb.call(this,val, soul)
         })
@@ -789,7 +823,7 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
     try{
         inc = inc || 0
         console.log('cascading:', rowID, pval, inc)
-        let [base,tval,r,li] = rowID.split('/')
+        let [base,tval,i,li] = rowID.split('/')
         let maxTries = 5
         let colconfig = getValue([base,'props',tval,'props',pval], gb)
         if(li){
@@ -797,7 +831,7 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
         }
         let usedIn = colconfig.usedIn
         let colType = colconfig.GBtype
-        if(colconfig === undefined || ['prev','next','association','context','subContext','contextData'].includes(colType) || usedIn.length === 0){return false}
+        if(colconfig === undefined || ['prev','next','lookup'].includes(colType) || usedIn.length === 0){return false}
         if(inc === maxTries){
             let err = 'Could not load all dependencies for: '+ rowID
             throw new Error(err)
@@ -901,7 +935,6 @@ function parseRowSub(subParams,tableBuffer){
     let {allColumns,allRows} = subParams
     for (const rowID in tableBuffer) {
         if(trigger)break
-        if(rowID === 'li')continue
         if(!allRows[rowID]){//only singular row of data,must find that row
             continue
         }
@@ -919,7 +952,6 @@ function parseTableSub(subParams,tableBuffer){
     let trigger = []
     let {allColumns} = subParams
     for (const rowID in tableBuffer) {
-        if(rowID === 'li')continue
         const propObj = tableBuffer[rowID]; //get propArr from cache, it should be updated since this is running because the cache updated
         for (const pval of allColumns) {
             if(propObj[pval] !== undefined){
@@ -932,7 +964,7 @@ function parseTableSub(subParams,tableBuffer){
 }
 
 function handleSubUpdate(subID, subParams, tableBuffer){
-    //subID = base/....-sval
+    //subID = base/....,sval
     /* subParams
     {columns: {},
     type: row || table || li
@@ -952,8 +984,6 @@ function handleSubUpdate(subID, subParams, tableBuffer){
         triggered = parseRowSub(subParams,tableBuffer)
     }else if(type === 'table'){//table
         triggered = parseTableSub(subParams,tableBuffer)
-    }else if(type === 'li'){
-
     }
     if(triggered){
         reQuerySub(subID,triggered)
@@ -968,10 +998,10 @@ function newRowSubCheck(path){//never implemented??
     }
 }
 function reQuerySub(subID,triggers,newRow){
-    let [path,sID] = subID.split('{')
+    let [path,sID] = subID.split(',')
     let {b,t} = parseSoul(path)
     let {columns,range,query,userCB,allRows} = getValue([b,t,subID],gsubsParams)
-    let q = makeQobj(path,columns,range,query,userCB,true,sID, true)
+    let q = Query(path,columns,range,query,userCB,true,sID, true)
     if(newRow && q.type !== 'row'){//redo range, to see if new row needs to be added to .rows for table or li subs
         getRange(q)
     }else{//something updated on a row already in .rows, update data in store, and return store
@@ -982,7 +1012,7 @@ function reQuerySub(subID,triggers,newRow){
      
 
 }
-function handleNewRowPropData(rowID,pval,value){
+function handleNewPropData(rowID,pval,value){
     //parse gun soul and keys in data
     //console.log('handle new Data' ,soul)
     let cpath = bufferPathFromSoul(rowID,pval)
@@ -1011,16 +1041,15 @@ function setupSub(qObj){
 //QUERY
 function setupQuery(path,pvalArr,queryArr,cb,subscription, sVal){
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
-    let testQobj = makeQobj(path,pvalArr,[],[],cb,subscription,sVal)//basically need to parse path to see what type of query this is
-    if(testQobj.type !== 'row'){
-        let [tRange, parsedQuery] = parseQuery(queryArr,path,pvalArr) //queryArr could be false if it is an ALL or a row
-        let qObj = makeQobj(path,pvalArr,tRange,parsedQuery,cb,subscription,sVal)
-        getRange(qObj)//qObj carries it's next fn on it.
-    }else{//this is a row sub, therefore path is the only range, query is ignored, only 'filters' columns
-        testQobj.rows = [path]
-        testQobj.allRows = [path]
-        testQobj.next()
+    queryArr = queryArr || []
+    let {i} = parseSoul(path)
+    let {range,limit,query,format} = parseQuery(queryArr,pvalArr,path) //queryArr could be false if it is an ALL or a row
+    let q = new Query(path,pvalArr,query,range,limit,format,cb,subscription,sVal)
+    if(i){
+        q.checkNodes = [path]  
     }
+    console.log(q)
+    q.run()
 }
 function getRange(qObj){
     //traverse the tRange and find all souls in the range.
@@ -1038,103 +1067,23 @@ function getRange(qObj){
     },items,from,to,false,true)
 }
 
-
-function testRowAgainstQuery(propArr,queryParams){ //really this is just the query check on the row, doesn't matter if it's new or old
-    //qParams = {range: this.range, type: this.type, columns: this.columns, query: this.query, userCB: this.userCB}
-    //called on newRow in .edit()
-    //also called on initial subscription on all initial souls
-    //also used in retrieve to filter the list
-    
-    //if it passes return propObj with columns in qParams.columns (what columns the user wants)
-    //if it fails, return false
-    let now = Date.now()
-    let {range, query, columns} = queryParams
-    let {to, from, index} = range
-    let toUnix, fromUnix
-    if(from instanceof Date){
-        fromUnix = from.getTime()
-    }else{
-        fromUnix = from //from should be -Infinity
-    }
-    if(to instanceof Date){
-        toUnix = to.getTime()
-    }else{
-        toUnix = to //to should be Infinity
-    }
-    
-
-    //need to revisit this after time index stuff is reworked
-    let path = index.split('/')
-    let idxPval
-    let ptest = /p[0-9]+/
-    for (const val of path) {
-        if(val === 'created'|| val === 'edited'){
-            idxPval = false
-        }else if(ptest.test(val)){
-            idxPval = val
-        }
-    }
-    //^^to here
-
-
-
-    if(!idxPval){
-        if(now <= fromUnix || now >= toUnix){//created or edited is outside of range
-            return false
-        }
-    }else{
-        let valIdx = idxPval.slice(1)
-        let valDate = new Date(propArr[valIdx]).getTime()
-        if(valDate <= fromUnix || valDate >= toUnix){//date column idx specified is outside of range
-            return false
-        }
-    }
-    //at this point it has passed the time range
-    let pass = true
-    for (const q of query) {
-        if(!pass)break
-        let qType = Object.keys(q)[0]
-        let qArgArr = q[qType]
-        if(['SORT','GROUP'].includes(qType))continue
-        if(qType === 'SEARCH'){
-            let reg = regexVar('~', qArgArr[0],'gi')
-            let searchPass = false
-            for (const val of propArr) {
-                if(reg.test(val)){
-                    searchPass = true
-                    break
-                }
-            }
-            pass = searchPass
-        }else if('FILTER'){
-            let colRef = /\{(p[0-9/.]+)\}/gi
-            let fnString = qArgArr[0].slice()
-            let [replace,pval] = colRef.exec(fnString)
-            let valIdx = pval.slice(1)
-            let val = propArr[valIdx]
-            let subdString = fnString.replace(replace,val)
-            let fnResolved = evaluateAllFN(subdString)
-            pass = findTruth(fnResolved,true)
-        }
-    }
-    if(pass){
-        let outArr = []
-        for (const pval of columns) {
-            let idx = pval.slice(1)
-            outArr.push(propArr[idx])
-        }
-        return outArr //return subset of propArr according to qObj.columns
-    }else{
-        return false
-    }
-
-}
 const parseSearch = (obj) =>{
     //obj = {SEARCH: ['String with spaces preserved']}
     let arg = obj.SEARCH[0]
     return {SEARCH: [String(arg)]}
 }
-let validFilterFN = ['ABS','SQRT','MOD','CEILING','FLOOR','ROUND','INT','COUNT','NOT','T']
+const parseLimit = (obj) =>{
+    //obj = {LIMIT: [10]}
+    let arg = obj.LIMIT[0]
+    if(isNaN(arg))throw new Error('Limit argument must be a number. {LIMIT:[Number()]}')
+    return arg*1
+}
+const parseFormat = (obj) =>{
+    //obj = {FORMAT: [FALSE]}
+    let arg = obj.FORMAT[0]
+    return !!arg
+}
+let validFilterFN = ['ABS','SQRT','MOD','CEILING','FLOOR','ROUND','INT','COUNT','NOT','T', 'AND', 'OR','TRUE','FALSE']
 const parseFilter = (obj,colArr) =>{
     //obj = {FILTER: ['FN string']}
     //fnString = '{p2} > 3'
@@ -1162,20 +1111,21 @@ const parseFilter = (obj,colArr) =>{
     if(!colArr.includes(found[0])) throw new Error('Must include column in your return if you are using it in FILTER')
     return obj
 }
-
-const parseRange = (obj,path) =>{
-    //obj = {RANGE: [tIndex,from,to,items,relativeTime,__toDate,last__,firstDayOfWeek]}
+const parseRange = (obj,traverseFormat) =>{
+    //obj = {RANGE: [tIndex,from,to,items,dir,relativeTime,__toDate,last__,firstDayOfWeek]}
     //MUST have some sort of timeIndex
     //Needs to end up with a from, to, items
     //from and to must be date obj or unix time
     if(!obj.RANGE)return false
-    let {b,t} = parseSoul(path)
-    let [tIndex,from,to,items, relativeTime, __toDate,last__,firstDayOfWeek] = obj.RANGE
+    let [tIndex,from,to,items, dir, relativeTime, __toDate,last__,firstDayOfWeek] = obj.RANGE
     let out = {}
-    if(!tIndex){
-        tIndex = makeSoul({b,t}) //default is 'created'
+    if(!tIndex || !PROPERTY_PATTERN.test(tIndex)){
+        throw new Error('Must specify a valid time index in order to find data. Must be !#, !#. or !-. index pattern')
     }
     out.index = tIndex
+    dir = dir || '<'
+    if(dir !== '<' && dir !== '>')throw new Error('invalid direction sign. ">" starts at the earlier date, "<" most recent')
+    out.dir = dir
     if((from || to) && (__toDate || last__ || relativeTime))throw new Error('Too many arguments in RANGE. use "from" & "to" OR "toDate" OR "last" OR "relavtiveTime"')
     if(firstDayOfWeek){
         if(isNaN(firstDayOfWeek)){
@@ -1292,19 +1242,19 @@ const parseRange = (obj,path) =>{
         to = Infinity
         switch (unit) {
             case 'y':
-                from = fromDate.setFullYear(year-1)
+                from = fromDate.setFullYear(year-num)
                 break;
             case 'm':
-                from = fromDate.setMonth(month-1)
+                from = fromDate.setMonth(month-num)
                 break;
             case 'w':
-                from = fromDate.setDate(dayOfMonth-7)
+                from = fromDate.setDate(dayOfMonth-(7*num))
                 break;
             case 'd':
-                from = fromDate.setDate(dayOfMonth-1)
+                from = fromDate.setDate(dayOfMonth-num)
                 break;
             case 'h':
-                from = fromDate.setHours(curHour-1)
+                from = fromDate.setHours(curHour-num)
                 break;
             default:
                 break;
@@ -1313,7 +1263,7 @@ const parseRange = (obj,path) =>{
     }
     
     if(items){
-        if(isNaN(items*1))throw new Error('If specifying max items, it must be a number')
+        if(isNaN(items))throw new Error('If specifying max items, it must be a number')
         out.items = items*1
     }else{
         out.items = Infinity
@@ -1321,48 +1271,220 @@ const parseRange = (obj,path) =>{
 
 
     if(from && from instanceof Date){
-        out.from = from
+        out.from = from.getTime()
     }else if(from && !(from instanceof Date)){
         let d = new Date(from) //if it is unix or anything valid, attempt to make a date
         if(d.toString() !== 'Invalid Date'){
-            out.from = d
+            out.from = d.getTime()
         }else{
             throw new Error('Cannot parse "from" argument in RANGE')
         }
+    }else{
+        out.from = -Infinity
     }
     if(to && to instanceof Date){
-        out.to = to
+        out.to = to.getTime()
     }else if(to && !(to instanceof Date)){
         let d = new Date(to) //if it is unix or anything valid, attempt to make a date
         if(d.toString() !== 'Invalid Date'){
-            out.to = d
+            out.to = d.getTime()
         }else{
             throw new Error('Cannot parse "from" argument in RANGE')
         }
+    }else{
+        out.to = Infinity
     }
-    return out
+    if(traverseFormat){
+        return out
+    }else{
+        return {RANGE:[out.index,out.from,out.to]}
+    }
 }
-function parseQuery(qArr,path,colArr){
+const validCypher = ['MATCH']
+const parseCypher = (obj,path) =>{
+    let args = obj.CYPHER
+    let {b} = parseSoul(path)
+    let out = []
+    const evaluate = {
+        MATCH: function(str){
+            //assign id's to each () [] or use user var
+            //then parse thing by thing
+            let q = {}
+            str = str.replace(/(\(|\[)([a-zA-Z]+)?/g, function(match, $1, $2) {//assign id's to those that user didn't already do
+                let o = ($1 === '(') ? new MatchNode() : new MatchRelation()
+                if ($2) {
+                    q[$2] = o
+                  return match
+                }else{
+                    id = rand(8,'abcdefghijklmnopqrstuvwxyz')
+                    q[id] = o
+                  return match+id
+                }
+            });
+            str = str.replace(/(\(|\[)([a-zA-Z]+:)([a-zA-Z:\`|\s]+)/g, function(match, $1, $2, $3) {//find gbID's for aliases of types,relations,labels
+                let isNode = ($1 === '(')
+                let splitChar = (isNode) ? ':' : '|'
+                let aliases = [...$3.split(splitChar)]
+                let ids = []
+                let i = 0
+                let types = {t:{'#':true},r:{'-':true},l:{'&':true}}
+                for (let alias of aliases) {
+                    alias = rmvBT(alias)//get rid of back ticks
+                    let type
+                    if(isNode && i === 0)type = types.t
+                    else if(isNode)type = types.l
+                    else type = types.r
+                    let id = lookupID(gb,alias,makeSoul(Object.assign({},{b},type)))
+                    if(id === undefined)throw new Error('Cannot parse alias for '+$3+' Alias: '+alias)
+                    ids.push(id)
+                    i++
+                }
+                return $1+$2+ids.join(splitChar)
+            });
+            //on parse...
+            //we need to get each 'thing' put in to it's object
+            //if this is more than a simple (), then all 3 (or more..) things will effect each other.
+            //need to figure out direction, *pathLength
+            //once everything is done, score all elements
+            //return
+
+            function rmvBT(s){
+                return s.replace(/`([^`]*)`/g, function(match,$1){
+                    if($1)return $1
+                    return match
+                })
+            }
+            function MatchNode(){
+                this.isNode = true
+                this.types = []
+                this.labels = []
+                this.filters = []
+                this.ranges = []
+                this.search = ''
+                this.rTypes = []
+                this.rDirs = []
+                this.score = 0
+                this.output = false
+                this.ID = ''
+                this.rID = ''
+
+            }
+            function MatchRelation(){
+                this.isNode = false
+                this.types = []
+                this.filters = []
+                this.ranges = []
+                this.search = ''
+                this.srcTypes = []//redundant on undirected match
+                this.trgtTypes = []
+                this.src = ''//only used with directed match
+                this.trgt = ''
+                this.score = 0
+                this.output = false
+                this.ID = ''
+            }
+        }
+    }
+    for (let arg of args) {
+        arg = arg.replace(/([^`]+)|(`[^`]+`)/g, function(match, $1, $2) {//remove whitespace not in backticks
+            if ($1) {
+                return $1.replace(/\s/g, '');
+            } else {
+                return $2; 
+            } 
+        });
+        let t
+        arg = arg.replace(/([A-Z]+)/, function(match, $1) {//find and remove command ie: MATCH
+            if ($1) {
+            t = match
+                return ''
+            }
+        });
+        if(!validCypher.includes(t))throw new Erro('Invalid Cypher command. Valid include: '+validCypher.join(', '))
+        out.push(evaluate[t](arg))
+
+    }
+    
+
+}
+function parseSort(obj,colArr){
+    //obj = {SORT: [pval, asc || dsc]}
+    let [pval, dir] = obj.SORT
+    let out = []
+    if(pval){
+        if(colArr.includes(pval)){
+            out.push(pval)
+        }else{
+            throw new Error('Must include the column used in SORT in the result')
+        }
+    }else{
+        throw new Error('Must specifiy a column with SORT parameter')
+    }
+    if(dir && (dir === 'asc' || dir === 'dsc')){
+        out.push(dir)
+    }else{
+        dir = 'asc'
+        out.push(dir)
+    }
+    return {FILTER: out}
+}
+function parseGroup(obj,colArr){
+    //obj = {GROUP: [pval]}
+    let pval = obj.GROUP[0]
+    let out = []
+    if(pval){
+        if(colArr.includes(pval)){
+            out.push(pval)
+        }else{
+            throw new Error('Must include the column used in GROUP in the result')
+        }
+    }else{
+        throw new Error('Must specifiy a column with GROUP parameter')
+    }
+
+    return {GROUP: out}
+}
+function parseQuery(qArr,colArr,path){
     //qArr optional, if none specified, range is ALL
     //if qArr, if RANGE: parseRange(), if FILTER: checkFunction(), ...rest: validate args
-    let out = []
-    let t = false
+    let query = []
+    let timeRanges = []
+    let range
+    let limit
+    let format
     for (const qArgObj of qArr) {
         if(!Array.isArray(Object.values(qArgObj)[0]))throw new Error('Query arguments must be in an array: [{SEARCH:["String"]}]')
         if(qArgObj.SEARCH){
-            out.push(parseSearch(qArgObj))
+            query.push(parseSearch(qArgObj))
         }else if(qArgObj.FILTER){
-            out.push(parseFilter(qArgObj,colArr))
+            query.push(parseFilter(qArgObj,colArr))
         }else if(qArgObj.RANGE){
-            t = parseRange(qArgObj,path)
+            timeRanges.push(parseRange(qArgObj,true))
+            query.push(parseRange(qArgObj,false))
+        }else if(qArgObj.LIMIT){
+            if(limit)throw new Error('Can only define a single limit per query')
+            limit = parseLimit(qArgObj)
+        }else if(qArgObj.FORMAT){
+            format = parseFormat(qArgObj)
+        }else if(qArgObj.CYPHER){
+            format = parseCypher(qArgObj,path)
         }
     }
-    if(!t){
-        t = parseRange({RANGE:[]},path)
+    if(!timeRanges.length){//will eventually need to figure out how to make this work for relationships as well...
+        let{b,t} = parseSoul(path)
+        range = parseRange({RANGE:[makeSoul({b,t})]},true)//get created
+    }else{//this should still work for relationships
+        //timeRanges [{index,to,from,dir}]
+        //Pick one that has the smallest to-from delta?? Not sure how to pick the shortest list without more queries...
+        //however that would be probably worth it when we implement relationships
+        //complex queries will want to start with the narrowest set of potential matches to start
+        //so a few extra lookups could save hundreds of queries
+        range = timeRanges.sort((a,b)=>(a.to-a.from)-(b.to-b.from))[0]
     }
-    return [t,out]
+    if(format === undefined)format = true
+    return {range,limit,query,format}
 }
-function gatherData(qObj){
+function gatherData(qObj){//NEEDS UPDATE FOR NEW CACHE
     let {allColumns, rows, reQuery} = qObj
     console.log('Gathering Data; Rows: '+ rows.length + ' Columns: '+allColumns.join(', '))
     for (const rowID of rows) {
@@ -1383,136 +1505,301 @@ function gatherData(qObj){
         }
     }
 }
-function makeQobj(path, colArr, tRange, qArr, cb, isSub, sVal){
-    let {b,t,r,f} = parseSoul
-    let table = makeSoul({b,t})
-    let type
-    let hasSearch = (qArr.filter(o => o.SEARCH).length) ? true : false
-    let allCols = getAllColumns(gb,path)
-    colArr = colArr || allCols
-    if(!r){
-        type = 'table'
-    }else{
-        type = 'row'   
+function Query(path, colArr, qArr, tRange, limit, format, cb, isSub, sVal){
+    this.soulObj = parseSoul(path)
+    let {b,t} = this.soulObj
+    let idx = tRange.index //should be a !#. or !-. soul
+    if(idx === 'created'){
+        tRange.index = makeSoul({b,t})
     }
-    let subID
-    if(sVal){
-        subID = path + ',' + sVal
-    }else{
-        let id = rand(4)
-        subID = path + ',' + id
+
+    
+    this.type = (this.soulObj.i) ? 'row' : 'table'
+    this.allActiveProps = getAllActiveProps(gb,path)
+    this.returnProps = colArr || this.allActiveProps
+    this.subID = (sVal) ? path + ',' + sVal : path + ',' + rand(4)
+    let {arrMap,last} = getValue([b,t,this.subID],gsubsParams) || {arrMap: false,last:[]}
+    this.reQuery = (arrMap === false) ? false : true
+    this.arrMap = arrMap || {}
+    this.last = last
+    this.subscribe = !!isSub
+    this.range = tRange
+    this.limit = limit || Infinity
+    this.format = (format === undefined) ? true : format
+    this.userCB = cb
+    //let columns = colArr
+    this.propsToGet = (qArr.filter(o => o.SEARCH).length) ? this.allActiveProps : this.returnProps //will break if FILTERed on pval not in colArr, currently throws error
+    //this.allRows = []//total rows currently in this.range
+    this.checkNodes = []// this.rows  rows to look for on THIS query, allRows !== rows when data has been edited on row in allRows
+    this.evaluated = []
+    this.query = qArr
+    //arrMap = arrMap || {}
+    this.retrievedCols = {}//to know if all rowIDs in this.rows has allColumns
+    this.completedRows = []//probably don't need now
+    this.data = {}
+    this.output = last //? change? If already in cache, could just recompute all.. memory vs speed...
+    this.callStack = []
+    this.nextBlock = (this.range.dir === '<') ? this.range.to : this.range.from
+    this.chron = (this.range.dir === '<') ? false : true
+    this.curNode = []
+    this.start = function(){
+        if(this.checkNodes.length && this.reQuery){//use the range provided (can be added after creation; ie on data change)
+            this.callStack.push(['getNode',[null]])
+        }else{
+            this.callStack.push(['getMoreSouls', [null]])
+            this.callStack.push(['getNode',[null]])
+            this.run()
+        }
+       
     }
-    let {arrMap,last} = getValue([b,t,subID],gsubsParams) || {arrMap: false,last:[]}
-    return {
-        reQuery: (arrMap) ? true : false,
-        table,
-        path,
-        type,
-        subscribe: (isSub) ? true : false,
-        range: tRange, 
-        userCB: cb,
-        columns: colArr,
-        allColumns: (hasSearch) ? allCols : colArr, //will break if FILTERed on pval not in colArr, currently throws error
-        allRows: [],//total rows currently in this.range
-        rows: [],//rows to look for on THIS query, allRows !== rows when data has been edited on row in allRows
-        needRows: {},//rows that are not in cache, these need subs setup
-        query: qArr,
-        subID,
-        arrMap: arrMap || {},
-        retrievedCols: {},//to know if all rowIDs in this.rows has allColumns
-        completedRows: [],
-        data: {},
-        output: last,
-        done: function(){
-            console.log('Query Done, returning data')
-            let added = false, removed = false
-            if(this.type !== 'row'){
-                if(this.reQuery){
-                    for (const rowID of this.rows) {
-                        let propArr = this.data[rowID]
-                        let pass = this.testRowAgainstQuery(propArr,this.qParams)
-                        if(pass && this.arrMap[rowID] === undefined){//add row to output
-                            added = true
-                            let i = this.output.length
-                            this.arrMap[rowID] = i
-                            this.output.push([rowID, pass])
-                        }else if(!pass && this.allRows.includes(rowID)){//remove row from allRows, last
-                            removed = true
-                            let i = this.arrMap[rowID]
-                            this.output.splice(i,1)
-                            delete this.arrMap[rowID]
-                        }else if(pass){//not added or removed, updated
-                            let i = this.arrMap[rowID]
-                            this.output[i][1] = pass
-                        }
-                    }
-                    if(removed){
-                        let j = 0
-                        for (const el of this.output) {
-                            let [rowid] = el
-                            this.arrMap[rowid] = j
-                            j++
-                        }
-                    }
-                }else{
-                    added = true
-                    if(this.output.length)throw new Error('First query should have no previous output')
-                    for (const rowID of this.rows) {
-                        let propArr = this.data[rowID]
-                        let pass = this.testRowAgainstQuery(propArr,this.qParams)
-                        if(pass){
-                            let i = this.output.length
-                            this.arrMap[rowID] = i
-                            this.output.push([rowID, pass])
-                        }
-                    }
+    this.getMoreSouls = function(){
+        let self = this
+        crawlIndex(this.range.index,this.nextBlock,this.chron,function(idArr,next){
+            //blockArr = [[soul,unix],[soul,unix]]
+            self.nextBlock = next
+            self.checkNodes = idArr
+            self.run()
+        })
+
+    }
+    this.getNode = function(){
+        this.callStack.unshift(['evaluateNode',[null]])
+        let self = this
+        let i = 0
+        let toGet = this.propsToGet.length
+        let id = this.checkNodes[0]
+        for (const pval of this.propsToGet){
+            getCell(id,pval,function(data){
+                self.curNode[i] = data
+                toGet--
+                if(!toGet){
+                    self.run()
                 }
-            }else{//return row
-                this.output = []
-                for (const rowID of this.rows) {
-                    let propArr = this.data[rowID]
-                    console.log(this.data,rowID)
-                    console.log(propArr)
-                    for (const pval of this.columns) {
-                        console.log(pval)
-                        let idx = pval.slice(1)
-                        console.log(propArr, idx)
-                        this.output.push(propArr[idx])
-                    }
+            },true)
+            i++
+        }
+    }
+    this.evaluateNode = function(){
+        let id = this.checkNodes[0]
+        let i = this.arrMap[id]
+        this.evaluated[id] = true
+        let pass = false
+        if(this.testRowAgainstQuery()){
+            pass = true
+            let out
+            if(this.allActiveProps === this.returnProps){
+                out = this.curNode.slice()
+            }else{
+                for (const p of this.returnProps) {
+                    let i = this.propsToGet.indexOf(p)
+                    out.push(this.curNode[i])
                 }
             }
-            if(this.subscribe){
-                this.setupSub(this)
-            }
-            if(this.type === 'row' || added || removed || this.reQuery){
-                console.log('Returning query to cb on subID: '+subID)
-                this.userCB.call(this,this.output,this.columns)
+
+
+            out.id = id
+            out.propIDs = []
+            out.alias = []
+            let s = parseSoul(id)
+            let j = 0
+            let {props} = getValue(configPathFromChainPath(id),gb)
+            for (const p of this.returnProps) {
+                let {format:formatData, propType, dataType, alias} = props[p]
+                if (this.format && formatData !== ''){
+                    out[j] = formatData(formatData,propType,dataType,out[j])
+                }
+                out.propIDs.push( makeSoul(Object.assign({},s,{p})))
+                out.alias.push(alias)
+                j++
             }
             
-        },
-        next: function(){//this.data is empty yet
-            this.gatherData(this)//this will attempt to get data from cache and then the rest from gun using this.rows and this.allColumns
-        },
-        get qParams(){
-            return {range: this.range, type: this.type, columns: this.columns, query: this.query, userCB: this.userCB, allRows: this.allRows}
-        },
-        isRowDone: function(rowID,forceDone){
-            let rowDone = forceDone || false
-            if(!rowDone){
-                let propArr = this.retrievedCols[rowID]
-                rowDone = (propArr.length === this.allColumns.length) ? true : false
+            if(!i) i = this.output.length
+            this.arrMap[id] = i
+            this.output[i] = out
+        }else if(i){
+            this.arrMap[id] = false
+            this.output[i] = null
+        }
+        this.checkNodes.shift()
+        this.curNode = []
+        
+        if(!this.reQuery && (this.checkNodes.length || this.nextBlock) && this.output.length < this.limit){
+            if(pass){}//if we want to add a 'check' relations or something...need to not add output just yet (if pattern matching)
+            this.callStack.unshift(['getNode',[null]])
+            this.run()
+        }else{
+
+        }
+
+        
+
+
+    }
+    this.evaluateNode = function(){
+
+    }
+    this.qParams = function(){
+        return {range, type, columns, query, userCB, allRows}
+    }
+    this.isRowDone  = function(rowID,forceDone){
+        let rowDone = forceDone || false
+        if(!rowDone){
+            let propArr = retrievedCols[rowID]
+            rowDone = (propArr.length === allColumns.length) ? true : false
+        }
+        if(rowDone){
+            completedRows.push(rowID)
+            if(completedRows.length === rows.length){
+                done()
             }
-            if(rowDone){
-                this.completedRows.push(rowID)
-                if(this.completedRows.length === this.rows.length){
-                    this.done()
+        }
+    }
+    this.testRowAgainstQuery = function(){ //really this is just the query check on the row, doesn't matter if it's new or old
+        let pass = true
+        let propArr = this.curNode
+        for (const q of this.query) {
+            if(!pass)break
+            let qType = Object.keys(q)[0]
+            let qArgArr = q[qType]
+            if(['SORT','FILTER'].includes(qType))continue
+            if(qType === 'SEARCH'){
+                let reg = regexVar('~', qArgArr[0],'gi')
+                let searchPass = false
+                for (const val of propArr) {
+                    if(reg.test(val)){
+                        searchPass = true
+                        break
+                    }
+                }
+                pass = searchPass
+            }else if(qType === 'FILTER'){
+                let colRef = /\{([a-z0-9]+)\}/gi
+                let fnString = qArgArr[0].slice()
+                while (match = colRef.exec(fnString)) {
+                    let [replace,pval] = match
+                    let valIdx = columns.indexOf(pval)
+                    let val = propArr[valIdx]
+                    fnString = fnString.replace(replace,val)
+                }
+                let fnResolved = evaluateAllFN(fnString)
+                pass = findTruth(fnResolved,true)
+            }else if(qType === 'RANGE'){ //should only have index,from,to
+                let [index, from, to] = qArgArr
+                //index should be some sort of valid path string
+                //from, to will already be unix times of +/-Infinity
+                let {p} = parseSoul(index)
+                if(!p){//created index, this will need to change if on a relationship
+                    let {i} = parseSoul(this.checkNodes[0])
+                    let [id,created] = i.split('_')
+                    if(created <= from || created >= to){//created or edited is outside of range
+                        return false
+                    }
+                }else{
+                    let idxPval = this.propsToGet.indexOf(p)
+                    let valDate = new Date(propArr[idxPval]).getTime()
+                    if(valDate <= from || valDate >= to){//date column idx specified is outside of range
+                        return false
+                    }
                 }
             }
-        },
-        setupSub,
-        gatherData,
-        testRowAgainstQuery
         }
+        if(pass){
+            return true
+        }else{
+            return false
+        }
+
+    }
+    this.done = function(){//really only returns the data since new function will check the query.
+        console.log('Query Done, returning data')
+        let rows = this.rows
+        let added = false, removed = false
+        if(this.type !== 'row'){
+            if(this.reQuery){
+                for (const rowID of rows) {
+                    let propArr = this.data[rowID]
+                    let pass = testRowAgainstQuery(propArr,qParams)
+                    if(pass && arrMap[rowID] === undefined){//add row to output
+                        added = true
+                        let i = output.length
+                        arrMap[rowID] = i
+                        output.push([rowID, pass])
+                    }else if(!pass && allRows.includes(rowID)){//remove row from allRows, last
+                        removed = true
+                        let i = arrMap[rowID]
+                        output.splice(i,1)
+                        delete arrMap[rowID]
+                    }else if(pass){//not added or removed, updated
+                        let i = arrMap[rowID]
+                        output[i][1] = pass
+                    }
+                }
+                if(removed){
+                    let j = 0
+                    for (const el of output) {
+                        let [rowid] = el
+                        arrMap[rowid] = j
+                        j++
+                    }
+                }
+            }else{
+                added = true
+                if(output.length)throw new Error('First query should have no previous output')
+                for (const rowID of rows) {
+                    let propArr = data[rowID]
+                    let pass = testRowAgainstQuery(propArr,qParams)
+                    if(pass){
+                        let i = output.length
+                        arrMap[rowID] = i
+                        output.push([rowID, pass])
+                    }
+                }
+            }
+        }else{//return row
+            output = []
+            for (const rowID of rows) {
+                let propArr = data[rowID]
+                
+                for (const pval of columns) {
+                    let idx = pval.slice(1)
+                    output.push(propArr[idx])
+                }
+            }
+        }
+        if(subscribe){
+            util.setupSub()
+        }
+        if(type === 'row' || added || removed || reQuery){
+            console.log('Returning query to cb on subID: '+subID)
+            userCB.call(this,output,columns)
+        }
+        
+    }
+    this.throwError = function(errmsg){
+        let err = this.err
+        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+        err = error
+        console.log(error)
+        this.userCB.call(this,error)
+    }
+    this.run = function(){
+        if(this.err)return
+        if(this.callStack.length){
+            let [fn, args] = this.callStack[0]
+            this.callStack.shift()
+            this[fn](...args)
+        }else{
+            this.done()
+        }
+    }
+    
+    this.callStack.push(['start',[null]])
+    //current query flow:
+    //get valid range of souls, order them by this.range.dir (in case of items) set this to this.allRows
+    //get one node at a time, validate once all props are received, if pass add to this.rows, check items limit
+    //  going node by node will allow us to implement patter matching a little easier later?
+    
+    
 }
 function addDataToQobj(rowID, pval, data, qObj){
     let idx = pval.slice(1)
@@ -1522,12 +1809,12 @@ function addDataToQobj(rowID, pval, data, qObj){
     qObj.retrievedCols[rowID].push(pval)
     qObj.isRowDone(rowID)
 }
-function getRowProp(qObj, rowID, pval){
-    let {b,t,tr,r,f} = parseSoul(rowID)
+function getRowProp(qObj, rowID, pval){//NEEDS UPDATE FOR NEW CACHE, USE getCell???
+    let {b,t,r,i,f} = parseSoul(rowID)
     let p = pval
-    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,tr,p}))//rowID will only have one or other
-    let propSet = (t) ? makeSoul({b,t,p,r,f}) : makeSoul({b,tr,p,r,f})
-    let nodeSoul = (t) ? makeSoul({b,t,r,f}): makeSoul({b,tr,r,f})
+    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,r,p}))//rowID will only have one or other
+    let propSet = (t) ? makeSoul({b,t,p,i,f}) : makeSoul({b,r,p,i,f})
+    let nodeSoul = (t) ? makeSoul({b,t,i,f}): makeSoul({b,r,i,f})
     let subname = nodeSoul+'+'+p
 
     if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
@@ -1734,10 +2021,10 @@ function testRequest(root, request, testSoul){
     let [base,tval,...rest] = testSoul.split('|')[0].split('/') //path === testSoul if not a nested property
     if(soul.includes('timeLog') || soul.includes('timeIndex')){
         path = path.split('>')[1]
-        let[b,t,...r] = testSoul.split(':')[0].split('>')[1].split('/')
+        let[b,t,...i] = testSoul.split(':')[0].split('>')[1].split('/')
         base = b
         tval = t
-        rest = (r) ? r[0].split('/') : r
+        rest = (i) ? i[0].split('/') : i
     }
     let own = getValue([base,'props',tval,'owner'],gb) || false //false === row perms will be overridden by table perms
     let inherit = getValue([base,'inherit_permissions'],gb) || true // true === row will inherit table perms which will inherit base perms if missing
@@ -1815,7 +2102,7 @@ function testRequest(root, request, testSoul){
                 reqType = 'row'
             }
             let permSoul = path +'|permissions'
-            let hasNext = hasColumnType(gb,[base,tval].join('/'),'next') //false || [pval]
+            let hasNext = hasPropType(gb,[base,tval].join('/'),'next') //false || [pval]
             let opAs = (soul !== testSoul) ? 'get' : op
             if(!hasNext)traverse = false
             if(inherit || !own){
