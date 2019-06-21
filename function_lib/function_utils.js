@@ -414,7 +414,7 @@ function regexVar(reg,literal,flags){
 //FUNCTION POST LINK PARSING, PRE-SOLVE PARSING
 function evaluateAllFN(FNstr){
     //FNstr must already have links resolved
-    let r = /[A-Z]+(?=\(.+?\))/g
+    let r = /[A-Z]+(?=\(.+?\))/
     let match = r.exec(FNstr)
     let resolvedArgs = []
     if(!match){//no functions in this string
@@ -432,12 +432,14 @@ function evaluateAllFN(FNstr){
         if(more && match[0] !== 'IFERROR'){//arg contains a FN
             resolvedArgs.push(evaluateAllFN(val))
         }else{
-            let containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(val);
-            let output
-            if(!containsInvalidChars){
+            let pureMath = /[0-9=+*/^-]+/gi.test(val);
+            let compare = /[<>!=+*/^-]+/gi.test(val)
+            if(pureMath){
                 let solver = new MathSolver()
-                output = solver.solve(val)
-                resolvedArgs.push(output)
+                resolvedArgs.push(solver.solve(val))
+            }else if(compare){
+                let solver = new MathSolver()
+                resolvedArgs.push(solver.solveAndCompare(val))
             }else{
                 resolvedArgs.push(val)
             }
@@ -487,7 +489,7 @@ function findFNArgs(str){
             if(left.length === right.length){
                 rightPar = i
             }
-        }else if(tok === '"' || tok === "'"){
+        }else if(tok === '"' || tok === "'" || tok === "`"){
             quote ++
         }
         if(left.length && left.length === right.length + 1 && quote % 2 === 0 && tok ===','){
@@ -530,86 +532,26 @@ function findTruth(ifFirstArg,FILTERtruth){
         }
     }
     let containsInvalidChars = /[^()+\-*/0-9.\s<>=!]/g.test(ifFirstArg)
-    if(containsInvalidChars){
-        let output = parseTruthStr(ifFirstArg, 'string')
-        return output
-    }else{
-        let addedParens = parseTruthStr(ifFirstArg, 'number')
-        let solver = new MathSolver()
-        let output = solver.solveAndCompare(addedParens)
-        return output
-    }
+    let valid = (containsInvalidChars) ? parseTruthStr(ifFirstArg, 'string') : parseTruthStr(ifFirstArg, 'number')
+    let solver = new MathSolver()
+    let output = solver.solveAndCompare(valid)
+    return output
 }
 function parseTruthStr(TFstr, compType){
     //check to ensure there is only one logical operator
-    let operators = ['!=','<=','>=','=','<','>']
-    let found = {}
+    let operators = /(>=|=<|!=|>|<|=)/g
     let str = TFstr.replace(/\s/g,"")
-    //console.log(str)
-    for (let i = 0; i < operators.length; i++) {
-       const op = operators[i];
-        let r
-        if(op === '='){
-            r = str.lastIndexOf('=')
-            if(r !== -1){
-                if(str[r-1] !== '<' && str[r-1] !== '>' && str[r-1] !=='!'){
-                    found['='] = r
-                }
-            }
-        }else if(op === '>'){
-            r = str.lastIndexOf('>')
-            if(r !== -1){
-                if(str[r+1] !== '='){
-                    found['>'] = r
-                }
-            }
-        }else if(op === '<'){
-            r = str.lastIndexOf('<')
-            if(r !== -1){
-                if(str[r+1] !== '='){
-                    found['<'] = r
-                }
-            }
-        }else{
-            r = new RegExp(op,'g')
-            let match = r.exec(TFstr)
-            if(match){
-                found[op] = match.index
-            }
-        }
-    }
-    let tok = Object.keys(found)
-    if(tok.length !== 1){
-        let err = 'Too many comparisons in comparison block: '+ TFstr
+    let found = [...str.matchAll(operators)]
+    if(found.length !== 1){
+        let err = 'Can only have one comparison operator per T/F block: '+ TFstr
         throw new Error(err)
     }
-    if(compType === 'string'){
-        let first = str.slice(0,found[tok[0]]-1)
-        let second = str.slice(found[tok[0]]+ tok[0].length-1, str.length)
-        if(tok[0] === "="){
-            if(first == second){
-                return true
-            }else{
-                return false
-            }
-        }else if(tok[0] === '!='){
-            if(first !== second){
-                return true
-            }else{
-                return false
-            }
-        }else{
-            let err = 'String Comparators can only be "=" or "!="; '+ tok[0] +' is not valid.'
-            throw new Error(err)
-        }
-    }else{//number
+    if(compType === 'number'){
         str = str.slice(0,found[tok[0]])+')'+tok[0]+'('+str.slice(found[tok[0]]+ tok[0].length, str.length)
         str = '(' + str
         str += ')'
-    
+    }
     return str
-   }
-
 }
 function stripDoubleQuotes(str){
     if (str.charAt(0) === '"' && str.charAt(str.length-1) === '"') {
@@ -731,8 +673,8 @@ function getLinks(gb, getCell, path, sObj){
     let get = pathInfo.currentRow
     let dataType = getDataType(gb,pathInfo.links[0])
     let propType = getPropType(gb,pathInfo.links[0])
-    if(['prev','next','lookup'].includes(propType)){
-        if(dataType === 'set'){//multiple links
+    if(['child','parent','lookup'].includes(propType)){
+        if(dataType === 'unorderedSet'){//multiple links
             getCell(get,p,function(val){
                 pathInfo.links.shift()
                 pathInfo.value = val
@@ -753,7 +695,7 @@ function getLinks(gb, getCell, path, sObj){
                 pathInfo.links.shift()
                 let {p} = parseSoul(pathInfo.links[0])//should be next ',' link because of .shift()
                 getCell(val,p,function(linkVal){
-                    pathInfo.value = linkVal
+                    pathInfo.value = (Array.isArray(linkVal)) ? linkVal.length : linkVal
                     pathInfo.done = true
                     sObj.checkDone()
                 })
@@ -762,7 +704,7 @@ function getLinks(gb, getCell, path, sObj){
         }
     }else{// this is 'done' value
         getCell(get,p,function(val){
-            pathInfo.value = val
+            pathInfo.value = (Array.isArray(val)) ? val.length : val
             pathInfo.done = true
             sObj.checkDone()
         })  

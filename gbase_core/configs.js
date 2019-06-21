@@ -915,11 +915,12 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
 
 //FN STUFF
 function basicFNvalidity(fnString){
-    let args = fnString.split(',')
+    let replaceBackTicks = fnString.replace(/`.*`/g,0)//things in backticks could contain ",<>=!()" would break things, replace with 0
+    let args = replaceBackTicks.split(',')
     let lpar = 0
     let rpar = 0
-    for (let i = 0; i < fnString.length; i++) {
-        const char = fnString[i];
+    for (let i = 0; i < replaceBackTicks.length; i++) {
+        const char = replaceBackTicks[i];
         if(char === '('){
             lpar++
         }else if(char === ')'){
@@ -930,22 +931,11 @@ function basicFNvalidity(fnString){
         throw new Error('Check Equation, the parenthesis are unbalanced.')
     }
     for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        let toks = 0
-        for (let j = 0; j < arg.length; j++) {
-            const argchar = arg[j];
-            if("!<>".indexOf(argchar) !== -1){
-                toks++
-                if(arg[j+1] === '='){//skip next char
-                    j++
-                }
-            }else if(argchar === '='){
-                toks++
-            }
-        }
-        if(toks > 1){
-            throw new Error('Check your arguments, this one has more than one logical comparison in it: '+ args[i])
-        }
+        let block = args[i]
+        let operators = /(>=|=<|!=|>|<|=)/g
+        let str = block.replace(/\s/g,"")
+        let found = [...str.matchAll(operators)]
+        if(found.length > 1)throw new Error('Can only have one comparison operator per T/F block: '+ block)
     }
     return true
 }

@@ -114,6 +114,26 @@ function configSoulFromChainPath(thisPath){
     return soul
 
 }
+function collectPropIDs(gb,path,name,isNode){
+    //alias could be the actual ID, in which case it will simply just return {[id]:id}
+    //need path for baseID
+    let {b} = parseSoul(path)
+    let type = (isNode) ? 'props' : 'relations'
+    let sym = (isNode) ? 't' : 'r'
+    let things = getValue([b,type],gb)
+    let out = {}
+    for (const thing in things) {
+        const {props} = things[thing];
+        for (const p in props) {
+            const {alias} = props[p];
+            if([String(alias),String(thing)].includes(String(name))){
+                let st = makeSoul({b,[sym]:thing})
+                setValue([st,alias],p,out)
+            }
+        }
+    }
+    return out
+}
 function lookupID(gb,alias,path){//used for both alias change check, and new alias
     const checkAgainst = {t:{'#':true},l:{'&':true},r:{'-':true},g:{'^':true}}
     let pathObj = parseSoul(path)
@@ -126,7 +146,7 @@ function lookupID(gb,alias,path){//used for both alias change check, and new ali
             if(t && typeof t === 'string' && checkType === 't')type['#'] = t //this will pass along exact path to ignore
             if(r && typeof r === 'string' && checkType === 'r')type['-'] = r //we do this, so if you check alias on the same thing, without changing, it works
             let checkPath = makeSoul(Object.assign({},{b},type))
-            let found = findID(gb,alias,checkPath,ignorePath)
+            let found = findID(gb,alias,checkPath)
             if(found !== undefined){
                 return found
             }
@@ -138,12 +158,14 @@ const findID = (objOrGB, name, path) =>{//obj is level above .props, input human
     //if path, objOrGb should be gb, path must be !#, !-, !^, !&, !#., !-. 
    
     let gbid //return undefined if not found
+    let {g,l} = parseSoul(path)
     let cPath = configPathFromChainPath(path)
     let ignore
+    let gOrL = (g || l) ? true : false 
     if(!['groups','props','relations','labels'].includes(cPath[cPath.length-1]))ignore=cPath.pop()
     search = (!path) ? objOrGB : getValue(cPath,objOrGB)
     for (const key in search) {
-        if(['label','group'].includes(type)){
+        if(gOrL){
             const id = search[key]
             if(String(id) === String(name) || String(key) === String(name)){
                 gbid = id
@@ -1520,7 +1542,30 @@ function getAllActiveProps(gb, tpath){
     }
     return out.filter(n => n!==undefined)
 }
-
+function getAllActiveNodeTypes(gb, tpath){
+    let {b} = parseSoul(tpath)
+    let {props} = getValue(configPathFromChainPath(makeSoul({b})), gb)
+    let out = []
+    for (const t in props) {
+        const {archived,deleted} = props[t];
+        if (!archived && !deleted) {
+            out.push(t)
+        }
+    }
+    return out
+}
+function getAllActiveRelations(gb, tpath){
+    let {b} = parseSoul(tpath)
+    let {relations} = getValue(configPathFromChainPath(makeSoul({b})), gb)
+    let out = []
+    for (const t in relations) {
+        const {archived,deleted} = relations[t];
+        if (!archived && !deleted) {
+            out.push(t)
+        }
+    }
+    return out
+}
 
 const multiCompare = (sortQueries,colKey, a, b)=>{
     let [pval,order] = sortQueries[0].SORT
@@ -1731,7 +1776,15 @@ function parseSoul(soul){
 function toAddress(node,p){
     return makeSoul(Object.assign(parseSoul(node),{p}))
 }
-
+function intersect(setA, setB) {
+    var _intersection = new Set();
+    for (var elem of setB) {
+        if (setA.has(elem)) {
+            _intersection.add(elem);
+        }
+    }
+    return _intersection
+}
 
 const soulSchema = {
     /* legend
@@ -1887,5 +1940,9 @@ module.exports = {
     isEnq,
     makeEnq,
     toAddress,
-    lookupID
+    lookupID,
+    getAllActiveNodeTypes,
+    getAllActiveRelations,
+    collectPropIDs,
+    intersect
 }

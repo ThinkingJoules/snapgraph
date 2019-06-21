@@ -45,6 +45,7 @@ const {
     getRowPropFromCache,
     cachePathFromRowID,
     setRowPropCacheValue,
+    findID,
     bufferPathFromSoul,
     getAllActiveProps,
     Cache,
@@ -66,7 +67,11 @@ const {
     isEnq,
     makeEnq,
     toAddress,
-    lookupID
+    lookupID,
+    getAllActiveNodeTypes,
+    getAllActiveRelations,
+    collectPropIDs,
+    intersect
 } = require('./util.js')
 const cache = new Cache()
 const upDeps = {}
@@ -117,6 +122,7 @@ const showgunsub = makeshowgunsub(gunSubs)
 const {makesolve,
     findTruth,
     parseTruthStr,
+    findFNArgs,
     regexVar,
     evaluateAllFN
 } = require('../function_lib/function_utils');
@@ -126,7 +132,8 @@ const solve = makesolve(gb, getCell)
 const {timeIndex,
     queryIndex,
     timeLog,
-    makecrawlIndex
+    getRelationNodes,
+    getLabeledNodes
 } = require('../chronicle/chronicle')
 let qIndex,tIndex,tLog,crawlIndex
 
@@ -654,7 +661,7 @@ function sendToCache(nodeID, p, value){
     }
     function handlePropDataChange(address,getterVal){
         let [from,v] = getterVal
-        let {p} = address
+        let {p} = parseSoul(address)
         let startAddress = (address === from) ? from : address
         let nodeID = removeP(startAddress)
         handleNewPropData(nodeID,p,v)
@@ -910,147 +917,1980 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
 
 //EVENT HANDLING AND BUFFER
 function flushSubBuffer(){
-    let buffer = JSON.parse(JSON.stringify(subBuffer))
+    let buffer = Object.assign({},subBuffer)
     subBuffer = {}
     bufferState = false
     console.log('flushing buffer', buffer)
-    for (const base in gsubsParams) {
-        let ts = gsubsParams[base]
-        for (const tval in ts) {
-            const subs = ts[tval];
-            for (const subID in subs) {
-                let tableBuffer = buffer[base][tval]
-                if(tableBuffer){
-                    let subParams = subs[subID]
-                    handleSubUpdate(subID, subParams, tableBuffer)
-                    console.log('Checking Sub:',subID)
-                }
-            } 
+    for (const base in gsubs) {
+        let baseSubs = gsubs[base]
+        for (const subID in baseSubs) {
+            const {qParams,cb} = baseSubs[subID];
+            query(base,qParams,cb,{isSub:true,sVal:subID,checkNodes:buffer})
         }
     }
 }
-function parseRowSub(subParams,tableBuffer){
-   
-    let trigger = false
-    let {allColumns,allRows} = subParams
-    for (const rowID in tableBuffer) {
-        if(trigger)break
-        if(!allRows[rowID]){//only singular row of data,must find that row
-            continue
-        }
-        const propObj = tableBuffer[rowID];
-        for (const pval of allColumns) {
-            if(propObj[pval] !== undefined){
-                trigger = true
-                break
-            }
-        }
-    }
-    return trigger
-}
-function parseTableSub(subParams,tableBuffer){
-    let trigger = []
-    let {allColumns} = subParams
-    for (const rowID in tableBuffer) {
-        const propObj = tableBuffer[rowID]; //get propArr from cache, it should be updated since this is running because the cache updated
-        for (const pval of allColumns) {
-            if(propObj[pval] !== undefined){
-                trigger.push(rowID)
-                break
-            }
-        }
-    }
-    return trigger
-}
-
-function handleSubUpdate(subID, subParams, tableBuffer){
-    //subID = base/....,sval
-    /* subParams
-    {columns: {},
-    type: row || table || li
-    range: {idx,from,to} || false,
-    query: [
-        {search:[args]},
-        {filter:[args]},
-        {sort:[args]}]
-        ] || false
-    }
-    */
-    //this is called directly from .edit to see if this row meets any current subs
-    let {type} = subParams
-
-    let triggered
-    if(type === 'row'){
-        triggered = parseRowSub(subParams,tableBuffer)
-    }else if(type === 'table'){//table
-        triggered = parseTableSub(subParams,tableBuffer)
-    }
-    if(triggered){
-        reQuerySub(subID,triggered)
-    }
-}
-function newRowSubCheck(path){//never implemented??
-    //this is also called directly from .edit(newRow:true) to see if this row meets any current subs
-    let [base,tval] = path.split('/')
-    let subs = getValue([base,tval],gsubs)
-    for (const subID in subs) {
-       reQuerySub(subID,newNode)
-    }
-}
-function reQuerySub(subID,triggers,newRow){
-    let [path,sID] = subID.split(',')
-    let {b,t} = parseSoul(path)
-    let {columns,range,query,userCB,allRows} = getValue([b,t,subID],gsubsParams)
-    let q = Query(path,columns,range,query,userCB,true,sID, true)
-    if(newRow && q.type !== 'row'){//redo range, to see if new row needs to be added to .rows for table or li subs
-        getRange(q)
-    }else{//something updated on a row already in .rows, update data in store, and return store
-        q.allRows = Array.from(new Set(allRows))
-        q.rows = Array.from(new Set(triggers))
-        q.next()
-    }
-     
-
-}
-function handleNewPropData(rowID,pval,value){
+function handleNewPropData(rowID,pval){
     //parse gun soul and keys in data
     //console.log('handle new Data' ,soul)
-    let cpath = bufferPathFromSoul(rowID,pval)
-    setValue(cpath,value,subBuffer)
+    if(!subBuffer[rowID])subBuffer[rowID] = new Set()
+    subBuffer[rowID].add(pval)
     if(!bufferState){
         bufferState = true
         setTimeout(flushSubBuffer, 250)
     }
 }
-function setupSub(qObj){
-    //subParams will have rows object in it {range: {from,to,idx,items}, type: table,row,li, columns: {p0,p1,etc}, query: [qArr], userCB, allRows}
-    let {subID,allRows,allColumns,range,type,columns,query,userCB,arrMap,data,output,needRows} = qObj
-    let [path] = subID.split(',')
-    let {b,t} = parseSoul(path)
-    let subParams = {userCB,query,allRows,range,columns,type,allColumns,arrMap,last:output}
-    console.log('setting up or updating sub: '+ subID)
-    setValue([b,t,subID],subParams,gsubsParams)
-    for (const soul in needRows) {
-        for (const p of allColumns) {
-            loadRowPropToCache(soul,p)
-        } 
-    }
-}
+
 
 
 //QUERY
-function setupQuery(path,pvalArr,queryArr,cb,subscription, sVal){
+function setupQuery(path,queryArr,cb,isSub,sVal){
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
-    queryArr = queryArr || []
-    let {i} = parseSoul(path)
-    let {range,limit,query,format} = parseQuery(queryArr,pvalArr,path) //queryArr could be false if it is an ALL or a row
-    let q = new Query(path,pvalArr,query,range,limit,format,cb,subscription,sVal)
-    if(i){
-        q.checkNodes = [path]  
-    }
-    console.log(q)
-    q.run()
+    if(!Array.isArray(queryArr) || !queryArr.length)throw new Error('Must provide arguments in the query Array')
+    if(!qArr.filter(x => x.CYPHER)[0])throw new Error('Must specify a single CYPHER pattern to complete the query!')
+    if(!qArr.filter(x => x.RETURN)[0])throw new Error('Must specify a single RETURN statement in your query!')
+    query(path,new QueryParse(path,queryArr),cb,{sVal,isSub})
 }
+
+function QueryParse(path,qArr){
+    this.elements= {}
+    this.sortBy = false // || ['userVar',{alias,dir}, {alias,dir},...]
+    this.groupBy = false // || ['userVar',{alias}]
+    this.limit = Infinity
+    this.skip = 0
+    this.aliasToID = {} //{!#:{[alias]:pval}}
+    this.returning = []
+    Object.defineProperty(this.aliasToID,'aliasTypes',{
+        value: function(alias,isNode){
+            let a = Object.entries(this)
+            let has = (isNode) ? '#' : '-'
+            return a.filter(ar => ar[0].includes(has) && (ar[1][alias] !== undefined)).map(arr => arr[0])
+        }
+    })
+    Object.defineProperty(this.aliasToID,'types',{
+        value: function(aliasArr,isNode){
+            let a = Object.entries(this)
+            let sym = (isNode) ? '#' : '-'
+            let valid = a.filter(ar => ar[0].includes(sym))
+            let allTypes = new Set(valid.map(x => x[0]))
+            for (const alias of aliasArr) {
+                let has = new Set(this.aliasTypes(alias,isNode))
+                allTypes = intersect(allTypes,has)
+            }
+            return [...allTypes]
+            
+        }
+    })
+    Object.defineProperty(this.aliasToID,'id',{
+        value: function(node,alias){
+            let {b,t,r} = parseSoul(node)
+            let thingType = makeSoul({b,t,r})
+            return getValue([thingType,alias],this)
+            
+        }
+    })
+    
+    Object.defineProperty(this,'elementRank',{
+        get(){
+            let e = Object.entries(this.elements)
+            return e.sort((a,b)=> b[1].score-a[1].score).map(el => el[0])
+        },
+        enumerable:true
+    })
+    Object.defineProperty(this,'pending',{
+        get(){
+            let p = 0
+            for (const userVar in this.elements) {
+                if (this.elements.hasOwnProperty(userVar)) {
+                    const {toCheck} = this.elements[userVar];
+                    p += toCheck.size
+                }
+            }
+            return p
+        },
+        enumerable:true
+    })
+    Object.defineProperty(this,'shortestToCheck',{
+        get(){
+            let list = []
+            for (const userVar in this.elements) {
+                if (this.elements.hasOwnProperty(userVar)) {
+                    const {toCheck} = this.elements[userVar];
+                    if(toCheck.size){
+                        list.push([userVar,toCheck.size])
+                    }
+                }
+            }
+            if(list.length)return list.sort((a,b)=>a[1]-b[1])[0][0]
+
+            return false
+        },
+        enumerable:true
+    })
+    Object.defineProperty(this,'resetDone',{
+        value: function(){
+            let list = []
+            for (const userVar in this.elements) {
+                if (this.elements.hasOwnProperty(userVar)) {
+                    this.elements[userVar].localDone = false;
+                }
+            }
+
+        }
+    })
+    Object.defineProperty(this,'leftMostThing',{
+        get(){
+            let userVar = Object.keys(this.elements)[0]//just take first one
+            let leftMost = userVar
+            let hasLeft = this.elements[userVar].leftThing
+            while (hasLeft !== null) {
+                hasLeft = this.elements[leftMost].leftThing
+                if(hasLeft !== null)leftMost = hasLeft.userVar
+            }
+            return leftMost
+        },
+        enumerable:true
+    })
+    Object.defineProperty(this,'leftToRightReturnOrder',{
+        get(){
+            let order = []
+            let next = this.leftMostThing
+            let hasRight
+            while (hasRight !== null) {
+                let {toReturn} = this.elements[next]//just take first one
+                if(toReturn)order.push(this.elements[next].userVar)
+                hasRight = this.elements[next].rightThing
+                if(hasRight !== null)next = hasRight.userVar
+            }
+            return order
+        },
+        enumerable:true
+    })
+    Object.defineProperty(this,'orderIdxMap',{
+        get(){
+            let lrOrder = this.leftToRightReturnOrder
+            let order = []
+            for (const userVar of lrOrder) {
+                order.push(this.returning.indexOf(userVar))      
+            }
+            return order
+        },
+        enumerable:true
+    })
+    this.cleanMatch = ''//String of user MATCH with it cleaned, and id's swapped out (must maintain original userVar assignment (no randIDs))
+    this.cleanQuery = [] //[{CYPHER:[cleanMatch]},...FILTER,SEARCH,ID,RANGE,RETURN(all as-is)]
+    
+
+    let self = this
+    let elements = this.elements
+    
+    parseCypher()
+    parseReturn()
+    parseFilters()
+    findIDsAndTypes()
+    makeCleanQ()
+    scoreAll()
+    function parseCypher(){
+        let obj = qArr.filter(x => x.CYPHER)[0]
+        if(!obj)throw new Error('Must specify a single Cypher pattern to complete the query!')
+        let args = obj.CYPHER
+        let {b} = parseSoul(path)
+        const evaluate = {
+            MATCH: function(str){
+                //assign id's to each () [] or use user var
+                //then parse thing by thing
+                str = str.replace(/{[\s\S]*}/g,'')//remove any {prop: 'value'} filters
+                str = str.replace(/(\(|\[)([a-zA-Z]+)?(:)?([a-zA-Z:\`|\s]+)?/g, function(match, $1, $2, $3, $4) {//find gbID's for aliases of types,relations,labels
+                    if(!$3)return match
+                    let isNode = ($1 === '(')
+                    let splitChar = (isNode) ? ':' : '|'
+                    let aliases = [...$4.split(splitChar)]
+                    let ids = []
+                    let i = 0
+                    let types = {t:{'#':true},r:{'-':true},l:{'&':true}}
+                    for (let alias of aliases) {
+                        alias = rmvBT(alias)//get rid of back ticks
+                        let type
+                        if(isNode && i === 0)type = types.t
+                        else if(isNode)type = types.l
+                        else type = types.r
+                        let id = lookupID(gb,alias,makeSoul(Object.assign({},{b},type)))
+                        if(id === undefined)throw new Error('Cannot parse alias for '+$4+' Alias: '+alias)
+                        ids.push(id)
+                        i++
+                    }
+                    let start = ($2) ? $1+$2+$3 : $1+$3
+                    return start+ids.join(splitChar)
+                });
+                self.cleanMatch = 'MATCH '+str //what user passed in, but with no {} and ID's instead of alias'
+                metaOut.byID = 'MATCH '+str 
+                str = str.replace(/(<-|-)(\[[^\[\]]+\])?(->|-)/g,function(match,$1,$2,$3){// if ()--() make ()-[]-()
+                    if(!$2)return $1+'[]'+$3
+                    return match
+                  })
+                str = str.replace(/(?:\(|\[)([a-zA-Z]+)?/g, function(match, $1) {//assign id's to those that user didn't already do
+                    if (!$1)return match+rand(8,'abcdefghijklmnopqrstuvwxyz')
+                    return match
+                });
+                
+                let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
+                //m[i] = ['(allParts)' || (-|->|<-), '('||'['|| undefined, id||undefined, labels||undefined, undefined||undefined||*length')'||']'|| undefined, undefined||(-|->|<-)]
+                for (let i = 0; i < m.length; i+=2) {//every other element, create collector nodes first, then evaluate string
+                    const leftID = m[i-2][2];
+                    const rightID = m[i+2][2]
+                    let [match,left,id,types] = m[i];
+                    let isNode = (left === '(')
+                    //future development: negated labels. So you can specify it has x labels && !y labels :HasLabel:!NotHasLabel
+                    if(isNode){//(id:Type:Label)
+                        let typesArr = [],labelArr = []
+                        if(types){
+                            //could be labels only..
+                            //or multiple types
+                            let a = types.split(':')
+                            for (const name of a) {
+                                let type = findID(gb,name,makeSoul({b,'#':true}))
+                                let label = findID(gb,name,makeSoul({b,'&':true}))
+                                if(type !== undefined)typesArr.push(type)
+                                else if(label !== undefined)labelArr.push(label)
+                            }
+                        }
+                        if(!typesArr.length)typesArr = getAllActiveNodeTypes(gb,path)//if none specified, can be any
+                        elements[id] = new MatchNode(id,typesArr,labelArr, leftID, rightID)
+                        
+                    }else{//relation [id:Type|Type]
+                        let typesArr
+                        if(types){
+                            let a = types.split('|')
+                            typesArr = [a]
+                        }else{//could be any 'type' node
+                            typesArr = [getAllActiveRelations(gb,path)]//double array on purpose
+                        }
+                        elements[id] = new MatchRelation(id,typesArr, leftID, rightID)
+    
+                    }
+                }
+                //if m.length === 1 simple nodeType query
+                //if m.length > 1 then we need to parse more info
+                if(m.length > 1){
+                    for (let i = 2; i < m.length; i+=4) {//2,6,10,etc.. should be relations
+                        let [match,left,id,types,length] = m[i];
+                        let [lSign] = m[i-1]
+                        let [rSign] = m[i+1]
+                        let directed = !(lSign === rSign) // both '-'?
+                        let thisRel = elements[id]
+                        let leftNode = thisRel.leftThing
+                        let rightNode = thisRel.rightThing
+                        if(length){
+                            let l = length.match(/\*([0-9]+)?(\.+)?([0-9]+)?/)
+                            let [min,dots,max] = l
+                            if((!min && !dots && !max) || (dots && !max))thisRel.pathLengthRange = Infinity
+                            if(min && min !== 1)thisRel.pathLength = min
+                            if(dots && max)thisRel.pathLengthRange = max - thisRel.pathLength
+                        }
+                        
+                        if(!directed){
+                            Object.defineProperties(thisRel,{
+                                srcTypes:{
+                                    get(){
+                                        let allTypes = [...leftNode.types,...rightNode.types]
+                                        return [...new Set(allTypes)]//remove duplicates
+                                    },
+                                    enumerable:true
+                                },
+                                trgtTypes:{
+                                    get(){
+                                        return thisRel.srcTypes
+                                    },
+                                    enumerable:true
+                                },
+                                leftIs:{
+                                    value:'either',
+                                    enumerable:true
+                                },
+                                rightIs:{
+                                    value:'either',
+                                    enumerable:true
+                                }
+                            })
+                            mergeDefineProp(leftNode,'outgoing')
+                            mergeDefineProp(leftNode,'incoming')
+                            mergeDefineProp(rightNode,'outgoing')
+                            mergeDefineProp(rightNode,'incoming')
+                        }else{
+                            let src = (rSign.includes('>')) ? leftNode : rightNode //assume the other has it
+                            let trgt = (rSign.includes('>')) ? rightNode : leftNode
+                            let leftValue = (rSign.includes('>')) ? 'source' : 'target'
+                            let rightValue = (rSign.includes('>')) ? 'target' : 'source'
+                            Object.defineProperties(thisRel,{
+                                srcTypes:{
+                                    get(){
+                                        return src.types
+                                    },
+                                    enumerable:true
+                                },
+                                trgtTypes:{
+                                    get(){
+                                        return trgt.types
+                                    },
+                                    enumerable:true
+                                },
+                                leftIs:{
+                                    value:leftValue,
+                                    enumerable:true
+                                },
+                                rightIs:{
+                                    value:rightValue,
+                                    enumerable:true
+                                }
+                            })
+                            mergeDefineProp(src,'outgoing')
+                            mergeDefineProp(trgt,'incoming')
+                        }
+                        
+                    }
+                }
+                
+    
+                //on parse...
+                //we need to get each 'thing' put in to it's object
+                //if this is more than a simple (), then all 3 (or more..) things will effect each other.
+                //need to figure out direction, *pathLength
+                function mergeDefineProp(obj,prop){//for defining getter on the node
+                    //a node can have two relations ()-[]->(here)<-[]-()
+                    //getter needs to be accurate for `here` target. Could potentially be two different relations
+                    //outgoing or incoming is [[],[]] inner arrays are OR outer array is AND
+                    const define = {
+                        configurable: true,
+                        enumerable: true,
+                        get(){
+                            return thisRel.types
+                        }
+                    }
+                    const altDefine = function(otherO){
+                        return {
+                            configurable: true,
+                            enumerable: true,
+                            get(){
+                                return [...otherO.types,...thisRel.types]
+                            }
+                        }
+                    }
+                    let definition = define
+                    if(obj.hasOwnProperty(prop)){
+                        let leftO = obj.leftThing
+                        definition = altDefine(leftO)
+                    }
+                    Object.defineProperty(obj,prop,definition)
+                }
+                function rmvBT(s){
+                    return s.replace(/`([^`]*)`/g, function(match,$1){
+                        if($1)return $1
+                        return match
+                    })
+                }
+            }
+        }
+        const validCypher = ['MATCH']
+        for (let arg of args) {
+            arg = arg.replace(/([^`]+)|(`[^`]+`)/g, function(match, $1, $2) {//remove whitespace not in backticks
+                if($1)return $1.replace(/\s/g, '');
+                return $2; 
+            });
+            let t
+            arg = arg.replace(/([A-Z]+)/, function(match, $1) {//find and remove command ie: MATCH
+                if ($1) {t = match;return ''}
+            });
+            if(!validCypher.includes(t))throw new Erro('Invalid Cypher command. Valid include: '+validCypher.join(', '))
+            evaluate[t](arg)
+        }
+        
+    
+    }
+    function parseReturn(){
+        let obj = qArr.filter(x => x.RETURN)[0]
+        if(!obj)throw new Error('Must specify a single RETURN statement in your query!')
+        let args = obj.RETURN
+        if(args.length < 2)throw new Error('Must specify at least one element from "MATCH" to return')
+        /* 
+            args = //[{whole return Config},{userVar1:{configs}},...{userVarN:{configs}}]
+            [
+            {   //these are the options for the whole return
+                sortBy: ['a',['pval1','DESC','pval2','ASC']],
+                groupBy: ['a','pval'],
+                limit: 50,
+                skip: 0
+            },
+            {a:{//<<userVar, Options for returning this particular nodeThing
+                returnAs: {},
+                props: [],//can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
+                propsByID:false,//only for returnAs {}, false={'Prop Alias': propValue}, true={pval: propValue} >> also applies for include
+                noID: false,//on returnAs object> object.ID = NodeID
+                noAdress: false,//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
+                raw: false,//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
+                rawLinks:false//for linked columns, it will attempt to replace with the HumanID
+                }
+            }]
+        */
+        //parse first arg, that should be easy
+        let [mainArgs,...thingsArgs] = args
+        for (const key in mainArgs) {
+            const arg = mainArgs[key];
+            if(key === 'sortBy')parseSort(arg)
+            else if(key === 'groupBy')parseGroup(arg)
+            else if(key === 'limit')parseLimit(arg)
+            else if(key === 'skip')parseSkip(arg)
+        }
+
+        for (const tArg of thingsArgs) {
+            let userVar = Object.keys(tArg[0])
+            if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+            self.returning.push(userVar)
+            elements[userVar].toReturn = true
+            let args = tArg[userVar]
+            for (const arg in args) {
+                if(!['returnAsArray','props','propsByID','noID','noAddress','raw','rawLinks'].includes(arg))continue
+                const value = args[arg];
+                if(arg === 'props'){
+                    if(!Array.isArray(value))throw new Error('"props" must be an array of values')
+                    parseProps(userVar,value)
+                }else elements[userVar] = !!value
+            }
+        }
+
+        //parse each thing arg.
+        //  convert props to objects. If thing already has a types.length === 1 then we can get propID as well. store as !#. ,since could have multiple types
+        
+
+
+        //can we allow multiple node types? yes, otherwise MATCH isn't useful
+        //how do we describe the format, array of objects would be required if multitype
+        function parseLimit(userArg){//done
+            if(isNaN(userArg))throw new Error('Limit argument must be a number. {limit: Number()}')
+            self.limit = userArg*1
+        }
+        function parseSkip(userArg){//done
+            if(isNaN(userArg))throw new Error('Limit argument must be a number. {LIMIT:[Number()]}')
+            self.skip = userArg*1
+        }
+        function parseSort(userArg){//done
+            //obj = {SORT: [pval, asc || dsc]}
+            let [userVar, ...args] = userArg
+            //can't replace pval unless we know the userVar.types.length===1
+            if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+            if(!elements[userVar].toReturn)throw new Error('Variable referenced must be part of the return')
+            self.sortBy = []
+            self.sortBy.push(userVar)
+            for (let i = 0; i < args.length; i+=2) {
+                const alias = args[i];
+                if(alias === undefined)throw new Error('Must specify a property to sortBy')
+                const dir = args[i+1]
+                if(!dir)dir = 'DESC'
+                if(!['ASC','DESC'].includes(dir))throw new Error('Direction must be either "ASC" or "DESC".')
+                self.sortBy.push({alias,dir})
+            }
+            //store as self.sortBy = [userVar,{alias: userArg, ids:[],dir:ASC},{alias: userArg, ids:[], dir:DESC}]
+            
+        }
+        function parseGroup(userArg){//done
+            //userArg should be [userVar, pval]
+            let [userVar,...args] = userArg
+            if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+            self.groupBy = []
+            self.groupBy.push(userVar)
+            for (const alias of args) {
+                if(alias === undefined)throw new Error('Must specify a single property to groupBy')
+                self.groupBy.push({alias})
+            }
+        }
+        function parseProps(userVar,userArg){
+            //can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
+            for (const arg of userArg) {
+                if(typeof arg === 'string'){
+                    elements[userVar].props.push({alias:arg})
+                }else if(typeof arg === 'object'){
+                    let alias = Object.keys(arg)[0]
+                    let {as,raw} = arg[alias]
+                    elements[userVar].props.push({alias,as,raw})
+                }
+            }
+        }
+        
+    }
+    function parseFilters(){
+        let parse = ['FILTER','RANGE']
+        for (const qArgObj of qArr) {
+            let key = Object.keys(qArgObj)[0]
+            if(!parse.includes(key))continue
+            if(!Array.isArray(qArgObj[key]))throw new Error('Query arguments must be in an array: [{ARG:[parameters]}]')
+            if(key==='FILTER')parseFilter(qArgObj,colArr)
+            else if(key==='RANGE')parseRange(qArgObj)
+        }
+
+        function parseFilter(obj){//
+            //obj = {FILTER: [userVar,'FN string']}
+            //fnString = 'ID(!#$)' || '{prop} > 3' || 'AND({prop1} > 3,{prop2} < 5) if prop has spaces or symbols, must be in `prop with space!!@#$`
+            let validFilterFN = ['ABS','SQRT','MOD','CEILING','FLOOR','ROUND','INT','COUNT','NOT','T','AND', 'OR','TRUE','FALSE','TEST']
+            let [userVar,fnString] = obj.FILTER
+            if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+            let fnSearch = /([A-Z]+)\(/g //get fn names
+            let IDpattern = /ID\((.*)\)/
+            let noBT = fnString.replace(/`.*`/g,0)//backticks might match pattern accidentally
+            let fn
+            let [idMatch,nodeID] = noBT.match(IDpattern) || []
+            if(idMatch){
+                if(!ALL_INSTANCE_NODES.test(nodeID))throw new Error('ID specified is an invalid format')
+                elements[userVar].ID = nodeID
+                return
+            }
+            let i = 0
+            while (fn = fnSearch.exec(noBT)) {
+                if(i === 0 && a === 'AND')elements[userVar].filterArgs = findFNArgs(noBT).length
+                else if(!elements[userVar].filterArgs)elements[userVar].filterArgs = 1
+                let [m,a] = fn
+                if(!validFilterFN.includes(a))throw new Error('Invalid FN used inside of "FILTER". Valid FNs :' + validFilterFN.join(', '))
+            }
+            basicFNvalidity(fnString)//  ??
+            elements[userVar].filter = fnString
+        }
+        function parseRange(obj){
+            //obj = {RANGE: [userVar,{index,from,to,items,relativeTime,timePointToDate,lastTimeUnit,firstDayOfWeek}]}
+            //Needs to end up with a from, to
+            //from and to must be date obj or unix time
+            if(!obj.RANGE)return false
+            let [userVar,ranges] = obj.RANGE
+            //ranges is an object with keys of index's (props || _CREATED) and value of object with params
+            if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+            for (const index in ranges) {
+                const params = ranges[index];
+                elements[userVar].ranges[index] = calcToFrom(params)
+            }
+            function calcToFrom(args){
+                let {from,to,relativeTime,timePointToDate,lastTimeUnit,firstDayOfWeek} = args
+                let out = {}
+                if((from || to) && (timePointToDate || lastTimeUnit || relativeTime))throw new Error('Too many arguments in RANGE. use "from" & "to" OR "toDate" OR "last" OR "relavtiveTime"')
+                if(firstDayOfWeek){
+                    if(isNaN(firstDayOfWeek)){
+                        throw new Error('Invalid first day of week. Must be a number between 0-6. Sunday = 0')
+                    }
+                }else{
+                    firstDayOfWeek = 0
+                }
+                if(timePointToDate && !lastTimeUnit){
+                    let valid = ['year','month','week','day']
+                    if(!valid.includes(timePointToDate.toLowerCase()))throw new Error('toDate preset only accepts: '+ valid.join(', '))
+                    let now = new Date()
+                    let year = now.getFullYear()
+                    let month = now.getMonth()
+                    let dayOfMonth = now.getDate()
+                    let dayOfWeek = now.getDay()
+                    switch (timePointToDate.toLowerCase()) {
+                        case 'year':
+                            from = new Date(year,0)
+                            break;
+                        case 'month':
+                            from = new Date(year,month)
+                            break;
+                        case 'week':  
+                            let nd = dayOfWeek
+                            let fd = firstDayOfWeek
+                            let diff = 0
+                            if(nd-fd > 0){
+                                diff = nd-fd
+                            }else if(nd-fd < 0){
+                                diff = nd-fd + 7
+                            }                
+                            dayOfMonth += diff*-1
+                            from = new Date(year,month,dayOfMonth)
+                            break;
+                        case 'day':
+                            from = new Date(year,month,dayOfMonth)
+                            break;
+                        default:
+                            break;
+                    }
+                }else if(!timePointToDate && lastTimeUnit){
+                    let valid = ['year','quarter','month','week','day','hour']
+                    if(!valid.includes(lastTimeUnit.toLowerCase()))throw new Error('"last" preset only accepts: '+ valid.join(', '))
+                    let now = new Date()
+                    let year = now.getFullYear()
+                    let month = now.getMonth()
+                    let dayOfMonth = now.getDate()
+                    let dayOfWeek = now.getDay()
+                    let hour = now.getHours()
+    
+                    switch (lastTimeUnit.toLowerCase()) {
+                        case 'year':
+                            from = new Date(year-1,0)
+                            to = new Date(year,0,1,0,0,0,-1)//last ms in last year
+                            break;
+                        case 'quarter':
+                            let current = (month + 1)/3
+                            if(current <=1){//q1
+                                from = new Date(year-1,9)
+                                to = new Date(year,0,1,0,0,0,-1)//last ms in last year
+                            }else if(current <= 2){
+                                from = new Date(year,0)//jan 1
+                                to = new Date(year,3,1,0,0,0,-1)//last ms in march
+                            }else if(current <=3){
+                                from = new Date(year,3)//april 1
+                                to = new Date(year,5,1,0,0,0,-1)//last ms in june
+                            }else{
+                                from = new Date(year,3)//July 1
+                                to = new Date(year,9,1,0,0,0,-1)//last ms in sept
+                            }
+                            break;
+                        case 'month':
+                            from = new Date(year,month-1)
+                            to = new Date(year,month,1,0,0,0,-1)//last ms in last month
+                            break;
+                        case 'week':  
+                            let nd = dayOfWeek
+                            let fd = firstDayOfWeek
+                            let diff = 0
+                            if(nd-fd > 0){
+                                diff = nd-fd
+                            }else if(nd-fd < 0){
+                                diff = nd-fd + 7
+                            }                
+                            dayOfMonth += diff*-1
+                            from = new Date(year,month,dayOfMonth-7)
+                            to = new Date(year,month,dayOfMonth,0,0,0,-1)//last ms in yesterday
+                            break;
+                        case 'day':
+                            from = new Date(year,month,dayOfMonth-1)
+                            to = new Date(year,month,dayOfMonth,0,0,0,-1)//last ms in yesterday
+                            break;
+                        case 'hour':
+                            from = new Date(year,month,dayOfMonth,hour-1)
+                            to = new Date(year,month,dayOfMonth,hour,0,0,-1)//last ms in last hour
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                if(relativeTime){
+                    //Number() + ...
+                    //y = year (relative date, from: -365days to: Infinity)
+                    //w = week (-Number() * 7days)
+                    //d = day (-Number() of days)
+                    //h = hours (-Number() of hours)
+                    //m = minutes
+                    let valid = 'ywdhm'
+                    let num = relativeTime.slice(0,relativeTime.length-1)*1
+                    let unit = relativeTime[relativeTime.length-1]
+                    if(isNaN(num))throw new Error('If you are specifiying a relative time it should be some number with a single letter specifying units')
+                    if(!valid.includes(unit.toLowerCase()))throw new Error('Invalid unit. Must be one of: y, m, w, d, h. (year, month, week, day, hour)')
+                    let now = new Date()
+                    let year = now.getFullYear()
+                    let dayOfMonth = now.getDate()
+                    let curHour = now.getHours()
+                    let minute = now.getMinutes()
+                    let fromDate = new Date()
+                    to = Infinity
+                    switch (unit) {
+                        case 'y':
+                            from = fromDate.setFullYear(year-num)
+                            break;
+                        case 'w':
+                            from = fromDate.setDate(dayOfMonth-(7*num))
+                            break;
+                        case 'd':
+                            from = fromDate.setDate(dayOfMonth-num)
+                            break;
+                        case 'h':
+                            from = fromDate.setHours(curHour-num)
+                            break;
+                        case 'm':
+                            from = fromDate.setMinutes(minute-num)
+                            break;
+                        default:
+                            break;
+                    }
+            
+                }
+                if(from && from instanceof Date){
+                    out.from = from.getTime()
+                }else if(from && !(from instanceof Date)){
+                    let d = new Date(from) //if it is unix or anything valid, attempt to make a date
+                    if(d.toString() !== 'Invalid Date'){
+                        out.from = d.getTime()
+                    }else{
+                        throw new Error('Cannot parse "from" argument in RANGE')
+                    }
+                }else{
+                    out.from = -Infinity
+                }
+                if(to && to instanceof Date){
+                    out.to = to.getTime()
+                }else if(to && !(to instanceof Date)){
+                    let d = new Date(to) //if it is unix or anything valid, attempt to make a date
+                    if(d.toString() !== 'Invalid Date'){
+                        out.to = d.getTime()
+                    }else{
+                        throw new Error('Cannot parse "from" argument in RANGE')
+                    }
+                }else{
+                    out.to = Infinity
+                }
+                if(out.from === -Infinity && out.to === Infinity)throw new Error('Must specifiy at least one limit in a time range')
+    
+                return out
+            }
+        }
+        
+    }
+    function findIDsAndTypes(){
+        //collect all pvals reffed for the this particular thing
+        //  sort,group,filter,ranges
+        //for each alias, go find all potential types that have that.
+        //  index results on self.aliasToID = {!#:{[alias]:pval}}
+        //if all potential list is longer than user-specified, ignore the potential list
+        //  else if the potential is shorter, update the things.types array with the potentials
+
+        for (const userVar in elements) {
+            const {isNode,filter,ranges} = elements[userVar];
+            let propRef = /\{(?:`([^`]+)`|([a-z0-9]+))\}/gi
+            let allNames = {}
+            if(filter){
+                let names = [...filter.matchAll(propRef)]
+                for (const [m,a,b] of names) {
+                    let name = (a !== undefined) ? a : b
+                    allNames[name] = true
+                    elements[userVar].filterProps.push(name)
+                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+                }
+            }
+            for (const name in ranges) {
+                if(name === '_CREATED')continue //??
+                allNames[name] = true
+                Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+            }
+            if(self.sortBy[0] === userVar){//has a sort output
+                let arr = self.sortBy.slice(1)
+                for (const {alias:name} of arr) {
+                    allNames[name] = true
+                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+                }
+
+            }
+            if(self.groupBy[0] === userVar){//has a group output
+                let arr = self.groupBy.slice(1)
+                for (const {alias:name} of arr) {
+                    allNames[name] = true
+                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+                }
+            }
+            
+            elements[userVar].types = [...intersect(elements[userVar].types,new Set(self.aliasToID.types(Object.keys(allNames),isNode)))]
+            //^^Intersect what is existing, with what is valid
+        }
+
+
+
+
+        //all rules below are for those nodes that don't already have a thing.types.length ===1
+
+        //if it is being sorted,grouped or there are a subset or props being returned back, then all nodeTypes must have those alias's
+        //if it has a filter/range then match all types that have those alias's
+        //replace out all references.
+    }
+    function makeCleanQ(){
+        let noCypher = qArr.filter(x => !x.CYPHER)
+        let c = {CYPHER:[self.cleanMatch]}
+        noCypher.push(c)
+        self.cleanQuery = noCypher
+    }
+    function scoreAll(){
+        //time ranges are worth ((1000*60*60*24)*100)/(to-from) <<<Basically 100 points for the range being only a single day.
+        //^^^if to=Infinity => to = new Date(99999).getTime() if from=-Infinity => from = new Date(-99999).getTime()
+
+        //ID is worth Infinity points (basically always start with that)
+
+        //Labels are labels.length * 20
+
+        //Type = 20/thing.types.length
+
+        //filters = filterArgs*20 >> if the top fn is AND, then we multiply the args since it is more specific.
+
+        //relation specific: 40/(leftThing.types.length + rightThing.types.length)
+
+        //thing has a total score, then it must have an internal 'start' index > 'range','types','labels','id'
+
+
+        //pick highest range score + filter score + ID + label + type
+
+        let scores = []
+        for (const thing in elements) {
+            const obj = elements[thing];
+            let total = obj.scoreCalc()
+            scores.push([total,thing])
+        }
+        self.startThing = scores.sort((a,b)=>b[0]-a[0])[0][1]
+    }
+    
+    
+    
+    function MatchNode(userVar,types,labelArr,lid,rid){
+        this.userVar = userVar
+        this.isNode = true
+        this.types = types || []
+        this.labels = labelArr || []
+        this.rTypes = []
+        this.score = 0
+        this.bestIndex = ''
+        this.toReturn = false
+        this.localDone = false
+
+        //traversal
+        this.toCheck = new Set()
+        this.linksToRight = {}
+        this.relations = {} //{relationID:'src' OR 'trgt'}
+        this.passing = {}//things that passed locally (filters,ranges. Nothing todo with connected nodes)
+        this.failing = {}
+
+        //filters
+        this.filter = '' //fnString
+        this.filterProps = [] //contains alias' from the filter fnString
+        this.filterArgs = 0 //use for scoring
+        this.ranges = [] //[{alias,to,from,score},..etc] //score ranges as they are entry points as well.
+        this.ID = ''
+
+
+        //return config, only used if output = true
+        this.returnAsArray = false // {} || []
+        this.props = [] //[{alias,as:'Different Name',raw:true}]{alias}]//
+        this.propsByID = false//only for returnAs {}, false={'Prop Alias': propValue}, true={pval: propValue} >> also applies for include
+        this.noID = false//on returnAs object> object.ID = NodeID
+        this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
+        this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
+        this.rawLinks = false//for linked columns, it will attempt to replace with the HumanID
+        Object.defineProperties(this, {
+            leftThing: {
+                get(){
+                    return self[lid] || null
+                }
+            },
+            rightThing: {
+                get(){
+                    return self[rid] || null
+                }
+            },
+            leftScore: {
+                get(){
+                    let l = this.leftThing
+                    let score = 0
+                    while (l !== null) {
+                        score += l.score
+                        l = l.leftThing
+                    }
+                    return score
+                },
+                enumerable:true
+            },
+            rightScore: {
+                get(){
+                    let r = this.rightThing
+                    let score = 0
+                    while (r !== null) {
+                        score += r.score
+                        r = r.rightThing
+                    }
+                    return score
+                },
+                enumerable:true
+            },
+            scoreCalc: {
+                value: function(){
+                    let id=0,filter,range=0,types,labels
+                    if(this.ID)id=Infinity
+                    filter = this.filterArgs*20
+                    types = Math.round(20/this.types.length)
+                    types = (types === Infinity) ? 0 : types
+                    labels = this.labels.length*20
+                    for (const idx of this.ranges) {
+                        let {from,to} = idx;
+                        if(from === -Infinity)from = new Date(-99999,0).getTime()
+                        if(to === Infinity)to = new Date(99999,0).getTime()
+                        let s = Math.round(((1000*60*60*24)*100)/(to-from))
+                        idx.score = s
+                        if(s>range)range = s
+                    }
+                    this.ranges.sort((a,b)=>b.score-a.score)
+                    this.bestIndex = [[id,'id'],[range,'range'],[types,'types'],[labels,'labels']].sort((a,b)=>b[0]-a[0])[0][1]
+                    let total = id+filter+range+types+labels
+                    this.score = total
+                    return total
+                }
+            },
+            validRelations:{
+                value: function(leftOrRight){
+                    //returns [rIDarr,signsArr] || false
+                    let signs = ['>','<']
+                    let types = this.outgoing //if it is either, then it doesn't matter
+                    let dir
+                    if(leftOrRight === 'left'){
+                        if(this.leftThing===null)return false
+                        dir = this.leftThing.rightIs
+                        
+                    }else{
+                        if(this.rightThing===null)return false
+                        dir = this.rightThing.leftIs
+                    }
+                    if(dir === 'source'){
+                        signs.pop()
+                        types = this.outgoing
+                    }
+                    if(dir === 'target'){
+                        signs.shift()
+                        types = this.incoming
+                    }
+                    return [types,signs]
+                }
+            }
+        });
+
+    }
+    function MatchRelation(userVar,types,lid,rid){
+        this.userVar = userVar
+        this.isNode = false
+        this.types = types || []
+        this.pathLength = 1
+        this.pathLengthRange = 0 //pathLength + this number for upper limit
+        this.score = 0
+        this.return = false
+        this.localDone = false
+
+
+        //traversal
+        this.toCheck = new Set()
+        this.linksToRight = {}
+        this.relations = {} //{relationID:'src' OR 'trgt'}
+        this.passing = {}//things that passed locally (filters,ranges. Nothing todo with connected nodes)
+        this.failing = {}
+
+        //filters
+        this.filter = '' //fnString
+        this.filterProps = [] //contains alias' from the filter fnString
+        this.filterArgs = 0 //use for scoring
+        this.ranges = [] //[{alias,to,from,score},..etc] //score ranges as they are entry points as well.
+        this.ID = ''
+
+        //return config, only used if output = true
+        this.returnAsArray = false // {} || []
+        this.props = [] //[{alias,ids:[],as:'Different Name',raw:true}]{ids:[]}]//pvals should be !#. || !-.
+        this.propsByID = false//only for returnAs {}, false={'Prop Alias': propValue}, true={pval: propValue} >> also applies for include
+        this.noID = false//on returnAs object> object.ID = NodeID
+        this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
+        this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
+        this.rawLinks = false//for linked columns, it will attempt to replace with the HumanID
+
+        Object.defineProperties(this, {
+            leftThing: {
+                get(){
+                    return self[lid] || null
+                },
+            },
+            rightThing: {
+                get(){
+                    return self[rid] || null
+                },
+            },
+            leftScore: {
+                get(){
+                    let l = this.leftThing
+                    let score = 0
+                    while (l !== null) {
+                        score += l.score
+                        l = l.leftThing
+                    }
+                    return score || null
+                },
+                enumerable:true
+            },
+            rightScore: {
+                get(){
+                    let r = this.rightThing
+                    let score = 0
+                    while (r !== null) {
+                        score += r.score
+                        r = r.rightThing
+                    }
+                    return score || null
+                },
+                enumerable:true
+            },
+            scoreCalc: {
+                value: function(){
+                    let id=0,filter,range=0,types,rIndex=0
+                    if(this.ID)id=Infinity
+                    filter = this.filterArgs*20
+                    types = Math.round(60/(this.srcTypes.length + this.trgtTypes.length + this.types))
+                    types = (types === Infinity) ? 0 : types
+                    for (const idx of this.ranges) {
+                        let {from,to} = idx
+                        if(from === -Infinity)from = new Date(-99999,0).getTime()
+                        if(to === Infinity)to = new Date(99999,0).getTime()
+                        let s = Math.round(((1000*60*60*24)*100)/(to-from))
+                        idx.score = s
+                        if(s>range)range = s
+                    }
+                    this.ranges.sort((a,b)=>b.score-a.score)
+                    this.bestIndex = [[id,'id'],[range,'range'],[types,'types']].sort((a,b)=>b[0]-a[0])[0][1]
+                    let total = id+filter+range+types
+                    this.score = total
+                    return total
+                }
+            }
+
+        });
+    }
+    
+}
+function query(path,qParams, cb, opts){
+    let {b} = parseSoul(path)
+    const paths = [] //[[nodeID,relationID,nodeID,...etc],[second matching path..]]
+    const nodesNeeded = {}
+    let preReturn = [] //process paths with sort/group/limit/etc.
+    let data = {}
+    const result = []  //using preReturn, preserve order and get the props user requested. This is what is returned
+    Object.defineProperty(this.result,'out',{value:{}})
+    const metaOut = result.out
+    metaOut.query = qParams.cleanQuery.slice() //what user can pass back in/save as a 'saved' query
+    metaOut.parsed = JSON.parse(JSON.stringify(qParams)) //freeze object at creation
+    opts = opts || {}
+    let {isSub,sVal,checkNodes} = opts
+    let reQuery = false
+    if(checkNodes && Array.isArray(checkNodes) && checkNodes.length){
+        reQuery = true
+        for (const nodeID in checkNodes) {
+            let pvalSet = checkNodes[nodeID]
+            //can be any type, could be relation
+            let {t,r} = parseSoul(nodeID)
+            //all ID's are unique across a base, so only need to see if any nodes have them
+            for (const userVar of qParams.elementRank) {
+                if (qParams.elements.hasOwnProperty(userVar)) {
+                    const {types} = qParams.elements[userVar];
+                    if(types.includes(t) || types.includes(r)){//add it to the highest scoring match.
+                        //check to see if it is on passing/failing
+                        let passSet = qParams.elements[userVar].passing[nodeID]
+                        let failSet = qParams.elements[userVar].failing[nodeID]
+                        if(passSet){//was passing on last query
+                            if(intersect(passSet,pvalSet).size){//overlap between things being filtered and things that changed
+                                qParams.elements[userVar].toCheck.add(nodeID)
+                            }
+                        }else if(failSet){//was failing on last query
+                            if(intersect(failSet,pvalSet).size){//really only the last one is relevant, but hard to check exactly that
+                                qParams.elements[userVar].toCheck.add(nodeID)
+                            }
+                        }else{//was not evaluated last time
+                            qParams.elements[userVar].toCheck.add(nodeID)
+                        }
+                        break
+                    }
+                    
+                }
+            }
+        }
+    }
+
+    if(reQuery)evaluateNodes()
+    else getIndex()
+
+
+    function getIndex(){
+        let startVar = qParams.elementRank[0]
+        let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes} = qParams.elements[startVar]
+        //bestIndex could be one of ['id','range','types','labels']
+        switch (bestIndex) {
+            case 'id':
+                qParams.elements[startVar].toCheck.add(ID)
+                check()
+                break;
+            case 'types':
+                getTypes()
+                break;
+            case 'labels':
+                getLabels()
+                break;
+            case 'range':
+                getRange()
+                break;
+            default:
+                break;
+        }
+        function getTypes(){
+            let toGet = types.length
+            for (const id of types) {
+                // need existence soul for each type
+                if(isNode){
+                    let s = makeSoul({b,t:id,':':true})//created/existence soul
+                    gun.get(s).once(function(node){
+                        for (const nodeID in node) {
+                            const boolean = node[nodeID];
+                            if (DATA_INSTANCE_NODE.test(nodeID) && boolean) {
+                                qParams.elements[startVar].toCheck.add(nodeID)
+                            }
+                        }
+                        toGet--
+                        if(!toGet)check()
+                    })
+                }else{
+                    let s = makeSoul({b,r:id})//created/existence soul
+                    //if we have a "_CREATED" time range for these nodes, we can narrow further
+                    let {from,to} = ranges.filter(x=>x.alias === '_CREATED')[0] || {}
+                    getRelationNodes(gun,s,srcTypes,trgtTypes,function(relationIDarr){
+                        for (const id of relationIDarr) {
+                            qParams.elements[startVar].toCheck.add(id)
+                        }
+                        toGet--
+                        if(!toGet)check()
+                    },{from,to})
+                }
+                
+            }
+
+        }
+        function getLabels(){
+            let toGet = types.length
+            for (const id of types) {
+                let s = makeSoul({b,t:id})
+                getLabeledNodes(gun,gb,s,labels,function(nodes){
+                    for (const id of nodes) {
+                        qParams.elements[startVar].toCheck.add(id)
+                    }
+                    if(!toGet)check()
+                })
+                //each node type is independent from each other
+                //but each nodeType added must have ALL labels
+            }
+        }
+        function getRange(){
+            let {from,to,alias} = ranges[0] //already reverse sorted
+            let toGet = types.length
+            for (const id of types) {
+                let sym = (isNode) ? 't' : 'r'
+                if(isNode || (!isNode && alias !== '_CREATED')){
+                    let idx
+                    if(alias === '_CREATED'){//only for nodes, not relations
+                        idx = makeSoul({b,t:id})
+                    }else{//all other are props !#. || !-. index
+                        let type = makeSoul({b,[sym]:id})
+                        let p = qParams.aliasToID[type][alias]
+                        idx = makeSoul({b,[sym]:id,p})
+                    }
+                    qIndex(idx,function(nodes){
+                        toGet--
+                        for (const id of nodes) {
+                            qParams.elements[startVar].toCheck.add(id)
+                        }
+                        if(!toGet)check()
+                    },Infinity,from,to)
+
+
+                }else{//only created for relations is on a different index
+                    let s = makeSoul({b,r:id})//created/existence soul
+                    //if we have a "_CREATED" time range for these nodes, we can narrow further
+                    let {from,to} = ranges.filter(x=>x.alias === '_CREATED')[0] || {}
+                    getRelationNodes(gun,s,srcTypes,trgtTypes,function(relationIDarr){
+                        for (const id of relationIDarr) {
+                            qParams.elements[startVar].toCheck.add(id)
+                        }
+                        toGet--
+                        if(!toGet)check()
+                    },{from,to})
+                }
+            }
+        }
+    }
+    function evaluateNodes(){
+        //could have some nodes to test in any of the userVar's if this is a requery
+        //otherwise there will only be one userVar that has toCheck
+        //either way, our runner needs to be able to start anywhere in the match statement
+        //will need to make a little query object to pass around 
+        let startVar = qParams.shortestToCheck
+        if(!startVar){
+            if(!reQuery)cb(result)//only fire cb for empty if it is first call, hopefully we stop here on most requeries (no data changes)
+            return
+        }//nothing matched the query, return the result
+        const {leftScore,rightScore} = qParams.elements[startVar];
+        let dir = (leftScore >= rightScore) ? 'left' : 'right'
+        let secondDir = (leftScore >= rightScore) ? 'right' : 'left'
+        metaOut.approach = 'Started with '+startVar+' and traversed '+dir 
+        let oneDirTraversed = false
+        startCheck(startVar,dir)
+        function startCheck(userVar,dir){
+            let thing = qParams.elements[userVar];
+            const {toCheck, localDone} = thing
+            for (const nodeID of toCheck) {
+                check(nodeID)
+            }
+            let next = dir+'Thing' //leftThing || rightThing
+            function check(node){
+                const {ranges,filter,filterProps,isNode} = qParams.elements[userVar];
+                let {b,t,r,i} = parseSoul(node)
+                let thingType = makeSoul({b,t,r})
+                let fromDir = (dir === 'right') ? 'left' : 'right'
+                let fromThing = fromDir+'Thing'
+                let pvals = new Set()
+                if(localDone){traverse();return}//need this for starting on the start node again for second dir
+                checkCreated()
+                function checkCreated(){
+                    if(isNode){
+                       let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
+                        if(hasCreated){
+                            let {i} = parseSoul(node)
+                            let [id,createdUnix] = i.split('_')
+                            let {from,to} = hasCreated
+                            if(createdUnix<from || createdUnix>to){done(false); return}
+                        } 
+                    }
+                    checkRange()
+                }
+                function checkRange(){
+                    let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
+                    let toGet = propRanges.length
+                    if(!toGet){checkFilter();return}
+                    let values = []
+                    for (const range of propRanges) {
+                        let {from,to,alias} = range
+                        let p = qParams.aliasToID.id(node,alias)
+                        pvals.add(p)
+                        if(p===undefined){
+                            console.warn('Cannot find '+alias+' for '+node+' ---considered not passing---')
+                            done(false)
+                            return
+                        }//?? undefined is basically out of range? node does not have this property?
+                        getCell(node,p,function(value){
+                            values.push([from,value,to])
+                            toGet--
+                            if(!toGet){verifyRanges();return}
+                        },true)
+                    }
+                    function verifyRanges(){
+                        let fail = values.filter(a=>{
+                            let [from,value,to] = a
+                            return (from>value || value>to)
+                        })
+                        if(fail.length){done(false);return}
+                        checkFilter()
+                    }
+                }
+                function checkFilter(){
+                    let toGet = filterProps.length
+                    if(!toGet){traverse();return}
+                    let values = {}
+                    for (const alias of filterProps) {
+                        let p = qParams.aliasToID.id(node,alias)
+                        pvals.add(p)
+                        if(p===undefined){
+                            console.warn('Cannot find '+alias+' for '+node+' ---considered not passing---')
+                            done(false)
+                            return
+                        }//?? undefined is basically a fail? node does not have this property?
+                        getCell(node,p,function(value){
+                            values[alias] = value
+                            toGet--
+                            if(!toGet){verifyFilter();return}
+                        },true)
+                    }
+                    function verifyFilter(){
+                        let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
+                            let alias = ($1!==undefined) ? $1 : $2
+                            return values[alias]
+                        })
+                        let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
+                        if(!passed){done(false);return}
+                        traverse()
+                    }
+                }
+                function traverse(){
+                    let nextThing = thing[next]
+                    if(isNode){
+                        let [rTypes,signs] = thing.validRelations(dir) || []
+                        if(!rTypes){
+                            done(true)
+                            return
+                        }
+                        let toGet = rTypes.length
+                        for (const rid of rTypes) {
+                            let linkSoul = makeSoul({b,t,r:rid,i})
+                            gun.get(linkSoul).once(function(linkNode){
+                                toGet--
+                                if(linkNode !== undefined){
+                                    for (const linkAndDir in linkNode) {
+                                        const boolean = linkNode[linkAndDir];
+                                        if(linkAndDir === '_' || !boolean)continue
+                                        let [sign,relationID] = linkAndDir.split(',')
+                                        if(signs.includes(sign)){
+                                            let signDir = (sign === '>') ? 'source' : 'target'
+                                            nextThing.toCheck.add(relationID)
+                                            thing.relations[relationID] = [signDir,node]
+                                            if(dir === 'right')setValue([node,relationID],true,thing.linksToRight)
+
+                                        }
+                                    }
+                                }
+                                if(!toGet)done(true)
+                            })
+
+                        }
+                        //need to know what relationsTypes and src/trgt sign to look for
+                        //then just see what this has and add matches to both nextThing.toCheck and thisThing.left/rightPotentials.src/trgt = relation ID
+                    }else{
+                        let fromObj = thing[fromThing]
+                        let {relations,localDone} = fromObj
+
+                        if(localDone){
+                            let [signDir,isNodeID] = relations[node] //'source', !#$ <<this will have one half of the relationship
+                            let needs = (signDir === 'source') ? 'target' : 'source' // 'source' || 'target'
+                            let [p] = hasPropType(gb,thingType,needs)
+                            if(dir === 'left')thing.linksToRight[node] = isNodeID
+                            getCell(node,p,function(nodeid){
+                                qParams.elements[next].toCheck.add(nodeid)
+                                if(dir === 'right')thing.linksToRight[node] = nodeid
+                                if(dir === 'left')setValue([nodeid,node],true,qParams.elements[next].linksToRight)
+                                done(true)
+                            },true)
+
+                            //if it has??.. we know what it has in it's potentialLeft/Right and we know if it was src/trgt/either
+                            //  put either the src/trgt nodeID that wasn't on the from to the nextThing.toCheck
+
+                        }else{//our startThing is a relation
+                            //if it hasn't.. then put all src/trgt nodes on correct left/rightThing.toCheck
+                            //  (if undirected, put src on one and trgt on other, it doesn't matter)
+                            let leftType = (thing.leftIs !== 'either') ? thing.leftIs : 'source'
+                            let rightType = (thing.rightIs !== 'either') ? thing.rightIs : 'target'
+                            let [leftP] = hasPropType(gb,thingType,leftType)
+                            let [rightP] = hasPropType(gb,thingType,rightType)
+                            let getting = 0
+                            getCell(node,leftP,function(toLeft){
+                                qParams.elements[userVar].leftThing.toCheck.add(toLeft)
+                                setValue([toLeft,node],true,qParams.elements[userVar].leftThing.linksToRight)
+                                getting++
+                                if(getting === 2)done(true)
+                            },true)
+                            getCell(node,rightP,function(toRight){
+                                qParams.elements[userVar].rightThing.toCheck.add(toRight)
+                                thing.linksToRight[node] = toRight
+                                getting++
+                                if(getting === 2)done(true)
+                            },true)
+                        }
+                    }
+                }
+                function done(passed){
+                    if(passed){
+                        qParams.elements[userVar].passing[node] = pvals
+                        delete qParams.elements[userVar].failing[node]
+                    }else{
+                        delete qParams.elements[userVar].passing[node]
+                        qParams.elements[userVar].failing[node] = pvals
+                    }
+                    qParams.elements[userVar].toCheck.remove(node)
+                    if(!qParams.elements[userVar].toCheck.size)tryNext()
+                }
+            }
+            function tryNext(){
+                qParams.elements[userVar].localDone=true
+                if(thing[next] === null){
+                    if(oneDirTraversed){//second time we were here..
+                        let addtlStartVar = qParams.shortestToCheck //if a requery, may have disconnected check nodes. Need to attempt all
+                        if(!addtlStartVar)assmebleOutput()//Everything has been checked
+                        const {leftScore,rightScore} = qParams.elements[addtlStartVar];
+                        dir = (leftScore >= rightScore) ? 'left' : 'right'
+                        secondDir = (leftScore >= rightScore) ? 'right' : 'left'
+                        oneDirTraversed = false
+                        qParams.resetDone()
+                        startCheck(addtlStartVar,secondDir)
+                    }else{//first time we got to the end of the pattern
+                        oneDirTraversed = true
+                        startCheck(startVar,secondDir)
+                    }
+                }else{
+                    startCheck(thing[next].userVar,dir)//contine checking in dir
+                }
+            }
+        }  
+    }
+    function assmebleOutput(){
+        //need to build all paths that are valid
+        //if there is a sort, need to sort all the paths by the sortVal
+        //if there is a limit/skip, we need to only grab the sub-list
+        //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
+        //when do we apply group?
+
+
+        //buildPaths first put in paths
+        let startVar = qParams.leftMostThing //this will alway be a node
+        let {passing} = qParams[startVar]
+        for (const id of passing) {
+            buildPath(startVar,id)
+        }
+        let {sortBy,limit,skip,returning} = qParams
+        buildPreReturn()
+        
+        function buildPath(userVar,nodeID,prePath){
+            prePath = prePath || [] //first call creates a new row
+            let thing = qParams[userVar]
+            let {toReturn, isNode, linksToRight} = thing
+            if(toReturn)prePath.push([userVar,nodeID])
+            
+
+            let rThing = thing.rightThing
+            if(rThing !== null){
+                if(isNode){
+                    let links = linksToRight[nodeID]
+                    for (const link in links) {
+                        if(rThing.passing.has(link)){
+                            buildPath(rThing.userVar,link,prePath.slice())
+                        }
+                    }
+                }else{
+                    let link = linksToRight[nodeID]
+                    if(rThing.passing.has(link)){
+                        buildPath(rThing.userVar,link,prePath)
+                    }
+                }
+            }else{
+                let sorted = []
+                let i = 0
+                for (const [uVar,id] of prePath) {
+                    let newIdx = qParams.orderIdxMap[i]
+                    sorted[newIdx] = id
+                    if(!nodesNeeded[id])nodesNeeded[id] = {}
+                    nodesNeeded[id].userVar = uVar
+                    i++
+                }
+                paths.push(sorted)
+                //we made it to the end of the pattern
+                //whatever prePath is, we need to sort to match the return order user specified and add to paths
+            }
+        }
+        function buildPreReturn(){
+            let beforeSkipLimit = []
+            let sortArr = [] //[[pathsIdx, [value1,value2,...valueN]], [pathsIdx2, [value1,value2,...valueN]]]
+            if(!sortBy){
+                sortReturn()
+                return
+            }
+            let [sortUserVar,...sortArgs] = sortBy
+            let returnIdx = qParams.returning.indexOf(sortUserVar)
+            let i = 0
+            let sortProps = sortArgs.map(x=>x.alias)
+            let sortDirs = sortArgs.map(x=>x.dir)
+            let toGet = paths.length
+            for (const path of paths) {
+                if(!Array.isArray(sortArr[i]))sortArr[i] = [i,[]]
+                let node = path[returnIdx]
+                let propsToGet = sortProps.length
+                let j = 0
+                for (const alias of sortProps) {
+                    const addVal = (val) =>{
+                        sortArr[i][1][j]=val
+                        propsToGet--
+                        if(!propsToGet){
+                            toGet--
+                            if(!toGet)sortReturn()
+                        }
+                    }
+                    let p = qParams.aliasToID.id(node,alias)
+                    if(p!==undefined){
+                        getCell(node,p,addVal,true)
+                    }else{
+                        //what to do? put in a 0 so it is alway top or bottom?
+                        console.warn('Cannot find '+alias+' for '+node+' ---sorting as value: 0---')
+                        addVal(0)
+                    }
+                    j++
+                }
+                i++
+            }
+            function sortReturn(){
+                if(!sortArr.length){
+                    beforeSkipLimit = paths
+                    //no sortBy
+                }else{
+                    sortArr.sort(compareSubArr(sortDirs))
+                    let i = 0
+                    for (const [originalIdx] of sortArr) {
+                        beforeSkipLimit[i] = paths[originalIdx]
+                        i++
+                    }
+                    //forof sortArr, and use the idx value to add to 'beforeSkipLimit' in new order
+                }
+                applySkipLimit()
+                function compareSubArr(sortQueries){
+                    return function(a,b){
+                        return multiCompare(0,sortQueries,colKey,a,b)
+                        function multiCompare(idx,dirArr,a,b){
+                            const varA = (typeof a[1][idx] === 'string') ?
+                                a[1][idx].toUpperCase() : a[1][idx];
+                            const varB = (typeof b[1][idx] === 'string') ?
+                                b[1][idx].toUpperCase() : b[1][idx];
+                
+                            let comparison = 0;
+                            if (varA > varB) {
+                                comparison = 1;
+                            } else if (varA < varB) {
+                                comparison = -1;
+                            } else {
+                                if(dirArr.lenth > 1){
+                                    comparison = multiCompare(idx++,dirArr.slice(1),a,b)
+                                }
+                            }
+                            return (
+                                (order == 'dsc') ? (comparison * -1) : comparison
+                                );
+                        }
+                    }
+                    //a and b should be [idx, [p0Val,p1Val, etc..]]
+                    //sortQueries = [dir,dir,dir]
+                    
+                }
+            
+            
+            }
+            function applySkipLimit(){
+                if(limit > beforeSkipLimit.length)limit=beforeSkipLimit.length
+                if(skip === 0 && limit === beforeSkipLimit.length){//no skip or limit
+                    preReturn = beforeSkipLimit
+                }else{
+                    preReturn = beforeSkipLimit.slice(skip,limit)
+                }
+                buildResults()
+            }
+        }
+        function buildResults(){
+            //getNodes
+            //then put in result
+            let nodesToGet = Object.keys(nodesNeeded).length
+            for (const nodeID in nodesNeeded) {
+                let {userVar} = nodesNeeded[nodeID]
+                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLinks} = qParams[userVar]
+                let propsToGet = props.length
+                const nodeObj = (returnAsArray) ? [] : {}
+                if(!noID)Object.defineProperty(nodeObj,'id',{value: nodeID})
+                if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+                let j = 0
+                for (const {alias,as:propAs,raw:rawProp} of props) {
+                    let raw = !!allRaw || !!rawProp
+                    let p = qParams.aliasToID.id(node,alias)
+                    const addVal = (val) =>{
+                        let property = propAs || (propsByID) ? p : alias
+                        if(returnAsArray){
+                            property = j
+                        }
+                        nodeObj[property] = val
+                        let fullPath = toAddress(nodeID,p)
+                        if(!noAddress){
+                            nodeObj.address[property] = fullPath
+                        }
+                        let {propType,dataType} = getValue(configPathFromChainPath(fullPath),gb)
+                        if(!rawLinks && ['child','parent','lookup','labels','source','target'].includes(propType)){
+                            replaceLinkIDs(val,propType,dataType,property)
+                        }else{
+                            propIsDone()
+                        }
+                    }
+                    if(p!==undefined){
+                        getCell(node,p,addVal,raw)
+                    }else{
+                        //what to do? put in a 0 so it is alway top or bottom?
+                        console.warn('Cannot find '+alias+' for '+node+' ---sorting as value: 0---')
+                        addVal(0)
+                    }
+                    j++
+                }
+                function replaceLinkIDs(raw,pType,dType,prop){
+                    //raw could be either a string (soul) or array of souls (or if Label labelID)
+                    //pType indicates whether this is label or not
+                    //dType will tell us what data type to expect in raw
+                    if(pType === 'labels'){
+                        let allLabels = Object.entries(gb[b].labels)
+                        let out = []
+                        for (const labelID of raw) {
+                            out.push(allLabels.filter(x=>x[1] === labelID)[0])
+                        }
+                        nodeObj[prop] = out
+                    }else{
+                        //see if it has a humanID for this nodeType
+                        if(Array.isArray(raw) && !raw.length)propIsDone()
+                        else if(dType === 'unorderedSet'){
+                            let toGet = raw.length
+                            let out = [],i=0
+                            const addVal = (val) =>{
+                                toGet--
+                                out[i] = val
+                                if(!toGet){
+                                    nodeType[prop] = out
+                                    propIsDone()
+                                }
+                            }
+                            for (const linkID of raw) {
+                                let {humanID} = getValue(configPathFromChainPath(linkID),gb) || ''
+                                if(humanID === ''){
+                                    addVal(linkID)
+                                }else{
+                                    getCell(raw,humanID,function(value){
+                                        addVal(value)
+                                    })
+                                }
+                                i++
+                            }
+                        }
+                        else if(dType === 'string'){
+                            let {humanID} = getValue(configPathFromChainPath(raw),gb) || ''
+                            if(humanID === '')propIsDone()
+                            else{
+                                getCell(raw,humanID,function(value){
+                                    nodeType[prop] = value
+                                    propIsDone()
+                                })
+                            }
+                        }
+                    }
+                }
+                function propIsDone(){
+                    propsToGet--
+                    if(!propsToGet){
+                        nodesToGet--
+                        if(!nodesToGet)makeResult()
+                    }
+                }
+                data[nodeID] = nodeObj
+            }
+
+
+            function makeResult(){
+                //go through preReturn, for the ID grab the node arr/obj and put in result. If returning.length ===1 don't double up the array
+                let i = 0
+                for (const row of preReturn) {
+                    let j = 0
+                    let newRow = []
+                    for (const id of row) {
+                        newRow[j] = data[id]
+                        j++
+                    }
+                    result[i] = newRow
+                    i++
+                }
+                returnResult()
+            }
+        }
+
+    }
+    function returnResult(){
+        //setup up subscription, fire user cb
+        if(isSub){
+            sVal = sVal || rand(6)
+            console.log('setting up or updating sub: '+ sVal)
+            if(!gsubs[b])gsubs[b] = {}
+            let basePath = makeSoul({b})
+            gsubs[basePath][sVal] = {qParams,cb}
+        }
+        cb(result)
+
+
+    }
+}
+function oldQuery(path,qParams, cb, isSub, sVal){
+    this.soulObj = parseSoul(path)
+    let {b,t} = this.soulObj
+    let idx = tRange.index //should be a !#. or !-. soul
+    if(idx === 'created'){
+        tRange.index = makeSoul({b,t})
+    }
+
+    
+    this.type = (this.soulObj.i) ? 'row' : 'table'
+    this.allActiveProps = getAllActiveProps(gb,path)
+    this.returnProps = colArr || this.allActiveProps
+    this.subID = (sVal) ? path + ',' + sVal : path + ',' + rand(4)
+    let {arrMap,last} = getValue([b,t,this.subID],gsubsParams) || {arrMap: false,last:[]}
+    this.reQuery = (arrMap === false) ? false : true
+    this.arrMap = arrMap || {}
+    this.last = last
+    this.subscribe = !!isSub
+    this.range = tRange
+    this.limit = limit || Infinity
+    this.format = (format === undefined) ? true : format
+    this.userCB = cb
+    //let columns = colArr
+    this.propsToGet = (qArr.filter(o => o.SEARCH).length) ? this.allActiveProps : this.returnProps //will break if FILTERed on pval not in colArr, currently throws error
+    //this.allRows = []//total rows currently in this.range
+    this.checkNodes = []// this.rows  rows to look for on THIS query, allRows !== rows when data has been edited on row in allRows
+    this.evaluated = []
+    this.query = qArr
+    //arrMap = arrMap || {}
+    this.retrievedCols = {}//to know if all rowIDs in this.rows has allColumns
+    this.completedRows = []//probably don't need now
+    this.data = {}
+    this.output = last //? change? If already in cache, could just recompute all.. memory vs speed...
+    this.callStack = []
+    this.nextBlock = (this.range.dir === '<') ? this.range.to : this.range.from
+    this.chron = (this.range.dir === '<') ? false : true
+    this.curNode = []
+    this.start = function(){
+        if(this.checkNodes.length && this.reQuery){//use the range provided (can be added after creation; ie on data change)
+            this.callStack.push(['getNode',[null]])
+        }else{
+            this.callStack.push(['getMoreSouls', [null]])
+            this.callStack.push(['getNode',[null]])
+            this.run()
+        }
+       
+    }
+    this.getMoreSouls = function(){
+        let self = this
+        crawlIndex(this.range.index,this.nextBlock,this.chron,function(idArr,next){
+            //blockArr = [[soul,unix],[soul,unix]]
+            self.nextBlock = next
+            self.checkNodes = idArr
+            self.run()
+        })
+
+    }
+    this.getNode = function(){
+        this.callStack.unshift(['evaluateNode',[null]])
+        let self = this
+        let i = 0
+        let toGet = this.propsToGet.length
+        let id = this.checkNodes[0]
+        for (const pval of this.propsToGet){
+            getCell(id,pval,function(data){
+                self.curNode[i] = data
+                toGet--
+                if(!toGet){
+                    self.run()
+                }
+            },true)
+            i++
+        }
+    }
+    this.evaluateNode = function(){
+        let id = this.checkNodes[0]
+        let i = this.arrMap[id]
+        this.evaluated[id] = true
+        let pass = false
+        if(this.testRowAgainstQuery()){
+            pass = true
+            let out
+            if(this.allActiveProps === this.returnProps){
+                out = this.curNode.slice()
+            }else{
+                for (const p of this.returnProps) {
+                    let i = this.propsToGet.indexOf(p)
+                    out.push(this.curNode[i])
+                }
+            }
+
+
+            out.id = id
+            out.propIDs = []
+            out.alias = []
+            let s = parseSoul(id)
+            let j = 0
+            let {props} = getValue(configPathFromChainPath(id),gb)
+            for (const p of this.returnProps) {
+                let {format:formatData, propType, dataType, alias} = props[p]
+                if (this.format && formatData !== ''){
+                    out[j] = formatData(formatData,propType,dataType,out[j])
+                }
+                out.propIDs.push( makeSoul(Object.assign({},s,{p})))
+                out.alias.push(alias)
+                j++
+            }
+            
+            if(!i) i = this.output.length
+            this.arrMap[id] = i
+            this.output[i] = out
+        }else if(i){
+            this.arrMap[id] = false
+            this.output[i] = null
+        }
+        this.checkNodes.shift()
+        this.curNode = []
+        
+        if(!this.reQuery && (this.checkNodes.length || this.nextBlock) && this.output.length < this.limit){
+            if(pass){}//if we want to add a 'check' relations or something...need to not add output just yet (if pattern matching)
+            this.callStack.unshift(['getNode',[null]])
+            this.run()
+        }else{
+
+        }
+
+        
+
+
+    }
+    this.evaluateNode = function(){
+
+    }
+    this.params = function(){
+        return {range, type, columns, query, userCB, allRows}
+    }
+    this.isRowDone  = function(rowID,forceDone){
+        let rowDone = forceDone || false
+        if(!rowDone){
+            let propArr = retrievedCols[rowID]
+            rowDone = (propArr.length === allColumns.length) ? true : false
+        }
+        if(rowDone){
+            completedRows.push(rowID)
+            if(completedRows.length === rows.length){
+                done()
+            }
+        }
+    }
+    this.testRowAgainstQuery = function(){ //really this is just the query check on the row, doesn't matter if it's new or old
+        let pass = true
+        let propArr = this.curNode
+        for (const q of this.query) {
+            if(!pass)break
+            let qType = Object.keys(q)[0]
+            let qArgArr = q[qType]
+            if(['SORT','FILTER'].includes(qType))continue
+            if(qType === 'SEARCH'){
+                let reg = regexVar('~', qArgArr[0],'gi')
+                let searchPass = false
+                for (const val of propArr) {
+                    if(reg.test(val)){
+                        searchPass = true
+                        break
+                    }
+                }
+                pass = searchPass
+            }else if(qType === 'FILTER'){
+                let colRef = /\{([a-z0-9]+)\}/gi
+                let fnString = qArgArr[0].slice()
+                while (match = colRef.exec(fnString)) {
+                    let [replace,pval] = match
+                    let valIdx = columns.indexOf(pval)
+                    let val = propArr[valIdx]
+                    fnString = fnString.replace(replace,val)
+                }
+                let fnResolved = evaluateAllFN(fnString)
+                pass = findTruth(fnResolved,true)
+            }else if(qType === 'RANGE'){ //should only have index,from,to
+                let [index, from, to] = qArgArr
+                //index should be some sort of valid path string
+                //from, to will already be unix times of +/-Infinity
+                let {p} = parseSoul(index)
+                if(!p){//created index, this will need to change if on a relationship
+                    let {i} = parseSoul(this.checkNodes[0])
+                    let [id,created] = i.split('_')
+                    if(created <= from || created >= to){//created or edited is outside of range
+                        return false
+                    }
+                }else{
+                    let idxPval = this.propsToGet.indexOf(p)
+                    let valDate = new Date(propArr[idxPval]).getTime()
+                    if(valDate <= from || valDate >= to){//date column idx specified is outside of range
+                        return false
+                    }
+                }
+            }
+        }
+        if(pass){
+            return true
+        }else{
+            return false
+        }
+
+    }
+    this.done = function(){//really only returns the data since new function will check the query.
+        console.log('Query Done, returning data')
+        let rows = this.rows
+        let added = false, removed = false
+        if(this.type !== 'row'){
+            if(this.reQuery){
+                for (const rowID of rows) {
+                    let propArr = this.data[rowID]
+                    let pass = testRowAgainstQuery(propArr,qParams)
+                    if(pass && arrMap[rowID] === undefined){//add row to output
+                        added = true
+                        let i = output.length
+                        arrMap[rowID] = i
+                        output.push([rowID, pass])
+                    }else if(!pass && allRows.includes(rowID)){//remove row from allRows, last
+                        removed = true
+                        let i = arrMap[rowID]
+                        output.splice(i,1)
+                        delete arrMap[rowID]
+                    }else if(pass){//not added or removed, updated
+                        let i = arrMap[rowID]
+                        output[i][1] = pass
+                    }
+                }
+                if(removed){
+                    let j = 0
+                    for (const el of output) {
+                        let [rowid] = el
+                        arrMap[rowid] = j
+                        j++
+                    }
+                }
+            }else{
+                added = true
+                if(output.length)throw new Error('First query should have no previous output')
+                for (const rowID of rows) {
+                    let propArr = data[rowID]
+                    let pass = testRowAgainstQuery(propArr,qParams)
+                    if(pass){
+                        let i = output.length
+                        arrMap[rowID] = i
+                        output.push([rowID, pass])
+                    }
+                }
+            }
+        }else{//return row
+            output = []
+            for (const rowID of rows) {
+                let propArr = data[rowID]
+                
+                for (const pval of columns) {
+                    let idx = pval.slice(1)
+                    output.push(propArr[idx])
+                }
+            }
+        }
+        if(subscribe){
+            util.setupSub()
+        }
+        if(type === 'row' || added || removed || reQuery){
+            console.log('Returning query to cb on subID: '+subID)
+            userCB.call(this,output,columns)
+        }
+        
+    }
+    this.throwError = function(errmsg){
+        let err = this.err
+        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+        err = error
+        console.log(error)
+        this.userCB.call(this,error)
+    }
+    this.run = function(){
+        if(this.err)return
+        if(this.callStack.length){
+            let [fn, args] = this.callStack[0]
+            this.callStack.shift()
+            this[fn](...args)
+        }else{
+            this.done()
+        }
+    }
+    
+    this.callStack.push(['start',[null]])
+    //current query flow:
+    //get valid range of souls, order them by this.range.dir (in case of items) set this to this.allRows
+    //get one node at a time, validate once all props are received, if pass add to this.rows, check items limit
+    //  going node by node will allow us to implement patter matching a little easier later?
+    
+    
+}
+
+
+//old query stuff
 function getRange(qObj){
     //traverse the tRange and find all souls in the range.
     //once all souls are found fire qObj.next() in the callback.
@@ -1066,7 +2906,6 @@ function getRange(qObj){
         qObj.next()
     },items,from,to,false,true)
 }
-
 const parseSearch = (obj) =>{
     //obj = {SEARCH: ['String with spaces preserved']}
     let arg = obj.SEARCH[0]
@@ -1310,16 +3149,14 @@ const parseCypher = (obj,path) =>{
             //assign id's to each () [] or use user var
             //then parse thing by thing
             let q = {}
-            str = str.replace(/(\(|\[)([a-zA-Z]+)?/g, function(match, $1, $2) {//assign id's to those that user didn't already do
-                let o = ($1 === '(') ? new MatchNode() : new MatchRelation()
-                if ($2) {
-                    q[$2] = o
-                  return match
-                }else{
-                    id = rand(8,'abcdefghijklmnopqrstuvwxyz')
-                    q[id] = o
-                  return match+id
-                }
+            str = str.replace(/{[\s\S]*}/g,'')//remove any {prop: 'value'} filters
+            str = str.replace(/(<-|-)(\[[^\[\]]+\])?(->|-)/g,function(match,$1,$2,$3){// if ()--() make ()-[]-()
+                if(!$2)return $1+'[]'+$3
+                return match
+              })
+            str = str.replace(/(?:\(|\[)([a-zA-Z]+)?/g, function(match, $1) {//assign id's to those that user didn't already do
+                if (!$1)return match+rand(8,'abcdefghijklmnopqrstuvwxyz')
+                return match
             });
             str = str.replace(/(\(|\[)([a-zA-Z]+:)([a-zA-Z:\`|\s]+)/g, function(match, $1, $2, $3) {//find gbID's for aliases of types,relations,labels
                 let isNode = ($1 === '(')
@@ -1341,6 +3178,71 @@ const parseCypher = (obj,path) =>{
                 }
                 return $1+$2+ids.join(splitChar)
             });
+            let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
+            //m[i] = ['(allParts)' || (-|->|<-), '('||'['|| undefined, id||undefined, labels||undefined, undefined||undefined||*length')'||']'|| undefined, undefined||(-|->|<-)]
+            for (let i = 0; i < m.length; i+=2) {//every other element, create collector nodes first, then evaluate string
+                const leftID = m[i-2][2];
+                const rightID = m[i+2][2]
+                let [match,left,id,types] = m[i];
+                let isNode = (left === '(')
+                if(isNode){//(id:Type:Label)
+                    let typesArr,labelArr
+                    if(types){
+                        let a = types.split(':')
+                        typesArr = [a[0]]
+                        labelArr = [...a.slice(1)]
+                    }else{//could be any 'type' node
+                        typesArr = getAllActiveNodeTypes(path)
+                    }
+                    q[id] = new MatchNode(typesArr,labelArr, leftID, rightID)
+                    
+                }else{//relation [id:Type|Type]
+                    let typesArr
+                    if(types){
+                        let a = types.split('|')
+                        typesArr = [...a]
+                    }else{//could be any 'type' node
+                        typesArr = getAllActiveRelations(path)
+                    }
+                    q[id] = new MatchRelation(typesArr, leftID, rightID)
+
+                }
+            }
+            //if m.length === 1 simple nodeType query
+            //if m.length > 1 then we need to parse more info
+            if(m.length > 1){
+                for (let i = 2; i < m.length; i+=5) {//2,7,12,etc.. should be relations
+                    let [match,left,id,types,length] = m[i];
+                    let [lSign] = m[i-1]
+                    let [rSign] = m[i+1]
+                    let directed = !(lSign === rSign) // both '-'?
+                    let thisRel = q[id]
+                    let leftNode = q[thisRel.leftID]
+                    let rightNode = q[thisRel.rightID]
+                    if(length){
+                        let l = length.match(/\*([0-9]+)?(\.+)?([0-9]+)?/)
+                        let [min,dots,max] = l
+                        if((!min && !dots && !max) || (dots && !max))thisRel.pathLengthRange = Infinity
+                        if(min && min !== 1)thisRel.pathLength = min
+                        if(dots && max)thisRel.pathLengthRange = max - thisRel.pathLength
+                    }
+                    
+                }
+            }
+            let [dirLeft] = m[i-1]
+            let [dirRight] = m[i+1]
+            let dir
+            if(dirLeft)dir = dirLeft
+            if(dirRight)dir = dirRight
+            if(dir){
+                dir = dir.replace(/(<)?-(>)?/,function(match,$1,$2){
+                    if($1)return $1
+                    else if($2) return $2
+                    else return match
+                })
+                dir = (dir === '-') ? ['>','<'] : [dir]
+            }
+
             //on parse...
             //we need to get each 'thing' put in to it's object
             //if this is more than a simple (), then all 3 (or more..) things will effect each other.
@@ -1354,24 +3256,28 @@ const parseCypher = (obj,path) =>{
                     return match
                 })
             }
-            function MatchNode(){
+            function MatchNode(types,labelArr,lid,rid){
                 this.isNode = true
-                this.types = []
-                this.labels = []
+                this.types = types || []
+                this.labels = labelArr || []
                 this.filters = []
                 this.ranges = []
-                this.search = ''
+                this.search = []
                 this.rTypes = []
-                this.rDirs = []
+                this.outgoing = []
+                this.incoming = []
                 this.score = 0
                 this.output = false
                 this.ID = ''
-                this.rID = ''
+                this.leftID = lid || null
+                this.rightID = rid || null
+                this.leftScore = 0
+                this.rightScore = 0
 
             }
-            function MatchRelation(){
+            function MatchRelation(types,lid,rid){
                 this.isNode = false
-                this.types = []
+                this.types = types || []
                 this.filters = []
                 this.ranges = []
                 this.search = ''
@@ -1379,9 +3285,15 @@ const parseCypher = (obj,path) =>{
                 this.trgtTypes = []
                 this.src = ''//only used with directed match
                 this.trgt = ''
+                this.pathLength = 1
+                this.pathLengthRange = 0 //pathLength + this number for upper limit
                 this.score = 0
                 this.output = false
                 this.ID = ''
+                this.leftID = lid || null
+                this.rightID = rid || null
+                this.leftScore = 0
+                this.rightScore = 0
             }
         }
     }
@@ -1484,323 +3396,6 @@ function parseQuery(qArr,colArr,path){
     if(format === undefined)format = true
     return {range,limit,query,format}
 }
-function gatherData(qObj){//NEEDS UPDATE FOR NEW CACHE
-    let {allColumns, rows, reQuery} = qObj
-    console.log('Gathering Data; Rows: '+ rows.length + ' Columns: '+allColumns.join(', '))
-    for (const rowID of rows) {
-        let cpath = cachePathFromRowID(rowID)
-        let propArr = getValue(cpath,cache)
-        if(propArr && propArr.length >= allColumns.length && !propArr.includes(undefined)){
-            qObj.data[rowID] = Array.from(propArr)
-            qObj.isRowDone(rowID,true)
-        }else{
-            for (const pval of allColumns) {
-                if (pval !== null){
-                    getRowProp(qObj,rowID,pval)
-                }else{
-                    addDataToQobj(rowID,pval,null,qObj)//fill archived or deleted indices with non-undefined value
-                }
-                
-            }
-        }
-    }
-}
-function Query(path, colArr, qArr, tRange, limit, format, cb, isSub, sVal){
-    this.soulObj = parseSoul(path)
-    let {b,t} = this.soulObj
-    let idx = tRange.index //should be a !#. or !-. soul
-    if(idx === 'created'){
-        tRange.index = makeSoul({b,t})
-    }
-
-    
-    this.type = (this.soulObj.i) ? 'row' : 'table'
-    this.allActiveProps = getAllActiveProps(gb,path)
-    this.returnProps = colArr || this.allActiveProps
-    this.subID = (sVal) ? path + ',' + sVal : path + ',' + rand(4)
-    let {arrMap,last} = getValue([b,t,this.subID],gsubsParams) || {arrMap: false,last:[]}
-    this.reQuery = (arrMap === false) ? false : true
-    this.arrMap = arrMap || {}
-    this.last = last
-    this.subscribe = !!isSub
-    this.range = tRange
-    this.limit = limit || Infinity
-    this.format = (format === undefined) ? true : format
-    this.userCB = cb
-    //let columns = colArr
-    this.propsToGet = (qArr.filter(o => o.SEARCH).length) ? this.allActiveProps : this.returnProps //will break if FILTERed on pval not in colArr, currently throws error
-    //this.allRows = []//total rows currently in this.range
-    this.checkNodes = []// this.rows  rows to look for on THIS query, allRows !== rows when data has been edited on row in allRows
-    this.evaluated = []
-    this.query = qArr
-    //arrMap = arrMap || {}
-    this.retrievedCols = {}//to know if all rowIDs in this.rows has allColumns
-    this.completedRows = []//probably don't need now
-    this.data = {}
-    this.output = last //? change? If already in cache, could just recompute all.. memory vs speed...
-    this.callStack = []
-    this.nextBlock = (this.range.dir === '<') ? this.range.to : this.range.from
-    this.chron = (this.range.dir === '<') ? false : true
-    this.curNode = []
-    this.start = function(){
-        if(this.checkNodes.length && this.reQuery){//use the range provided (can be added after creation; ie on data change)
-            this.callStack.push(['getNode',[null]])
-        }else{
-            this.callStack.push(['getMoreSouls', [null]])
-            this.callStack.push(['getNode',[null]])
-            this.run()
-        }
-       
-    }
-    this.getMoreSouls = function(){
-        let self = this
-        crawlIndex(this.range.index,this.nextBlock,this.chron,function(idArr,next){
-            //blockArr = [[soul,unix],[soul,unix]]
-            self.nextBlock = next
-            self.checkNodes = idArr
-            self.run()
-        })
-
-    }
-    this.getNode = function(){
-        this.callStack.unshift(['evaluateNode',[null]])
-        let self = this
-        let i = 0
-        let toGet = this.propsToGet.length
-        let id = this.checkNodes[0]
-        for (const pval of this.propsToGet){
-            getCell(id,pval,function(data){
-                self.curNode[i] = data
-                toGet--
-                if(!toGet){
-                    self.run()
-                }
-            },true)
-            i++
-        }
-    }
-    this.evaluateNode = function(){
-        let id = this.checkNodes[0]
-        let i = this.arrMap[id]
-        this.evaluated[id] = true
-        let pass = false
-        if(this.testRowAgainstQuery()){
-            pass = true
-            let out
-            if(this.allActiveProps === this.returnProps){
-                out = this.curNode.slice()
-            }else{
-                for (const p of this.returnProps) {
-                    let i = this.propsToGet.indexOf(p)
-                    out.push(this.curNode[i])
-                }
-            }
-
-
-            out.id = id
-            out.propIDs = []
-            out.alias = []
-            let s = parseSoul(id)
-            let j = 0
-            let {props} = getValue(configPathFromChainPath(id),gb)
-            for (const p of this.returnProps) {
-                let {format:formatData, propType, dataType, alias} = props[p]
-                if (this.format && formatData !== ''){
-                    out[j] = formatData(formatData,propType,dataType,out[j])
-                }
-                out.propIDs.push( makeSoul(Object.assign({},s,{p})))
-                out.alias.push(alias)
-                j++
-            }
-            
-            if(!i) i = this.output.length
-            this.arrMap[id] = i
-            this.output[i] = out
-        }else if(i){
-            this.arrMap[id] = false
-            this.output[i] = null
-        }
-        this.checkNodes.shift()
-        this.curNode = []
-        
-        if(!this.reQuery && (this.checkNodes.length || this.nextBlock) && this.output.length < this.limit){
-            if(pass){}//if we want to add a 'check' relations or something...need to not add output just yet (if pattern matching)
-            this.callStack.unshift(['getNode',[null]])
-            this.run()
-        }else{
-
-        }
-
-        
-
-
-    }
-    this.evaluateNode = function(){
-
-    }
-    this.qParams = function(){
-        return {range, type, columns, query, userCB, allRows}
-    }
-    this.isRowDone  = function(rowID,forceDone){
-        let rowDone = forceDone || false
-        if(!rowDone){
-            let propArr = retrievedCols[rowID]
-            rowDone = (propArr.length === allColumns.length) ? true : false
-        }
-        if(rowDone){
-            completedRows.push(rowID)
-            if(completedRows.length === rows.length){
-                done()
-            }
-        }
-    }
-    this.testRowAgainstQuery = function(){ //really this is just the query check on the row, doesn't matter if it's new or old
-        let pass = true
-        let propArr = this.curNode
-        for (const q of this.query) {
-            if(!pass)break
-            let qType = Object.keys(q)[0]
-            let qArgArr = q[qType]
-            if(['SORT','FILTER'].includes(qType))continue
-            if(qType === 'SEARCH'){
-                let reg = regexVar('~', qArgArr[0],'gi')
-                let searchPass = false
-                for (const val of propArr) {
-                    if(reg.test(val)){
-                        searchPass = true
-                        break
-                    }
-                }
-                pass = searchPass
-            }else if(qType === 'FILTER'){
-                let colRef = /\{([a-z0-9]+)\}/gi
-                let fnString = qArgArr[0].slice()
-                while (match = colRef.exec(fnString)) {
-                    let [replace,pval] = match
-                    let valIdx = columns.indexOf(pval)
-                    let val = propArr[valIdx]
-                    fnString = fnString.replace(replace,val)
-                }
-                let fnResolved = evaluateAllFN(fnString)
-                pass = findTruth(fnResolved,true)
-            }else if(qType === 'RANGE'){ //should only have index,from,to
-                let [index, from, to] = qArgArr
-                //index should be some sort of valid path string
-                //from, to will already be unix times of +/-Infinity
-                let {p} = parseSoul(index)
-                if(!p){//created index, this will need to change if on a relationship
-                    let {i} = parseSoul(this.checkNodes[0])
-                    let [id,created] = i.split('_')
-                    if(created <= from || created >= to){//created or edited is outside of range
-                        return false
-                    }
-                }else{
-                    let idxPval = this.propsToGet.indexOf(p)
-                    let valDate = new Date(propArr[idxPval]).getTime()
-                    if(valDate <= from || valDate >= to){//date column idx specified is outside of range
-                        return false
-                    }
-                }
-            }
-        }
-        if(pass){
-            return true
-        }else{
-            return false
-        }
-
-    }
-    this.done = function(){//really only returns the data since new function will check the query.
-        console.log('Query Done, returning data')
-        let rows = this.rows
-        let added = false, removed = false
-        if(this.type !== 'row'){
-            if(this.reQuery){
-                for (const rowID of rows) {
-                    let propArr = this.data[rowID]
-                    let pass = testRowAgainstQuery(propArr,qParams)
-                    if(pass && arrMap[rowID] === undefined){//add row to output
-                        added = true
-                        let i = output.length
-                        arrMap[rowID] = i
-                        output.push([rowID, pass])
-                    }else if(!pass && allRows.includes(rowID)){//remove row from allRows, last
-                        removed = true
-                        let i = arrMap[rowID]
-                        output.splice(i,1)
-                        delete arrMap[rowID]
-                    }else if(pass){//not added or removed, updated
-                        let i = arrMap[rowID]
-                        output[i][1] = pass
-                    }
-                }
-                if(removed){
-                    let j = 0
-                    for (const el of output) {
-                        let [rowid] = el
-                        arrMap[rowid] = j
-                        j++
-                    }
-                }
-            }else{
-                added = true
-                if(output.length)throw new Error('First query should have no previous output')
-                for (const rowID of rows) {
-                    let propArr = data[rowID]
-                    let pass = testRowAgainstQuery(propArr,qParams)
-                    if(pass){
-                        let i = output.length
-                        arrMap[rowID] = i
-                        output.push([rowID, pass])
-                    }
-                }
-            }
-        }else{//return row
-            output = []
-            for (const rowID of rows) {
-                let propArr = data[rowID]
-                
-                for (const pval of columns) {
-                    let idx = pval.slice(1)
-                    output.push(propArr[idx])
-                }
-            }
-        }
-        if(subscribe){
-            util.setupSub()
-        }
-        if(type === 'row' || added || removed || reQuery){
-            console.log('Returning query to cb on subID: '+subID)
-            userCB.call(this,output,columns)
-        }
-        
-    }
-    this.throwError = function(errmsg){
-        let err = this.err
-        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = error
-        console.log(error)
-        this.userCB.call(this,error)
-    }
-    this.run = function(){
-        if(this.err)return
-        if(this.callStack.length){
-            let [fn, args] = this.callStack[0]
-            this.callStack.shift()
-            this[fn](...args)
-        }else{
-            this.done()
-        }
-    }
-    
-    this.callStack.push(['start',[null]])
-    //current query flow:
-    //get valid range of souls, order them by this.range.dir (in case of items) set this to this.allRows
-    //get one node at a time, validate once all props are received, if pass add to this.rows, check items limit
-    //  going node by node will allow us to implement patter matching a little easier later?
-    
-    
-}
 function addDataToQobj(rowID, pval, data, qObj){
     let idx = pval.slice(1)
     if(!Array.isArray(qObj.data[rowID]))qObj.data[rowID] = []
@@ -1808,47 +3403,6 @@ function addDataToQobj(rowID, pval, data, qObj){
     qObj.data[rowID][idx] = data
     qObj.retrievedCols[rowID].push(pval)
     qObj.isRowDone(rowID)
-}
-function getRowProp(qObj, rowID, pval){//NEEDS UPDATE FOR NEW CACHE, USE getCell???
-    let {b,t,r,i,f} = parseSoul(rowID)
-    let p = pval
-    let dataType = (t) ? getDataType(gb,makeSoul({b,t,p})) : getDataType(gb,makeSoul({b,r,p}))//rowID will only have one or other
-    let propSet = (t) ? makeSoul({b,t,p,i,f}) : makeSoul({b,r,p,i,f})
-    let nodeSoul = (t) ? makeSoul({b,t,i,f}): makeSoul({b,r,i,f})
-    let subname = nodeSoul+'+'+p
-
-    if(dataType === 'set' && !gunSubs[propSet]){//may already be subd from rowprops
-        gun.get(propSet, function(msg,eve){//check for existence only
-            eve.off()
-            qObj.needRows[rowID] = true
-            if(msg.put === undefined){
-                addDataToQobj(rowID,pval,[],qObj)
-            }else{
-                let links = []
-                for (const key in msg.put) {
-                    if(key === '_')continue
-                    const torf = msg.put[key];
-                    if (torf) {//if current link
-                        links.push(key) 
-                    }
-                }
-                addDataToQobj(rowID,pval,links,qObj)
-            }
-        })      
-    }else if(!gunSubs[subname]){
-        gun.get(nodeSoul).get(p, function(msg,eve){//check for existence only
-            eve.off()
-            qObj.needRows[rowID] = true
-            if(msg.put === undefined){
-                addDataToQobj(rowID,pval,null,qObj)
-            }else{
-                addDataToQobj(rowID,pval,msg.put,qObj)
-            }
-        })
-    }else{//do nothing, gun is already subscribed and cache is updating
-        let val = getRowPropFromCache(cachePathFromRowID(rowID,pval),cache)
-        addDataToQobj(rowID,pval,val,qObj)
-    }
 }
 
 
