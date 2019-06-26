@@ -47,6 +47,7 @@ const newNodePropConfig = (config) =>{
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
+    let hidden = config.hidden || false
     let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids
     let allowMultiple = config.allowMultiple || defMulti[propType] || false
     let linksTo = config.linksTo || ""
@@ -60,14 +61,14 @@ const newNodePropConfig = (config) =>{
     let format = config.format || ""
     let pickOptions = config.pickOptions || JSON.stringify([])
     let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
-
+    if(['labels','state'].includes(propType))hidden = true
     if(allowMultiple){
         dataType = 'unorderedSet'
     }else if(autoIncrement){
         dataType = 'number'
     }
 
-    return {alias, archived, deleted, propType, dataType, linksTo, sortval, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple}
+    return {alias, archived, deleted, hidden, propType, dataType, linksTo, sortval, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple}
 }
 const newRelationshipConfig = (config) =>{
     config = config || {}
@@ -82,6 +83,7 @@ const newRelationshipPropConfig = (config) =>{
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
+    let hidden = config.hidden || false
     let propType = config.propType || 'data' //lookup is basically prev, but it is only a one-way link (next is stored as a relation?)
     let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
     let required = config.required || false 
@@ -89,7 +91,8 @@ const newRelationshipPropConfig = (config) =>{
     let format = config.format || ""
     let pickOptions = config.pickOptions || JSON.stringify([])
     let allowMultiple = config.allowMultiple || false
-    return {alias, archived, deleted, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
+    if(['state'].includes(propType))hidden = true
+    return {alias, archived, deleted, hidden, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
 }
 const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
 const validNodePropTypes = ["data", "date", "pickList", "labels", "child", "parent", "lookup", "function", "file"]

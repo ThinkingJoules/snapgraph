@@ -1542,8 +1542,8 @@ function getAllActiveProps(gb, tpath){
     }
     return out.filter(n => n!==undefined)
 }
-function getAllActiveNodeTypes(gb, tpath){
-    let {b} = parseSoul(tpath)
+function getAllActiveNodeTypes(gb, bpath){
+    let {b} = parseSoul(bpath)
     let {props} = getValue(configPathFromChainPath(makeSoul({b})), gb)
     let out = []
     for (const t in props) {
@@ -1554,8 +1554,8 @@ function getAllActiveNodeTypes(gb, tpath){
     }
     return out
 }
-function getAllActiveRelations(gb, tpath){
-    let {b} = parseSoul(tpath)
+function getAllActiveRelations(gb, bpath){
+    let {b} = parseSoul(bpath)
     let {relations} = getValue(configPathFromChainPath(makeSoul({b})), gb)
     let out = []
     for (const t in relations) {

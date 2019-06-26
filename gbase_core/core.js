@@ -958,10 +958,12 @@ function QueryParse(path,qArr){
     this.groupBy = false // || ['userVar',{alias}]
     this.limit = Infinity
     this.skip = 0
+    this.idOnly = false
     this.aliasToID = {} //{!#:{[alias]:pval}}
     this.returning = []
-    this.prevPaths = {}
+    this.pathStrings = new Set()
     this.expand = false
+    this.allNodes = {} //{nodeID: Set{pathString}} this is a reverse lookup for nodes that are passing, pathStrings are they contained in.
     Object.defineProperty(this.aliasToID,'aliasTypes',{
         value: function(alias,isNode){
             let a = Object.entries(this)
@@ -1014,13 +1016,13 @@ function QueryParse(path,qArr){
     Object.defineProperty(this,'leftToRightReturnOrder',{
         get(){
             let order = []
-            let next = this.leftMostThing
+            let curThingVar = this.leftMostThing
             let hasRight
             while (hasRight !== null) {
-                let {toReturn} = this.elements[next]//just take first one
-                if(toReturn)order.push(this.elements[next].userVar)
-                hasRight = this.elements[next].rightThing
-                if(hasRight !== null)next = hasRight.userVar
+                let {toReturn} = this.elements[curThingVar]//just take first one
+                if(toReturn)order.push(this.elements[curThingVar].userVar)
+                hasRight = this.elements[curThingVar].rightThing
+                curThingVar = hasRight && hasRight.userVar || false
             }
             return order
         },
@@ -1028,10 +1030,13 @@ function QueryParse(path,qArr){
     })
     Object.defineProperty(this,'orderIdxMap',{
         get(){
-            let lrOrder = this.leftToRightReturnOrder
             let order = []
-            for (const userVar of lrOrder) {
-                order.push(this.returning.indexOf(userVar))      
+            let curThingVar = this.leftMostThing
+            let hasRight
+            while (hasRight !== null) {
+                order.push(this.elements[curThingVar].userVar)
+                hasRight = this.elements[curThingVar].rightThing
+                curThingVar = hasRight && hasRight.userVar || false
             }
             return order
         },
@@ -1329,7 +1334,8 @@ function QueryParse(path,qArr){
                 sortBy: ['a',['pval1','DESC','pval2','ASC']],
                 groupBy: ['a','pval'],
                 limit: 50,
-                skip: 0
+                skip: 0,
+                idOnly: boolean
             },
             {a:{//<<userVar, Options for returning this particular nodeThing
                 returnAs: {},
@@ -1339,6 +1345,7 @@ function QueryParse(path,qArr){
                 noAdress: false,//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
                 raw: false,//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
                 rawLinks:false//for linked columns, it will attempt to replace with the HumanID
+                idOnly: false //for list building.
                 }
             }]
         */
@@ -1350,6 +1357,7 @@ function QueryParse(path,qArr){
             else if(key === 'groupBy')parseGroup(arg)
             else if(key === 'limit')parseLimit(arg)
             else if(key === 'skip')parseSkip(arg)
+            else if(key === 'idOnly')self.idOnly = !!arg
         }
 
         for (const tArg of thingsArgs) {
@@ -1444,8 +1452,8 @@ function QueryParse(path,qArr){
         if(!nodes && !relationships && !paths)throw new Error('Must specify at least one or more things to return from the expand statement')
 
         let validArgs = ['minLevel','maxLevel','uniqueness','limit','beginSequenceAtStart',
-            'filterStartNode','whiteListNodes','blackListNodes','endNodes','terminationNodes','labelFilter','relationFilter','sequence']
-        let validSkip = ['labelFilter','relationFilter','sequence']
+            'filterStartNode','whiteListNodes','blackListNodes','endNodes','terminationNodes','labelFilter','relationshipFilter','sequence']
+        let validSkip = ['labelFilter','relationshipFilter','sequence']
         for (const arg in configs) {
             if(!validArgs.includes(arg) || validSkip.includes(arg))continue
             const value = configs[arg];
@@ -1550,8 +1558,13 @@ function QueryParse(path,qArr){
                 if(f === '<'){orLabel = orLabel.slice(1);dirs.push(f)}
                 else if(l === '>'){orLabel = orLabel.slice(0,-1);dirs.push(l)}
                 else dirs = ['>','<']
-                let type = lookupID(gb,orLabel,bsoul)
-                return {type,dirs}
+                let types
+                if(orLabel){
+                    types = [lookupID(gb,orLabel,bsoul)]
+                }else{
+                    types = getAllActiveRelations(gb,path)
+                }
+                return {types,dirs}
             }
         }
     
@@ -1898,10 +1911,8 @@ function QueryParse(path,qArr){
 
         
         //traversal
-        this.traversed = new Set()
         this.toCheck = new Set()
-        this.linksToRight = {}
-        this.relations = {} //{relationID:'src' OR 'trgt'}
+        this.traversed = new Set()
         this.passing = {}//things that passed locally (filters,ranges. Nothing todo with connected nodes)
         this.failing = {}
 
@@ -1920,7 +1931,8 @@ function QueryParse(path,qArr){
         this.noID = false//on returnAs object> object.ID = NodeID
         this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
         this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
-        this.rawLinks = false//for linked columns, it will attempt to replace with the HumanID
+        this.rawLabels = false//for label prop, it will replace with the alias
+
         Object.defineProperties(this, {
             leftThing: {
                 get(){
@@ -2034,7 +2046,6 @@ function QueryParse(path,qArr){
         this.noID = false//on returnAs object> object.ID = NodeID
         this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
         this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
-        this.rawLinks = false//for linked columns, it will attempt to replace with the HumanID
 
         Object.defineProperties(this, {
             leftThing: {
@@ -2111,7 +2122,8 @@ function QueryParse(path,qArr){
 }
 function query(path,qParams, cb, opts){
     let {b} = parseSoul(path)
-    const paths = [] //[[nodeID,relationID,nodeID,...etc],[second matching path..]]
+    const pathStrings = qParams.pathStrings
+    const paths = []
     const nodesNeeded = {}
     let preReturn = [] //process paths with sort/group/limit/etc.
     let data = {}
@@ -2120,18 +2132,26 @@ function query(path,qParams, cb, opts){
     const metaOut = result.out
     metaOut.query = qParams.cleanQuery.slice() //what user can pass back in/save as a 'saved' query
     metaOut.parsed = JSON.parse(JSON.stringify(qParams)) //freeze object at creation
+    let {expand} = qParams
     opts = opts || {}
     let {isSub,sVal,checkNodes} = opts
     let reQuery = false
     if(checkNodes && Array.isArray(checkNodes) && checkNodes.length){
         reQuery = true
-        for (const nodeID in checkNodes) {
-            let pvalSet = checkNodes[nodeID]
-            //can be any type, could be relation
-            let {t,r} = parseSoul(nodeID)
-            //all ID's are unique across a base, so only need to see if any nodes have them
-            for (const userVar of qParams.elementRank) {
-                if (qParams.elements.hasOwnProperty(userVar)) {
+        if(qParams.expand){
+            //if it is expand, then we need to see if anything that is created touches/is a node that is currently part of something valid
+            //.passing and .failing are for the sets
+            //must have another list of current nodeIDs (not relations) that are part of expand.
+            //if a new relation comes in, then we need to get it's src & trgt to see if either of them are in the 'active' list
+            //if nothing is touching the nodes that have passed, then stop. else, just start expand over from the top.
+
+        }else{
+            for (const nodeID in checkNodes) {
+                let pvalSet = checkNodes[nodeID]
+                //can be any type, could be relation
+                let {t,r} = parseSoul(nodeID)
+                //all ID's are unique across a base, so only need to see if any nodes have them
+                for (const userVar of qParams.elementRank) {
                     const {types} = qParams.elements[userVar];
                     if(types.includes(t) || types.includes(r)){//add it to the highest scoring match.
                         //check to see if it is on passing/failing
@@ -2150,23 +2170,33 @@ function query(path,qParams, cb, opts){
                         }
                         break
                     }
-                    
                 }
             }
         }
+    }else{
+        startQuery()
     }
 
-    if(reQuery)evaluateNodes()
-    else getIndex()
 
 
+
+
+    function startQuery(){
+        if(reQuery && !expand)evaluateNodes()
+        else if(expand)expandNodes()//same for requery or initial
+        else getIndex()
+    
+    }
+   
     function getIndex(){
         let startVar = qParams.elementRank[0]
         let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes} = qParams.elements[startVar]
         //bestIndex could be one of ['id','range','types','labels']
         switch (bestIndex) {
             case 'id':
-                qParams.elements[startVar].toCheck.add(ID)
+                for (const id of ID) {
+                    qParams.elements[startVar].toCheck.add(ID)
+                }
                 check()
                 break;
             case 'types':
@@ -2265,11 +2295,7 @@ function query(path,qParams, cb, opts){
             }
         }
     }
-    function evaluateNodes(){
-        //could have some nodes to test in any of the userVar's if this is a requery
-        //otherwise there will only be one userVar that has toCheck
-        //either way, our runner needs to be able to start anywhere in the match statement
-        //will need to make a little query object to pass around 
+    function expandNodes(){
         let varsToCheck = qParams.shortestToCheck
         if(!varsToCheck){
             if(!reQuery)cb(result)//only fire cb for empty if it is first call, hopefully we stop here on most requeries (no data changes)
@@ -2277,389 +2303,265 @@ function query(path,qParams, cb, opts){
         }//nothing matched the query, return the result
         metaOut.approach = []
         let openPaths = 0
-        let endNodes = new Set() //for if we want to enforce only DISTINCT end Nodes (right most in match) << Default is enforce DISTINCT
-        for (const startVar of varsToCheck) {
-            metaOut.approach.push('Started with '+startVar+' and traversed '+dir )
-            let thing = qParams.elements[startVar];
-            const {toCheck} = thing
-            for (const nodeID of toCheck) {
-                checkAndTraverse(false,new Path(startVar,nodeID))
-            }
-        }
-        function newPath(curPath,dirParams,startVar,startID){
+        let startVar = varsToCheck[0]
+        let thing = qParams.elements[startVar];
+        let {toCheck,traversed,minLevel,maxLevel,uniqueness,limit,beginSequenceAtStart,filterStartNode,
+        whiteListNodes,blackListNodes,terminationNodes,endNodes,sequence,labelFilter,relationshipFilter,firstRelations} = thing
+        let filterBy = (sequence && 'sequence') || (labelFilter && 'label') || (relationshipFilter && 'relationship')
+
+
+        metaOut.approach.push('Expanded '+startVar )
+        for (const nodeID of toCheck) {
             openPaths++
+            expandNode(false,false,startVar,nodeID)
+        }
+
+
+
+
+        //this is only for doing expand operation
+        function expandNode(curPath,pathParams,startVar,startID){
             curPath = curPath || []
-            let curDir,otherDir,branch
+            let branch
 
-            if(dirParams){//this is a branched path
+            if(pathParams){//this is a branched path
                 branch = true
-                let params = Object.entries(dirParams)
-                let startParams = params.filter(x=>!x[1].done && x[1].curVar)[0] //should be 'left' or 'right', will always have atleast one
-                curDir = startParams[0]//should be 'left' or 'right', will always have atleast one
-                startVar = startParams[1].curVar
-                startID = startParams[1].curID
+                //do stuff??
             }else{
-                dirParams = {
-                    left:{done:!qParams[startVar].leftThing,curVar:'',curID:'',max:1,depth:0,loop:false},
-                    right:{done:!qParams[startVar].rightThing,curVar:'',curID:'',max:1,depth:0,loop:false}
+                //on first call, depth 0, we need to setup our pathParams, maybe do a new Path() obj?
+                //pathParams will need to carry all of the info about whether to continue the path or not.
+
+                pathParams = {
+                    depth:0,
+                    left:{done:!qParams[startVar].leftThing,curVar:'',curID:''},
+                    right:{done:!qParams[startVar].rightThing,curVar:'',curID:''},
+                    rTraversed: new Set()
                 }
             }
-            let thing = qParams[startVar]
-            let {leftScore, rightScore, isNode, notDistinct} = thing//notDistinct is not yet implemented
-            if(!branch){//for first call
-                curDir = (leftScore < rightScore) ? 'right' : 'left'
-                dirParams[curDir].curVar = startVar
-                dirParams[curDir].curID = startID
+            let {b,t,r,i} = parseSoul(node)
+            let thingType = makeSoul({b,t,r})
+            let isNode = !!t
+            
+            checkID()
+            function checkID(){
+                // if(isNode){//checking created date in ID
+                //     let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
+                //     if(hasCreated){
+                //         let [id,createdUnix] = i.split('_')
+                //         let {from,to} = hasCreated
+                //         if(createdUnix<from || createdUnix>to){localDone(false); return}
+                //     } 
+                // }
+                // if(thing.ID.length){//in case we are requerying, a list of ID's is basically a filter on IDs, this is the filter
+                //     if(!thing.ID.includes(startID)){
+                //         localDone(false)
+                //         return
+                //     }
+                // }
+                let typeID = t || r
+                if(!thing.types.includes(typeID)){
+                    localDone(false)
+                    return
+                }
+                checkState()
             }
-            otherDir = (curDir === 'right') ? 'left' : 'right'//might already be done, but his way we can check easily
-
-
-
-            function checkLocal(thisVar,thisID){
-                let isNode = !!parseSoul(thisID).t
-                if(!isNode && thing.rTraversed.has(thisID)){
-                    pathO.failed = true
-                    //return? how do we know openPaths number is accurate... this is hard..
-                }
-                let thing = qParams.elements[thisVar];
-                let {pathLength,pathLengthRange} = thing //if looping this will be the relationThing
-                if(pathO[dir].loop && isNode && dir){
-                    thing = thing[dir+'Thing']//get the node to the next dir to use it's filters
-                }
-                const {ranges,filter,filterProps} = thing //if looping thing it reassigned to be a nodeThing
-                let {b,t,r,i} = parseSoul(node)
-                let thingType = makeSoul({b,t,r})
-                let pvals = new Set()
-                checkID()
-                function checkID(){
-                    if(isNode){
-                        let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
-                        if(hasCreated){
-                            let {i} = parseSoul(thisID)
-                            let [id,createdUnix] = i.split('_')
-                            let {from,to} = hasCreated
-                            if(createdUnix<from || createdUnix>to){localDone(false); return}
-                        } 
+            function checkState(){
+                //see if node is current
+                let [statePval] = hasPropType(gb,thingType,'state')
+                pvals.add(statePval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
+                getCell(startID,statePval,function(state){
+                    if(state !=='active'){
+                        localDone(false)
+                    }else{
+                        if(isNode)checkLabels()
+                        else checkRange()
                     }
-                    if(thing.ID.length){
-                        if(!thing.ID.includes(thisID)){
+                },true)
+            }
+            function checkLabels(){
+                let [labelsPval] = hasPropType(gb,thingType,'labels')
+                pvals.add(labelsPval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
+                if(!thing.labels.length && !thing.not.length){//skip retrieval if nothing to check
+                    checkRange()
+                    return
+                }
+                getCell(startID,labelsPval,function(curLabelsArr){
+                    for (const andLabel of thing.labels) {//ALL labels it must have
+                        if(!curLabelsArr.includes(andLabel)){
                             localDone(false)
+                            return
+                        }
+                    }
+                    for (const notLabel of thing.not) {//ALL labels it cannot have
+                        if(curLabelsArr.includes(notLabel)){
+                            localDone(false)
+                            return
                         }
                     }
                     checkRange()
-                }
-                function checkRange(){
-                    let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
-                    let toGet = propRanges.length
-                    if(!toGet){checkFilter();return}
-                    let values = []
-                    for (const range of propRanges) {
-                        let {from,to,alias} = range
-                        let p = qParams.aliasToID.id(thisID,alias)
-                        pvals.add(p)
-                        if(p===undefined){
-                            console.warn('Cannot find '+alias+' for '+thisID+' ---considered not passing---')
-                            localDone(false)
-                            return
-                        }//?? undefined is basically out of range? node does not have this property?
-                        getCell(thisID,p,function(value){
-                            values.push([from,value,to])
-                            toGet--
-                            if(!toGet){verifyRanges();return}
-                        },true)
-                    }
-                    function verifyRanges(){
-                        let fail = values.filter(a=>{
-                            let [from,value,to] = a
-                            return (from>value || value>to)
-                        })
-                        if(fail.length){localDone(false);return}
-                        checkFilter()
-                    }
-                }
-                function checkFilter(){
-                    let toGet = filterProps.length
-                    if(!toGet){traverse();return}
-                    let values = {}
-                    for (const alias of filterProps) {
-                        let p = qParams.aliasToID.id(thisID,alias)
-                        pvals.add(p)
-                        if(p===undefined){
-                            console.warn('Cannot find '+alias+' for '+thisID+' ---considered not passing---')
-                            localDone(false)
-                            return
-                        }//?? undefined is basically a fail? node does not have this property?
-                        getCell(thisID,p,function(value){
-                            values[alias] = value
-                            toGet--
-                            if(!toGet){verifyFilter();return}
-                        },true)
-                    }
-                    function verifyFilter(){
-                        let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
-                            let alias = ($1!==undefined) ? $1 : $2
-                            return values[alias]
-                        })
-                        let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
-                        if(!passed)localDone(false)
-                        else if(!isNode) checkState()
-                        else localDone(true)
-                    }
-                }
-                function checkState(){
-                    //see if relationship is current
-                    let [statePval] = hasPropType(gb,thingType,'state')
-                    pvals.add(statePval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
-                    getCell(thisID,statePval,function(state){
-                        if(state !=='active'){
-                            localDone(false)
-                        }
+                },true)
+            }
+
+
+
+            function checkRange(){
+                let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
+                let toGet = propRanges.length
+                if(!toGet){checkFilter();return}
+                let values = []
+                for (const range of propRanges) {
+                    let {from,to,alias} = range
+                    let p = qParams.aliasToID.id(startID,alias)
+                    pvals.add(p)
+                    if(p===undefined){
+                        console.warn('Cannot find '+alias+' for '+startID+' ---considered not passing---')
+                        localDone(false)
+                        return
+                    }//?? undefined is basically out of range? node does not have this property? User passed invalid alias?
+                    getCell(startID,p,function(value){
+                        values.push([from,value,to])
+                        toGet--
+                        if(!toGet){verifyRanges();return}
                     },true)
                 }
-                function localDone(passed){
-                    if(!passed){
-                        pathO.failed = true
-                        delete qParams.elements[thisVar].passing[thisID]
-                        qParams.elements[thisVar].failing[thisID] = pvals
-                        //TODO!! check prevPaths to see if it was used in anything
-    
-    
-                        return
-                    }
-                    qParams.elements[thisVar].passing[thisID] = pvals
-                    delete qParams.elements[thisVar].failing[thisID]
-    
-                    if(!dir){
-                        dir = 'right'
-                        traverse('left')//run traverse twice, to start other dir on first call
-                    }
-                    let op = (dir === 'right') ? 'push' : 'unshift'
-                    pathO.result[op]({userVar:thisVar,id:thisID})
-                    traverse(dir)
+                function verifyRanges(){
+                    let fail = values.filter(a=>{
+                        let [from,value,to] = a
+                        return (from>value || value>to)
+                    })
+                    if(fail.length){localDone(false);return}
+                    checkFilter()
                 }
             }
-            function checkAndTraverse(dir,pathO){
-                if(pathO.failed){
+            function checkFilter(){
+                let toGet = filterProps.length
+                if(!toGet){localDone(true);return}
+                let values = {}
+                for (const alias of filterProps) {
+                    let p = qParams.aliasToID.id(startID,alias)
+                    pvals.add(p)
+                    if(p===undefined){
+                        console.warn('Cannot find '+alias+' for '+startID+' ---considered not passing---')
+                        localDone(false)
+                        return
+                    }//?? undefined is basically a fail? node does not have this property?
+                    getCell(startID,p,function(value){
+                        values[alias] = value
+                        toGet--
+                        if(!toGet){verifyFilter();return}
+                    },true)
+                }
+                function verifyFilter(){
+                    let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
+                        let alias = ($1!==undefined) ? $1 : $2
+                        return values[alias]
+                    })
+                    let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
+                    if(!passed)localDone(false)
+                    else localDone(true)
+                }
+            }
+
+
+
+            function localDone(passed){
+                if(!passed){
+                    delete qParams.elements[startVar].passing[startID]
+                    qParams.elements[startVar].failing[startID] = pvals
+                    //TODO!! check prevPaths to see if it was used in anything
+
                     openPaths--
                     return
                 }
-                let thisID = (!dir) ? pathO.startID : pathO[dir].curID
-                let thisVar = (!dir) ? pathO.startVar : pathO[dir].curVar
-                let isNode = !!parseSoul(thisID).t
-                if(!isNode && thing.rTraversed.has(thisID)){
-                    pathO.failed = true
-                    //return? how do we know openPaths number is accurate... this is hard..
-                }
-                let thing = qParams.elements[thisVar];
-                let {pathLength,pathLengthRange} = thing //if looping this will be the relationThing
-                if(pathO[dir].loop && isNode && dir){
-                    thing = thing[dir+'Thing']//get the node to the next dir to use it's filters
-                }
-                const {ranges,filter,filterProps} = thing //if looping thing it reassigned to be a nodeThing
-                let {b,t,r,i} = parseSoul(node)
-                let thingType = makeSoul({b,t,r})
-                let pvals = new Set()
-                checkID()
-                function checkID(){
-                    if(isNode){
-                        let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
-                        if(hasCreated){
-                            let {i} = parseSoul(thisID)
-                            let [id,createdUnix] = i.split('_')
-                            let {from,to} = hasCreated
-                            if(createdUnix<from || createdUnix>to){localDone(false); return}
-                        } 
-                    }
-                    if(thing.ID.length){
-                        if(!thing.ID.includes(thisID)){
-                            localDone(false)
-                        }
-                    }
-                    checkRange()
-                }
-                function checkRange(){
-                    let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
-                    let toGet = propRanges.length
-                    if(!toGet){checkFilter();return}
-                    let values = []
-                    for (const range of propRanges) {
-                        let {from,to,alias} = range
-                        let p = qParams.aliasToID.id(thisID,alias)
-                        pvals.add(p)
-                        if(p===undefined){
-                            console.warn('Cannot find '+alias+' for '+thisID+' ---considered not passing---')
-                            localDone(false)
-                            return
-                        }//?? undefined is basically out of range? node does not have this property?
-                        getCell(thisID,p,function(value){
-                            values.push([from,value,to])
-                            toGet--
-                            if(!toGet){verifyRanges();return}
-                        },true)
-                    }
-                    function verifyRanges(){
-                        let fail = values.filter(a=>{
-                            let [from,value,to] = a
-                            return (from>value || value>to)
-                        })
-                        if(fail.length){localDone(false);return}
-                        checkFilter()
-                    }
-                }
-                function checkFilter(){
-                    let toGet = filterProps.length
-                    if(!toGet){traverse();return}
-                    let values = {}
-                    for (const alias of filterProps) {
-                        let p = qParams.aliasToID.id(thisID,alias)
-                        pvals.add(p)
-                        if(p===undefined){
-                            console.warn('Cannot find '+alias+' for '+thisID+' ---considered not passing---')
-                            localDone(false)
-                            return
-                        }//?? undefined is basically a fail? node does not have this property?
-                        getCell(thisID,p,function(value){
-                            values[alias] = value
-                            toGet--
-                            if(!toGet){verifyFilter();return}
-                        },true)
-                    }
-                    function verifyFilter(){
-                        let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
-                            let alias = ($1!==undefined) ? $1 : $2
-                            return values[alias]
-                        })
-                        let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
-                        if(!passed)localDone(false)
-                        else if(!isNode) checkState()
-                        else localDone(true)
-                    }
-                }
-                function checkState(){
-                    //see if relationship is current
-                    let [statePval] = hasPropType(gb,thingType,'state')
-                    pvals.add(statePval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
-                    getCell(thisID,statePval,function(state){
-                        if(state !=='active'){
-                            localDone(false)
-                        }
-                    },true)
-                }
-                function localDone(passed){
-                    if(!passed){
-                        pathO.failed = true
-                        delete qParams.elements[thisVar].passing[thisID]
-                        qParams.elements[thisVar].failing[thisID] = pvals
-                        //TODO!! check prevPaths to see if it was used in anything
-    
-    
+                qParams.elements[startVar].passing[startID] = pvals
+                delete qParams.elements[startVar].failing[startID]
+
+                let op = (dir === 'right') ? 'push' : 'unshift'
+                curPath[op]({userVar:startVar,id:startID})
+                traverse(dir)
+            }
+            function traverse(){
+                let nextThing = thing[dir+'Thing']
+                let toTraverse = []
+                if(isNode){
+                    let [rTypes,signs] = thing.validRelations(dir) || []
+                    if(!rTypes){//
+                        dirDone()
                         return
                     }
-                    qParams.elements[thisVar].passing[thisID] = pvals
-                    delete qParams.elements[thisVar].failing[thisID]
-    
-                    if(!dir){
-                        dir = 'right'
-                        traverse('left')//run traverse twice, to start other dir on first call
-                    }
-                    let op = (dir === 'right') ? 'push' : 'unshift'
-                    pathO.result[op]({userVar:thisVar,id:thisID})
-                    traverse(dir)
-                }
-                function traverse(dir){
-                    let {max,depth,done,curVar,loop} = pathO[dir]
-                    let nextThing = thing[dir+'Thing']
-                    let toTraverse = []
-                    if(isNode){
-                        let [rTypes,signs] = thing.validRelations(dir) || []
-                        if(!rTypes || (depth <= max && nextThing === null) || done){//
-                            dirDone()
-                            return
-                        }else if(loop && depth === max){
-                            pathO[dir].loop = false
-                            pathO[dir].depth = 0
-                            pathO[dir].max = 1
-                        }
-                        let toGet = rTypes.length
-                        for (const rid of rTypes) {
-                            let linkSoul = makeSoul({b,t,r:rid,i})
-                            gun.get(linkSoul).once(function(linkNode){
-                                toGet--
-                                if(linkNode !== undefined){
-                                    for (const linkAndDir in linkNode) {
-                                        const boolean = linkNode[linkAndDir];
-                                        if(linkAndDir === '_' || !boolean)continue
-                                        let [sign,relationID] = linkAndDir.split(',')
-                                        if(signs.includes(sign)){
-                                            toTraverse.push(relationID)
-                                        }
+                    let toGet = rTypes.length
+                    for (const rid of rTypes) {
+                        let linkSoul = makeSoul({b,t,r:rid,i})
+                        gun.get(linkSoul).once(function(linkNode){
+                            toGet--
+                            if(linkNode !== undefined){
+                                for (const linkAndDir in linkNode) {
+                                    const boolean = linkNode[linkAndDir];
+                                    if(linkAndDir === '_' || !boolean)continue
+                                    let [sign,relationID] = linkAndDir.split(',')
+                                    if(signs.includes(sign)){
+                                        toTraverse.push(relationID)
                                     }
                                 }
-                                if(!toGet)attemptTraversal()
-                            })
-    
-                        }
-                        //need to know what relationsTypes and src/trgt sign to look for
-                        //then just see what this has and add matches to both nextThing.toCheck and thisThing.left/rightPotentials.src/trgt = relation ID
-                    }else{
-                        //in loop
-                        //passing through
-                        if(!pathO[dir].loop && pathLengthRange !== 0){//not in a loop, so see if this relation has loop params
-                            pathO[dir].loop = true
-                            pathO[dir].depth = 0
-                            pathO[dir].max = pathLength + pathLengthRange
-                        }
-                        if(pathO[dir].loop){//we are already or just started in a loop, so we need to increment depth
-                            pathO[dir].depth++ //depth defaults to 0, each relation is +1 depth
-                        }
-                        let [p] = hasPropType(gb,thingType,thing[dir+'Is'])
-                        //technically if this is undirected, I think it we should branch our path again, and navigate this dir with both src and trgt ids...
-                        //not doing that now, just going to have bidirectional paths show as a single path in results
-                        getCell(thisID,p,function(nodeid){
-                            toTraverse.push(nodeid)
-                            attemptTraversal()
-                        },true)
-                    }
-                    function attemptTraversal(){
-                        if(!toTraverse.length){
-                            dirDone()//should only be called if a node doesn't have any valid relations to continue on.
-                            //can only get here if depth < maxDepth but node can't find any more valids to continue on.
-                            return
-                        }
-                        let {loop,depth,max} =  pathO[dir]
-                        let uVar = (loop) ? curVar : nextThing.userVar
-                        for (const id of toTraverse) {
-                            if(isNode){
-                                checkAndTraverse(dir,new Path(uVar,id,pathO,dir))
-                                openPaths++
-                            }else{//should only be a single id in this array
-                                pathO[dir].curVar = uVar
-                                pathO[dir].curID = id
-                                checkAndTraverse(dir,pathO)
                             }
-                        }
-                        if(loop && isNode && depth >= pathLength && depth <= max){
-                            dirDone()//we need to end this particular path dir since, it is a valid result
+                            if(!toGet)attemptTraversal()
+                        })
+
+                    }
+                }else{
+                    let [p] = hasPropType(gb,thingType,thing[dir+'Is'])//looking for source/target pval
+                    //technically if this is undirected, I think it we should branch our path again, and navigate this dir with both src and trgt ids...
+                    //not doing that now, just going to have bidirectional paths show as a single path in results
+                    getCell(thisID,p,function(nodeid){
+                        toTraverse.push(nodeid)
+                        attemptTraversal()
+                    },true)
+                }
+                function attemptTraversal(){
+                    if(!toTraverse.length){
+                        dirDone()//should only be called if a node doesn't have any valid relations to continue on.
+                        //can only get here if depth < maxDepth but node can't find any more valids to continue on.
+                        return
+                    }
+                    let {loop,depth,max} =  pathO[dir]
+                    let uVar = (loop) ? curVar : nextThing.userVar
+                    for (const id of toTraverse) {
+                        if(isNode){
+                            checkAndTraverse(dir,new Path(uVar,id,pathO,dir))
+                            openPaths++
+                        }else{//should only be a single id in this array
+                            pathO[dir].curVar = uVar
+                            pathO[dir].curID = id
+                            checkAndTraverse(dir,pathO)
                         }
                     }
-                    function dirDone(){
-                        pathO[dir].done = true
-                        let otherDir = (dir === 'left') ? 'right' : 'left'
-                        if(pathO[otherDir].done){
-                            openPaths--
-                            //add to paths array that we will be using to assembleOutput
-    
-    
-                            if(!openPaths){
-                                assmebleOutput()//Everything has been checked
-                            }
+                    if(loop && isNode && depth >= pathLength && depth <= max){
+                        dirDone()//we need to end this particular path dir since, it is a valid result
+                    }
+                }
+                function dirDone(){
+                    pathO[dir].done = true
+                    let otherDir = (dir === 'left') ? 'right' : 'left'
+                    if(pathO[otherDir].done){
+                        openPaths--
+                        //add to paths array that we will be using to assembleOutput
+
+
+                        if(!openPaths){
+                            assmebleOutput()//Everything has been checked
                         }
                     }
                 }
-                
             }
         }
-        function Path(startVar,startID,copy,dir){
+
+
+
+
+
+
+
+        function Path(startVar,startID,copy){
             if(copy instanceof Path){//copy a path for branching
                 this.startVar = copy.startVar
                 this.startID = copy.startID
@@ -2680,7 +2582,7 @@ function query(path,qParams, cb, opts){
             }
             
         }
-        function checkAndTraverse(dir,pathO){
+        function oldcheckAndTraverse(dir,pathO){
             if(pathO.failed){
                 openPaths--
                 return
@@ -2899,61 +2801,323 @@ function query(path,qParams, cb, opts){
                 }
             }
             
-        }  
+        }
+
+
+
+    }
+    function evaluateNodes(){
+
+        //this is only for match pattern w/ normal return
+
+        //could have some nodes to test in any of the userVar's if this is a requery
+        //otherwise there will only be one userVar that has toCheck
+        //either way, our runner needs to be able to start anywhere in the match statement
+        //will need to make a little query object to pass around 
+        let varsToCheck = qParams.shortestToCheck
+        if(!varsToCheck){
+            if(!reQuery)cb(result)//only fire cb for empty if it is first call, hopefully we stop here on most requeries (no data changes)
+            return
+        }//nothing matched the query, return the result
+        metaOut.approach = []
+        let openPaths = 0
+        for (const startVar of varsToCheck) {
+            metaOut.approach.push('Started with '+startVar+' and traversed '+dir )
+            let thing = qParams.elements[startVar];
+            const {toCheck} = thing
+            for (const nodeID of toCheck) {
+                openPaths++
+                checkAndTraverse(false,false,startVar,nodeID)
+            }
+        }
+        function checkAndTraverse(curPath,pathParams,startVar,startID){
+            curPath = curPath || []
+            let dir,otherDir,branch
+
+            if(pathParams){//this is a branched path
+                branch = true
+                dir = pathParams.curDir
+                startVar = pathParams[dir].curVar
+                startID = pathParams[dir].curID
+            }else{
+                const dirParams = (leftOrRight) =>{ return {done:!qParams[startVar][leftOrRight+'Thing'],curVar:startVar,curID:startID}} //both are the same at the start
+                dir = (qParams[startVar].leftScore < qParams[startVar].rightScore) ? 'right' : 'left'
+                pathParams = {
+                    startVar,
+                    startID,
+                    left:dirParams('left'),
+                    right:dirParams('right'),
+                    curDir = dir,
+                    rTraversed: new Set()
+
+                }
+            }
+            let thing = qParams[startVar]
+            let {b,t,r,i} = parseSoul(node)
+            let thingType = makeSoul({b,t,r})
+            let {isNode} = thing//notDistinct is not yet implemented
+            otherDir = (dir === 'right') ? 'left' : 'right'//might already be done, but his way we can check easily
+            if(!isNode && pathParams.rTraversed.has(startID)){
+                openPaths--
+                return
+            }
+            let pvals = new Set()
+            if(branch && startVar === pathParams.startVar){//for starting over in the middle of the match but evaluating in other dir
+                traverse()
+            }else{
+                checkID()
+            }
+            function checkID(){
+                if(isNode){//checking created date in ID
+                    let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
+                    if(hasCreated){
+                        let [id,createdUnix] = i.split('_')
+                        let {from,to} = hasCreated
+                        if(createdUnix<from || createdUnix>to){localDone(false); return}
+                    } 
+                }
+                if(thing.ID.length){//in case we are requerying, a list of ID's is basically a filter on IDs, this is the filter
+                    if(!thing.ID.includes(startID)){
+                        localDone(false)
+                        return
+                    }
+                }
+                let typeID = t || r
+                if(!thing.types.includes(typeID)){
+                    localDone(false)
+                    return
+                }
+                checkState()
+            }
+            function checkState(){
+                //see if node is current
+                let [statePval] = hasPropType(gb,thingType,'state')
+                pvals.add(statePval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
+                getCell(startID,statePval,function(state){
+                    if(state !=='active'){
+                        localDone(false)
+                    }else{
+                        if(isNode)checkLabels()
+                        else checkRange()
+                    }
+                },true)
+            }
+            function checkLabels(){
+                let [labelsPval] = hasPropType(gb,thingType,'labels')
+                pvals.add(labelsPval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
+                if(!thing.labels.length && !thing.not.length){//skip retrieval if nothing to check
+                    checkRange()
+                    return
+                }
+                getCell(startID,labelsPval,function(curLabelsArr){
+                    for (const andLabel of thing.labels) {//ALL labels it must have
+                        if(!curLabelsArr.includes(andLabel)){
+                            localDone(false)
+                            return
+                        }
+                    }
+                    for (const notLabel of thing.not) {//ALL labels it cannot have
+                        if(curLabelsArr.includes(notLabel)){
+                            localDone(false)
+                            return
+                        }
+                    }
+                    checkRange()
+                },true)
+            }
+            function checkRange(){
+                let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
+                let toGet = propRanges.length
+                if(!toGet){checkFilter();return}
+                let values = []
+                for (const range of propRanges) {
+                    let {from,to,alias} = range
+                    let p = qParams.aliasToID.id(startID,alias)
+                    pvals.add(p)
+                    if(p===undefined){
+                        console.warn('Cannot find '+alias+' for '+startID+' ---considered not passing---')
+                        localDone(false)
+                        return
+                    }//?? undefined is basically out of range? node does not have this property? User passed invalid alias?
+                    getCell(startID,p,function(value){
+                        values.push([from,value,to])
+                        toGet--
+                        if(!toGet){verifyRanges();return}
+                    },true)
+                }
+                function verifyRanges(){
+                    let fail = values.filter(a=>{
+                        let [from,value,to] = a
+                        return (from>value || value>to)
+                    })
+                    if(fail.length){localDone(false);return}
+                    checkFilter()
+                }
+            }
+            function checkFilter(){
+                let toGet = filterProps.length
+                if(!toGet){localDone(true);return}
+                let values = {}
+                for (const alias of filterProps) {
+                    let p = qParams.aliasToID.id(startID,alias)
+                    pvals.add(p)
+                    if(p===undefined){
+                        console.warn('Cannot find '+alias+' for '+startID+' ---considered not passing---')
+                        localDone(false)
+                        return
+                    }//?? undefined is basically a fail? node does not have this property?
+                    getCell(startID,p,function(value){
+                        values[alias] = value
+                        toGet--
+                        if(!toGet){verifyFilter();return}
+                    },true)
+                }
+                function verifyFilter(){
+                    let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
+                        let alias = ($1!==undefined) ? $1 : $2
+                        return values[alias]
+                    })
+                    let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
+                    if(!passed)localDone(false)
+                    else localDone(true)
+                }
+            }
+
+            function localDone(passed){
+                if(!passed){
+                    delete qParams.elements[startVar].passing[startID]
+                    qParams.elements[startVar].failing[startID] = pvals
+                    //TODO!! check prevPaths to see if it was used in anything
+                    let wasIn = qParams.allNodes[startID] //undefined || Set{pathStrings}
+                    if(wasIn){//this was passing, and was in some path(s)
+                        for (const nowInvalidPathStr of wasIn) {
+                            qParams.pathStrings.remove(nowInvalidPathStr)
+                        }
+                    }
+                    openPaths--
+                    return
+                }
+                qParams.elements[startVar].passing[startID] = pvals
+                delete qParams.elements[startVar].failing[startID]
+
+                let op = (dir === 'right') ? 'push' : 'unshift'
+                curPath[op](startID)
+                traverse()
+            }
+            function traverse(){
+                let nextThing = thing[dir+'Thing']
+                let toTraverse = []
+                if(isNode){
+                    let [rTypes,signs] = thing.validRelations(dir) || []
+                    if(nextThing === null){//must have nextThing === null to consider dirDone
+                        dirDone()
+                        return
+                    }else if(!rTypes){//should have a next, but nothing valid to get (bad query?)
+                        openPaths--
+                        return
+                    }
+                    let toGet = rTypes.length
+                    for (const rid of rTypes) {
+                        let linkSoul = makeSoul({b,t,r:rid,i})
+                        gun.get(linkSoul).once(function(linkNode){
+                            toGet--
+                            if(linkNode !== undefined){
+                                for (const linkAndDir in linkNode) {
+                                    const boolean = linkNode[linkAndDir];
+                                    if(linkAndDir === '_' || !boolean)continue
+                                    let [sign,relationID] = linkAndDir.split(',')
+                                    if(signs.includes(sign)){
+                                        toTraverse.push(relationID)
+                                    }
+                                }
+                            }
+                            if(!toGet)attemptTraversal()
+                        })
+
+                    }
+                }else{
+                    let [p] = hasPropType(gb,thingType,thing[dir+'Is'])//looking for source/target pval
+                    //technically if this is undirected, I think it we should branch our path again, and navigate this dir with both src and trgt ids...
+                    //not doing that now, just going to have bidirectional paths show as a single path in results
+                    getCell(startID,p,function(nodeid){
+                        toTraverse.push(nodeid)
+                        attemptTraversal()
+                    },true)
+                }
+                function attemptTraversal(){
+                    if(!toTraverse.length){
+                        openPaths--//should have had more links to get, which means this doesn't match the pattern
+                        return
+                    }
+                    pathParams[dir].curVar = nextThing.userVar
+                    let copyParams = JSON.parse(JSON.stringify(pathParams))
+                    let copyPath = JSON.parse(JSON.stringify(curPath))
+                    for (const id of toTraverse) {
+                        if(isNode){//currently a node, will be traversing relationships
+                            let newParams = Object.assign({},copyParams,{[dir]:{curID:id}})
+                            checkAndTraverse(copyPath,newParams)//we branch and create a new path
+                            openPaths++
+                        }else{//should only be a single id in this array, we are on a relationship getting a nodeID
+                            pathParams[dir].curID = id //we don't copy anything, because a path can only end on a node.
+                            checkAndTraverse(curPath,pathParams)
+                            thing.rTraversed.add(id)//can only traverse a relationID once per query (should prevent circular?)
+                            //we also not opening a new path, since we are in the 'middle' of evaluating this one.
+                        }
+                    }
+                    if(isNode)openPaths--//since we branched n times, techically this particular path has ended (but it spawned a bunch more potentials)
+                    
+                }
+                function dirDone(){
+                    pathparams[dir].done = true
+                    if(pathParams[otherDir].done){
+                        openPaths--
+                        //add to paths array that we will be using to assembleOutput
+                        //need to make sure the path is unique..., or atleast does not duplicate a path in the output
+                        pathStrings.add(JSON.stringify(curPath))
+                        if(!openPaths){
+                            assmebleOutput()//Everything has been checked, all possible paths have been evaluated (given the starting)
+                        }
+                    }else{//started in the middle, need to verify other half
+                        //we are not starting a new path, as we are continuing the current path
+                        pathParams.curDir = otherDir
+                        checkAndTraverse(curPath,pathParams)
+
+                    }
+                }
+            }
+        }
     }
     function assmebleOutput(){
         //need to build all paths that are valid
         //if there is a sort, need to sort all the paths by the sortVal
         //if there is a limit/skip, we need to only grab the sub-list
         //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
-        //when do we apply group?
+        //when do we apply group? Don't, group is up to user
 
-
-        //buildPaths first put in paths
-        let startVar = qParams.leftMostThing //this will alway be a node
-        let {passing} = qParams[startVar]
-        for (const id of passing) {
-            buildPath(startVar,id)
-        }
         let {sortBy,limit,skip,returning} = qParams
+        buildPaths()
         buildPreReturn()
         
-        function buildPath(userVar,nodeID,prePath){
-            prePath = prePath || [] //first call creates a new row
-            let thing = qParams[userVar]
-            let {toReturn, isNode, linksToRight} = thing
-            if(toReturn)prePath.push([userVar,nodeID])
-            
-
-            let rThing = thing.rightThing
-            if(rThing !== null){
-                if(isNode){
-                    let links = linksToRight[nodeID]
-                    for (const link in links) {
-                        if(rThing.passing.has(link)){
-                            buildPath(rThing.userVar,link,prePath.slice())
-                        }
-                    }
-                }else{
-                    let link = linksToRight[nodeID]
-                    if(rThing.passing.has(link)){
-                        buildPath(rThing.userVar,link,prePath)
-                    }
-                }
-            }else{
+        function buildPaths(){
+            qParams.allNodes = {} //clear all nodes for each requery.
+            for (const pathStr of pathStrings) {
+                let pathArr = JSON.parse(pathStr)
                 let sorted = []
+                let pathOrder = qParams.orderIdxMap
+                
                 let i = 0
-                for (const [uVar,id] of prePath) {
-                    let newIdx = qParams.orderIdxMap[i]
-                    sorted[newIdx] = id
-                    if(!nodesNeeded[id])nodesNeeded[id] = {}
-                    nodesNeeded[id].userVar = uVar
+                for (const id of pathArr) {
+                    if(!qParams.allNodes[id])qParams.allNodes[id] = new Set()
+                    qParams.allNodes[id].add(pathStr)//add this path to paths that use this id
+                    let newIdx = returning.indexOf(pathOrder[i])
                     i++
+                    if(newIdx === -1)continue
+                    sorted[newIdx] = id
                 }
                 paths.push(sorted)
-                //we made it to the end of the pattern
-                //whatever prePath is, we need to sort to match the return order user specified and add to paths
             }
+            
+            //whatever paths is, we need to sort to match the return order user specified and add to paths
         }
         function buildPreReturn(){
             let beforeSkipLimit = []
@@ -2963,11 +3127,10 @@ function query(path,qParams, cb, opts){
                 return
             }
             let [sortUserVar,...sortArgs] = sortBy
-            let returnIdx = qParams.returning.indexOf(sortUserVar)
-            let i = 0
             let sortProps = sortArgs.map(x=>x.alias)
-            let sortDirs = sortArgs.map(x=>x.dir)
+            let returnIdx = qParams.returning.indexOf(sortUserVar)
             let toGet = paths.length
+            let i = 0
             for (const path of paths) {
                 if(!Array.isArray(sortArr[i]))sortArr[i] = [i,[]]
                 let node = path[returnIdx]
@@ -2999,10 +3162,10 @@ function query(path,qParams, cb, opts){
                     beforeSkipLimit = paths
                     //no sortBy
                 }else{
-                    sortArr.sort(compareSubArr(sortDirs))
+                    sortArr.sort(compareSubArr(sortArgs.map(x=>x.dir)))
                     let i = 0
                     for (const [originalIdx] of sortArr) {
-                        beforeSkipLimit[i] = paths[originalIdx]
+                        beforeSkipLimit[i] = pathStrings[originalIdx]
                         i++
                     }
                     //forof sortArr, and use the idx value to add to 'beforeSkipLimit' in new order
@@ -3028,7 +3191,7 @@ function query(path,qParams, cb, opts){
                                 }
                             }
                             return (
-                                (order == 'dsc') ? (comparison * -1) : comparison
+                                (order == 'DESC') ? (comparison * -1) : comparison
                                 );
                         }
                     }
@@ -3041,10 +3204,25 @@ function query(path,qParams, cb, opts){
             }
             function applySkipLimit(){
                 if(limit > beforeSkipLimit.length)limit=beforeSkipLimit.length
-                if(skip === 0 && limit === beforeSkipLimit.length){//no skip or limit
+                if(skip === 0 && limit === beforeSkipLimit.length){//no skip or limit, avoid the copy
                     preReturn = beforeSkipLimit
                 }else{
                     preReturn = beforeSkipLimit.slice(skip,limit)
+                }
+                if(qParams.idOnly){//only want ids for things, not the things themselves; ie list making, or user is doing serial queries
+                    for (const path of preReturn) {
+                        result.push(path)
+                    }
+                    returnResult()
+                    return
+                }
+                for (const result of preReturn) {//get ID's for only the things we are returning
+                    let j = 0
+                    for (const id of result) {
+                        if(!nodesNeeded[id])nodesNeeded[id] = {}
+                        nodesNeeded[id].userVar = returning[j]
+                        j++
+                    }
                 }
                 buildResults()
             }
@@ -3055,7 +3233,7 @@ function query(path,qParams, cb, opts){
             let nodesToGet = Object.keys(nodesNeeded).length
             for (const nodeID in nodesNeeded) {
                 let {userVar} = nodesNeeded[nodeID]
-                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLinks} = qParams[userVar]
+                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLabels} = qParams[userVar]
                 let propsToGet = props.length
                 const nodeObj = (returnAsArray) ? [] : {}
                 if(!noID)Object.defineProperty(nodeObj,'id',{value: nodeID})
@@ -3074,70 +3252,31 @@ function query(path,qParams, cb, opts){
                         if(!noAddress){
                             nodeObj.address[property] = fullPath
                         }
-                        let {propType,dataType} = getValue(configPathFromChainPath(fullPath),gb)
-                        if(!rawLinks && ['child','parent','lookup','labels','source','target'].includes(propType)){
-                            replaceLinkIDs(val,propType,dataType,property)
-                        }else{
-                            propIsDone()
+                        let {propType} = getValue(configPathFromChainPath(fullPath),gb)
+                        if(!rawLabels && ['labels'].includes(propType)){
+                            replaceLabelIDs(val,property)
                         }
+                        propIsDone()
                     }
                     if(p!==undefined){
                         getCell(node,p,addVal,raw)
                     }else{
                         //what to do? put in a 0 so it is alway top or bottom?
-                        console.warn('Cannot find '+alias+' for '+node+' ---sorting as value: 0---')
-                        addVal(0)
+                        console.warn('Cannot find '+alias+' for '+node+' ---setting value as: `undefined`---')
+                        addVal(undefined)
                     }
                     j++
                 }
-                function replaceLinkIDs(raw,pType,dType,prop){
+                function replaceLabelIDs(raw,prop){
                     //raw could be either a string (soul) or array of souls (or if Label labelID)
                     //pType indicates whether this is label or not
                     //dType will tell us what data type to expect in raw
-                    if(pType === 'labels'){
-                        let allLabels = Object.entries(gb[b].labels)
-                        let out = []
-                        for (const labelID of raw) {
-                            out.push(allLabels.filter(x=>x[1] === labelID)[0])
-                        }
-                        nodeObj[prop] = out
-                    }else{
-                        //see if it has a humanID for this nodeType
-                        if(Array.isArray(raw) && !raw.length)propIsDone()
-                        else if(dType === 'unorderedSet'){
-                            let toGet = raw.length
-                            let out = [],i=0
-                            const addVal = (val) =>{
-                                toGet--
-                                out[i] = val
-                                if(!toGet){
-                                    nodeType[prop] = out
-                                    propIsDone()
-                                }
-                            }
-                            for (const linkID of raw) {
-                                let {humanID} = getValue(configPathFromChainPath(linkID),gb) || ''
-                                if(humanID === ''){
-                                    addVal(linkID)
-                                }else{
-                                    getCell(raw,humanID,function(value){
-                                        addVal(value)
-                                    })
-                                }
-                                i++
-                            }
-                        }
-                        else if(dType === 'string'){
-                            let {humanID} = getValue(configPathFromChainPath(raw),gb) || ''
-                            if(humanID === '')propIsDone()
-                            else{
-                                getCell(raw,humanID,function(value){
-                                    nodeType[prop] = value
-                                    propIsDone()
-                                })
-                            }
-                        }
+                    let allLabels = Object.entries(gb[b].labels)
+                    let out = []
+                    for (const labelID of raw) {
+                        out.push(allLabels.filter(x=>x[1] === labelID)[0])
                     }
+                    nodeObj[prop] = out
                 }
                 function propIsDone(){
                     propsToGet--
@@ -3181,818 +3320,6 @@ function query(path,qParams, cb, opts){
 
 
     }
-}
-function oldQuery(path,qParams, cb, isSub, sVal){
-    this.soulObj = parseSoul(path)
-    let {b,t} = this.soulObj
-    let idx = tRange.index //should be a !#. or !-. soul
-    if(idx === 'created'){
-        tRange.index = makeSoul({b,t})
-    }
-
-    
-    this.type = (this.soulObj.i) ? 'row' : 'table'
-    this.allActiveProps = getAllActiveProps(gb,path)
-    this.returnProps = colArr || this.allActiveProps
-    this.subID = (sVal) ? path + ',' + sVal : path + ',' + rand(4)
-    let {arrMap,last} = getValue([b,t,this.subID],gsubsParams) || {arrMap: false,last:[]}
-    this.reQuery = (arrMap === false) ? false : true
-    this.arrMap = arrMap || {}
-    this.last = last
-    this.subscribe = !!isSub
-    this.range = tRange
-    this.limit = limit || Infinity
-    this.format = (format === undefined) ? true : format
-    this.userCB = cb
-    //let columns = colArr
-    this.propsToGet = (qArr.filter(o => o.SEARCH).length) ? this.allActiveProps : this.returnProps //will break if FILTERed on pval not in colArr, currently throws error
-    //this.allRows = []//total rows currently in this.range
-    this.checkNodes = []// this.rows  rows to look for on THIS query, allRows !== rows when data has been edited on row in allRows
-    this.evaluated = []
-    this.query = qArr
-    //arrMap = arrMap || {}
-    this.retrievedCols = {}//to know if all rowIDs in this.rows has allColumns
-    this.completedRows = []//probably don't need now
-    this.data = {}
-    this.output = last //? change? If already in cache, could just recompute all.. memory vs speed...
-    this.callStack = []
-    this.nextBlock = (this.range.dir === '<') ? this.range.to : this.range.from
-    this.chron = (this.range.dir === '<') ? false : true
-    this.curNode = []
-    this.start = function(){
-        if(this.checkNodes.length && this.reQuery){//use the range provided (can be added after creation; ie on data change)
-            this.callStack.push(['getNode',[null]])
-        }else{
-            this.callStack.push(['getMoreSouls', [null]])
-            this.callStack.push(['getNode',[null]])
-            this.run()
-        }
-       
-    }
-    this.getMoreSouls = function(){
-        let self = this
-        crawlIndex(this.range.index,this.nextBlock,this.chron,function(idArr,next){
-            //blockArr = [[soul,unix],[soul,unix]]
-            self.nextBlock = next
-            self.checkNodes = idArr
-            self.run()
-        })
-
-    }
-    this.getNode = function(){
-        this.callStack.unshift(['evaluateNode',[null]])
-        let self = this
-        let i = 0
-        let toGet = this.propsToGet.length
-        let id = this.checkNodes[0]
-        for (const pval of this.propsToGet){
-            getCell(id,pval,function(data){
-                self.curNode[i] = data
-                toGet--
-                if(!toGet){
-                    self.run()
-                }
-            },true)
-            i++
-        }
-    }
-    this.evaluateNode = function(){
-        let id = this.checkNodes[0]
-        let i = this.arrMap[id]
-        this.evaluated[id] = true
-        let pass = false
-        if(this.testRowAgainstQuery()){
-            pass = true
-            let out
-            if(this.allActiveProps === this.returnProps){
-                out = this.curNode.slice()
-            }else{
-                for (const p of this.returnProps) {
-                    let i = this.propsToGet.indexOf(p)
-                    out.push(this.curNode[i])
-                }
-            }
-
-
-            out.id = id
-            out.propIDs = []
-            out.alias = []
-            let s = parseSoul(id)
-            let j = 0
-            let {props} = getValue(configPathFromChainPath(id),gb)
-            for (const p of this.returnProps) {
-                let {format:formatData, propType, dataType, alias} = props[p]
-                if (this.format && formatData !== ''){
-                    out[j] = formatData(formatData,propType,dataType,out[j])
-                }
-                out.propIDs.push( makeSoul(Object.assign({},s,{p})))
-                out.alias.push(alias)
-                j++
-            }
-            
-            if(!i) i = this.output.length
-            this.arrMap[id] = i
-            this.output[i] = out
-        }else if(i){
-            this.arrMap[id] = false
-            this.output[i] = null
-        }
-        this.checkNodes.shift()
-        this.curNode = []
-        
-        if(!this.reQuery && (this.checkNodes.length || this.nextBlock) && this.output.length < this.limit){
-            if(pass){}//if we want to add a 'check' relations or something...need to not add output just yet (if pattern matching)
-            this.callStack.unshift(['getNode',[null]])
-            this.run()
-        }else{
-
-        }
-
-        
-
-
-    }
-    this.evaluateNode = function(){
-
-    }
-    this.params = function(){
-        return {range, type, columns, query, userCB, allRows}
-    }
-    this.isRowDone  = function(rowID,forceDone){
-        let rowDone = forceDone || false
-        if(!rowDone){
-            let propArr = retrievedCols[rowID]
-            rowDone = (propArr.length === allColumns.length) ? true : false
-        }
-        if(rowDone){
-            completedRows.push(rowID)
-            if(completedRows.length === rows.length){
-                done()
-            }
-        }
-    }
-    this.testRowAgainstQuery = function(){ //really this is just the query check on the row, doesn't matter if it's new or old
-        let pass = true
-        let propArr = this.curNode
-        for (const q of this.query) {
-            if(!pass)break
-            let qType = Object.keys(q)[0]
-            let qArgArr = q[qType]
-            if(['SORT','FILTER'].includes(qType))continue
-            if(qType === 'SEARCH'){
-                let reg = regexVar('~', qArgArr[0],'gi')
-                let searchPass = false
-                for (const val of propArr) {
-                    if(reg.test(val)){
-                        searchPass = true
-                        break
-                    }
-                }
-                pass = searchPass
-            }else if(qType === 'FILTER'){
-                let colRef = /\{([a-z0-9]+)\}/gi
-                let fnString = qArgArr[0].slice()
-                while (match = colRef.exec(fnString)) {
-                    let [replace,pval] = match
-                    let valIdx = columns.indexOf(pval)
-                    let val = propArr[valIdx]
-                    fnString = fnString.replace(replace,val)
-                }
-                let fnResolved = evaluateAllFN(fnString)
-                pass = findTruth(fnResolved,true)
-            }else if(qType === 'RANGE'){ //should only have index,from,to
-                let [index, from, to] = qArgArr
-                //index should be some sort of valid path string
-                //from, to will already be unix times of +/-Infinity
-                let {p} = parseSoul(index)
-                if(!p){//created index, this will need to change if on a relationship
-                    let {i} = parseSoul(this.checkNodes[0])
-                    let [id,created] = i.split('_')
-                    if(created <= from || created >= to){//created or edited is outside of range
-                        return false
-                    }
-                }else{
-                    let idxPval = this.propsToGet.indexOf(p)
-                    let valDate = new Date(propArr[idxPval]).getTime()
-                    if(valDate <= from || valDate >= to){//date column idx specified is outside of range
-                        return false
-                    }
-                }
-            }
-        }
-        if(pass){
-            return true
-        }else{
-            return false
-        }
-
-    }
-    this.done = function(){//really only returns the data since new function will check the query.
-        console.log('Query Done, returning data')
-        let rows = this.rows
-        let added = false, removed = false
-        if(this.type !== 'row'){
-            if(this.reQuery){
-                for (const rowID of rows) {
-                    let propArr = this.data[rowID]
-                    let pass = testRowAgainstQuery(propArr,qParams)
-                    if(pass && arrMap[rowID] === undefined){//add row to output
-                        added = true
-                        let i = output.length
-                        arrMap[rowID] = i
-                        output.push([rowID, pass])
-                    }else if(!pass && allRows.includes(rowID)){//remove row from allRows, last
-                        removed = true
-                        let i = arrMap[rowID]
-                        output.splice(i,1)
-                        delete arrMap[rowID]
-                    }else if(pass){//not added or removed, updated
-                        let i = arrMap[rowID]
-                        output[i][1] = pass
-                    }
-                }
-                if(removed){
-                    let j = 0
-                    for (const el of output) {
-                        let [rowid] = el
-                        arrMap[rowid] = j
-                        j++
-                    }
-                }
-            }else{
-                added = true
-                if(output.length)throw new Error('First query should have no previous output')
-                for (const rowID of rows) {
-                    let propArr = data[rowID]
-                    let pass = testRowAgainstQuery(propArr,qParams)
-                    if(pass){
-                        let i = output.length
-                        arrMap[rowID] = i
-                        output.push([rowID, pass])
-                    }
-                }
-            }
-        }else{//return row
-            output = []
-            for (const rowID of rows) {
-                let propArr = data[rowID]
-                
-                for (const pval of columns) {
-                    let idx = pval.slice(1)
-                    output.push(propArr[idx])
-                }
-            }
-        }
-        if(subscribe){
-            util.setupSub()
-        }
-        if(type === 'row' || added || removed || reQuery){
-            console.log('Returning query to cb on subID: '+subID)
-            userCB.call(this,output,columns)
-        }
-        
-    }
-    this.throwError = function(errmsg){
-        let err = this.err
-        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = error
-        console.log(error)
-        this.userCB.call(this,error)
-    }
-    this.run = function(){
-        if(this.err)return
-        if(this.callStack.length){
-            let [fn, args] = this.callStack[0]
-            this.callStack.shift()
-            this[fn](...args)
-        }else{
-            this.done()
-        }
-    }
-    
-    this.callStack.push(['start',[null]])
-    //current query flow:
-    //get valid range of souls, order them by this.range.dir (in case of items) set this to this.allRows
-    //get one node at a time, validate once all props are received, if pass add to this.rows, check items limit
-    //  going node by node will allow us to implement patter matching a little easier later?
-    
-    
-}
-
-
-//old query stuff
-function getRange(qObj){
-    //traverse the tRange and find all souls in the range.
-    //once all souls are found fire qObj.next() in the callback.
-    //let [base,tval] = qObj.table.split('/')
-    //let {type} = getValue([base,'props',tval],gb)
-    let {index,to,from,items} = qObj.range
-    //let idx = index.split('/')
-    console.log('Getting Range:', qObj.range)
-    qIndex(index,function(data){
-        //data is arr of souls
-        qObj.allRows = Array.from(data)
-        qObj.rows = Array.from(data)
-        qObj.next()
-    },items,from,to,false,true)
-}
-const parseSearch = (obj) =>{
-    //obj = {SEARCH: ['String with spaces preserved']}
-    let arg = obj.SEARCH[0]
-    return {SEARCH: [String(arg)]}
-}
-const parseLimit = (obj) =>{
-    //obj = {LIMIT: [10]}
-    let arg = obj.LIMIT[0]
-    if(isNaN(arg))throw new Error('Limit argument must be a number. {LIMIT:[Number()]}')
-    return arg*1
-}
-const parseFormat = (obj) =>{
-    //obj = {FORMAT: [FALSE]}
-    let arg = obj.FORMAT[0]
-    return !!arg
-}
-let validFilterFN = ['ABS','SQRT','MOD','CEILING','FLOOR','ROUND','INT','COUNT','NOT','T', 'AND', 'OR','TRUE','FALSE']
-const parseFilter = (obj,colArr) =>{
-    //obj = {FILTER: ['FN string']}
-    //fnString = '{p2} > 3'
-    let [fnString] = obj.FILTER
-    let colRef = /\{(p[0-9/.]+)\}/gi
-    let hasCompare = /[<>=!]/g.test(fnString)
-    if(!hasCompare)throw new Error('Must have at least (and only) one comparison operator! Valid operators: <, >, <=, >=, =, !=')
-    let found = []
-    let match
-    while (match = colRef.exec(fnString)) {
-        let replace = match[0]
-        let pval = match[1]
-        found.push(pval)
-    }
-    let fnSearch = /[A-Z]+(?=\(.+?\))/g
-    let fn
-    while (fn = fnSearch.exec(fnString)) {
-        let FN = fn[0]
-        if(!validFilterFN.includes(FN))throw new Error('Invalid FN used inside of "FILTER". Valid FNs :' + validFilterFN.join(', '))
-    }
-    basicFNvalidity(fnString)
-    if(found.length !== 1){
-        throw new Error('Can only reference a single column')
-    }
-    if(!colArr.includes(found[0])) throw new Error('Must include column in your return if you are using it in FILTER')
-    return obj
-}
-const parseRange = (obj,traverseFormat) =>{
-    //obj = {RANGE: [tIndex,from,to,items,dir,relativeTime,__toDate,last__,firstDayOfWeek]}
-    //MUST have some sort of timeIndex
-    //Needs to end up with a from, to, items
-    //from and to must be date obj or unix time
-    if(!obj.RANGE)return false
-    let [tIndex,from,to,items, dir, relativeTime, __toDate,last__,firstDayOfWeek] = obj.RANGE
-    let out = {}
-    if(!tIndex || !PROPERTY_PATTERN.test(tIndex)){
-        throw new Error('Must specify a valid time index in order to find data. Must be !#, !#. or !-. index pattern')
-    }
-    out.index = tIndex
-    dir = dir || '<'
-    if(dir !== '<' && dir !== '>')throw new Error('invalid direction sign. ">" starts at the earlier date, "<" most recent')
-    out.dir = dir
-    if((from || to) && (__toDate || last__ || relativeTime))throw new Error('Too many arguments in RANGE. use "from" & "to" OR "toDate" OR "last" OR "relavtiveTime"')
-    if(firstDayOfWeek){
-        if(isNaN(firstDayOfWeek)){
-            throw new Error('Invalid first day of week. Must be a number between 0-6. Sunday = 0')
-        }
-    }else{
-        firstDayOfWeek = 0
-    }
-    if(__toDate && !last__){
-        let valid = ['year','month','week','day']
-        if(!valid.includes(__toDate.toLowerCase()))throw new Error('toDate preset only accepts: '+ valid.join(', '))
-        let now = new Date()
-        let year = now.getFullYear()
-        let month = now.getMonth()
-        let dayOfMonth = now.getDate()
-        let dayOfWeek = now.getDay()
-        switch (__toDate.toLowerCase()) {
-            case 'year':
-                from = new Date(year,0)
-                break;
-            case 'month':
-                from = new Date(year,month)
-                break;
-            case 'week':  
-                let nd = dayOfWeek
-                let fd = firstDayOfWeek
-                let diff = 0
-                if(nd-fd > 0){
-                    diff = nd-fd
-                }else if(nd-fd < 0){
-                    diff = nd-fd + 7
-                }                
-                dayOfMonth += diff*-1
-                from = new Date(year,month,dayOfMonth)
-                break;
-            case 'day':
-                from = new Date(year,month,dayOfMonth)
-                break;
-            default:
-                break;
-        }
-    }else if(!__toDate && last__){
-        let valid = ['year','quarter','month','week','day']
-        if(!valid.includes(last__.toLowerCase()))throw new Error('"last" preset only accepts: '+ valid.join(', '))
-        let now = new Date()
-        let year = now.getFullYear()
-        let month = now.getMonth()
-        let dayOfMonth = now.getDate()
-        let dayOfWeek = now.getDay()
-        switch (last__.toLowerCase()) {
-            case 'year':
-                from = new Date(year-1,0)
-                to = new Date(year,0,1,0,0,0,-1)//last ms in last year
-                break;
-            case 'quarter':
-                let current = (month + 1)/3
-                if(current <=1){//q1
-                    from = new Date(year-1,8)
-                    to = new Date(year,0,1,0,0,0,-1)//last ms in last year
-                }else if(current <= 2){
-                    from = new Date(year,0)//jan 1
-                    to = new Date(year,3,1,0,0,0,-1)//last ms in march
-                }else if(current <=3){
-                    from = new Date(year,3)//april 1
-                    to = new Date(year,5,1,0,0,0,-1)//last ms in june
-                }else{
-                    from = new Date(year,3)//July 1
-                    to = new Date(year,9,1,0,0,0,-1)//last ms in sept
-                }
-                break;
-            case 'month':
-                from = new Date(year,month-1)
-                to = new Date(year,month,1,0,0,0,-1)//last ms in last month
-                break;
-            case 'week':  
-                let nd = dayOfWeek
-                let fd = firstDayOfWeek
-                let diff = 0
-                if(nd-fd > 0){
-                    diff = nd-fd
-                }else if(nd-fd < 0){
-                    diff = nd-fd + 7
-                }                
-                dayOfMonth += diff*-1
-                from = new Date(year,month,dayOfMonth-7)
-                to = new Date(year,month,dayOfMonth,0,0,0,-1)//last ms in yesterday
-                break;
-            case 'day':
-                from = new Date(year,month,dayOfMonth-1)
-                to = new Date(year,month,dayOfMonth,0,0,0,-1)//last ms in yesterday
-                break;
-            default:
-                break;
-        }
-    }
-    if(relativeTime){
-        //Number() + ...
-        //y = year (relative date, from: -365days to: Infinity)
-        //m = month (-Number() * 30 days?) not fixed length...
-        //w = week (-Number() * 7days)
-        //d = day (-Number() of days)
-        //h = hours (-Number() of hours)
-        let valid = 'ymwdh'
-        let num = relativeTime.slice(0,relativeTime.length-1)*1
-        let unit = relativeTime[relativeTime.length-1]
-        if(isNaN(num))throw new Error('If you are specifiying a relative time it should be some number with a single letter specifying units')
-        if(!valid.includes(unit.toLowerCase()))throw new Error('Invalid unit. Must be one of: y, m, w, d, h. (year, month, week, day, hour)')
-        let now = new Date()
-        let year = now.getFullYear()
-        let month = now.getMonth()
-        let dayOfMonth = now.getDate()
-        let curHour = now.getHours()
-        let fromDate = new Date()
-        to = Infinity
-        switch (unit) {
-            case 'y':
-                from = fromDate.setFullYear(year-num)
-                break;
-            case 'm':
-                from = fromDate.setMonth(month-num)
-                break;
-            case 'w':
-                from = fromDate.setDate(dayOfMonth-(7*num))
-                break;
-            case 'd':
-                from = fromDate.setDate(dayOfMonth-num)
-                break;
-            case 'h':
-                from = fromDate.setHours(curHour-num)
-                break;
-            default:
-                break;
-        }
-
-    }
-    
-    if(items){
-        if(isNaN(items))throw new Error('If specifying max items, it must be a number')
-        out.items = items*1
-    }else{
-        out.items = Infinity
-    }
-
-
-    if(from && from instanceof Date){
-        out.from = from.getTime()
-    }else if(from && !(from instanceof Date)){
-        let d = new Date(from) //if it is unix or anything valid, attempt to make a date
-        if(d.toString() !== 'Invalid Date'){
-            out.from = d.getTime()
-        }else{
-            throw new Error('Cannot parse "from" argument in RANGE')
-        }
-    }else{
-        out.from = -Infinity
-    }
-    if(to && to instanceof Date){
-        out.to = to.getTime()
-    }else if(to && !(to instanceof Date)){
-        let d = new Date(to) //if it is unix or anything valid, attempt to make a date
-        if(d.toString() !== 'Invalid Date'){
-            out.to = d.getTime()
-        }else{
-            throw new Error('Cannot parse "from" argument in RANGE')
-        }
-    }else{
-        out.to = Infinity
-    }
-    if(traverseFormat){
-        return out
-    }else{
-        return {RANGE:[out.index,out.from,out.to]}
-    }
-}
-const validCypher = ['MATCH']
-const parseCypher = (obj,path) =>{
-    let args = obj.CYPHER
-    let {b} = parseSoul(path)
-    let out = []
-    const evaluate = {
-        MATCH: function(str){
-            //assign id's to each () [] or use user var
-            //then parse thing by thing
-            let q = {}
-            str = str.replace(/{[\s\S]*}/g,'')//remove any {prop: 'value'} filters
-            str = str.replace(/(<-|-)(\[[^\[\]]+\])?(->|-)/g,function(match,$1,$2,$3){// if ()--() make ()-[]-()
-                if(!$2)return $1+'[]'+$3
-                return match
-              })
-            str = str.replace(/(?:\(|\[)([a-zA-Z]+)?/g, function(match, $1) {//assign id's to those that user didn't already do
-                if (!$1)return match+rand(8,'abcdefghijklmnopqrstuvwxyz')
-                return match
-            });
-            str = str.replace(/(\(|\[)([a-zA-Z]+:)([a-zA-Z:\`|\s]+)/g, function(match, $1, $2, $3) {//find gbID's for aliases of types,relations,labels
-                let isNode = ($1 === '(')
-                let splitChar = (isNode) ? ':' : '|'
-                let aliases = [...$3.split(splitChar)]
-                let ids = []
-                let i = 0
-                let types = {t:{'#':true},r:{'-':true},l:{'&':true}}
-                for (let alias of aliases) {
-                    alias = rmvBT(alias)//get rid of back ticks
-                    let type
-                    if(isNode && i === 0)type = types.t
-                    else if(isNode)type = types.l
-                    else type = types.r
-                    let id = lookupID(gb,alias,makeSoul(Object.assign({},{b},type)))
-                    if(id === undefined)throw new Error('Cannot parse alias for '+$3+' Alias: '+alias)
-                    ids.push(id)
-                    i++
-                }
-                return $1+$2+ids.join(splitChar)
-            });
-            let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
-            //m[i] = ['(allParts)' || (-|->|<-), '('||'['|| undefined, id||undefined, labels||undefined, undefined||undefined||*length')'||']'|| undefined, undefined||(-|->|<-)]
-            for (let i = 0; i < m.length; i+=2) {//every other element, create collector nodes first, then evaluate string
-                const leftID = m[i-2][2];
-                const rightID = m[i+2][2]
-                let [match,left,id,types] = m[i];
-                let isNode = (left === '(')
-                if(isNode){//(id:Type:Label)
-                    let typesArr,labelArr
-                    if(types){
-                        let a = types.split(':')
-                        typesArr = [a[0]]
-                        labelArr = [...a.slice(1)]
-                    }else{//could be any 'type' node
-                        typesArr = getAllActiveNodeTypes(path)
-                    }
-                    q[id] = new MatchNode(typesArr,labelArr, leftID, rightID)
-                    
-                }else{//relation [id:Type|Type]
-                    let typesArr
-                    if(types){
-                        let a = types.split('|')
-                        typesArr = [...a]
-                    }else{//could be any 'type' node
-                        typesArr = getAllActiveRelations(path)
-                    }
-                    q[id] = new MatchRelation(typesArr, leftID, rightID)
-
-                }
-            }
-            //if m.length === 1 simple nodeType query
-            //if m.length > 1 then we need to parse more info
-            if(m.length > 1){
-                for (let i = 2; i < m.length; i+=5) {//2,7,12,etc.. should be relations
-                    let [match,left,id,types,length] = m[i];
-                    let [lSign] = m[i-1]
-                    let [rSign] = m[i+1]
-                    let directed = !(lSign === rSign) // both '-'?
-                    let thisRel = q[id]
-                    let leftNode = q[thisRel.leftID]
-                    let rightNode = q[thisRel.rightID]
-                    if(length){
-                        let l = length.match(/\*([0-9]+)?(\.+)?([0-9]+)?/)
-                        let [min,dots,max] = l
-                        if((!min && !dots && !max) || (dots && !max))thisRel.pathLengthRange = Infinity
-                        if(min && min !== 1)thisRel.pathLength = min
-                        if(dots && max)thisRel.pathLengthRange = max - thisRel.pathLength
-                    }
-                    
-                }
-            }
-            let [dirLeft] = m[i-1]
-            let [dirRight] = m[i+1]
-            let dir
-            if(dirLeft)dir = dirLeft
-            if(dirRight)dir = dirRight
-            if(dir){
-                dir = dir.replace(/(<)?-(>)?/,function(match,$1,$2){
-                    if($1)return $1
-                    else if($2) return $2
-                    else return match
-                })
-                dir = (dir === '-') ? ['>','<'] : [dir]
-            }
-
-            //on parse...
-            //we need to get each 'thing' put in to it's object
-            //if this is more than a simple (), then all 3 (or more..) things will effect each other.
-            //need to figure out direction, *pathLength
-            //once everything is done, score all elements
-            //return
-
-            function rmvBT(s){
-                return s.replace(/`([^`]*)`/g, function(match,$1){
-                    if($1)return $1
-                    return match
-                })
-            }
-            function MatchNode(types,labelArr,lid,rid){
-                this.isNode = true
-                this.types = types || []
-                this.labels = labelArr || []
-                this.filters = []
-                this.ranges = []
-                this.search = []
-                this.rTypes = []
-                this.outgoing = []
-                this.incoming = []
-                this.score = 0
-                this.output = false
-                this.ID = ''
-                this.leftID = lid || null
-                this.rightID = rid || null
-                this.leftScore = 0
-                this.rightScore = 0
-
-            }
-            function MatchRelation(types,lid,rid){
-                this.isNode = false
-                this.types = types || []
-                this.filters = []
-                this.ranges = []
-                this.search = ''
-                this.srcTypes = []//redundant on undirected match
-                this.trgtTypes = []
-                this.src = ''//only used with directed match
-                this.trgt = ''
-                this.pathLength = 1
-                this.pathLengthRange = 0 //pathLength + this number for upper limit
-                this.score = 0
-                this.output = false
-                this.ID = ''
-                this.leftID = lid || null
-                this.rightID = rid || null
-                this.leftScore = 0
-                this.rightScore = 0
-            }
-        }
-    }
-    for (let arg of args) {
-        arg = arg.replace(/([^`]+)|(`[^`]+`)/g, function(match, $1, $2) {//remove whitespace not in backticks
-            if ($1) {
-                return $1.replace(/\s/g, '');
-            } else {
-                return $2; 
-            } 
-        });
-        let t
-        arg = arg.replace(/([A-Z]+)/, function(match, $1) {//find and remove command ie: MATCH
-            if ($1) {
-            t = match
-                return ''
-            }
-        });
-        if(!validCypher.includes(t))throw new Erro('Invalid Cypher command. Valid include: '+validCypher.join(', '))
-        out.push(evaluate[t](arg))
-
-    }
-    
-
-}
-function parseSort(obj,colArr){
-    //obj = {SORT: [pval, asc || dsc]}
-    let [pval, dir] = obj.SORT
-    let out = []
-    if(pval){
-        if(colArr.includes(pval)){
-            out.push(pval)
-        }else{
-            throw new Error('Must include the column used in SORT in the result')
-        }
-    }else{
-        throw new Error('Must specifiy a column with SORT parameter')
-    }
-    if(dir && (dir === 'asc' || dir === 'dsc')){
-        out.push(dir)
-    }else{
-        dir = 'asc'
-        out.push(dir)
-    }
-    return {FILTER: out}
-}
-function parseGroup(obj,colArr){
-    //obj = {GROUP: [pval]}
-    let pval = obj.GROUP[0]
-    let out = []
-    if(pval){
-        if(colArr.includes(pval)){
-            out.push(pval)
-        }else{
-            throw new Error('Must include the column used in GROUP in the result')
-        }
-    }else{
-        throw new Error('Must specifiy a column with GROUP parameter')
-    }
-
-    return {GROUP: out}
-}
-function parseQuery(qArr,colArr,path){
-    //qArr optional, if none specified, range is ALL
-    //if qArr, if RANGE: parseRange(), if FILTER: checkFunction(), ...rest: validate args
-    let query = []
-    let timeRanges = []
-    let range
-    let limit
-    let format
-    for (const qArgObj of qArr) {
-        if(!Array.isArray(Object.values(qArgObj)[0]))throw new Error('Query arguments must be in an array: [{SEARCH:["String"]}]')
-        if(qArgObj.SEARCH){
-            query.push(parseSearch(qArgObj))
-        }else if(qArgObj.FILTER){
-            query.push(parseFilter(qArgObj,colArr))
-        }else if(qArgObj.RANGE){
-            timeRanges.push(parseRange(qArgObj,true))
-            query.push(parseRange(qArgObj,false))
-        }else if(qArgObj.LIMIT){
-            if(limit)throw new Error('Can only define a single limit per query')
-            limit = parseLimit(qArgObj)
-        }else if(qArgObj.FORMAT){
-            format = parseFormat(qArgObj)
-        }else if(qArgObj.CYPHER){
-            format = parseCypher(qArgObj,path)
-        }
-    }
-    if(!timeRanges.length){//will eventually need to figure out how to make this work for relationships as well...
-        let{b,t} = parseSoul(path)
-        range = parseRange({RANGE:[makeSoul({b,t})]},true)//get created
-    }else{//this should still work for relationships
-        //timeRanges [{index,to,from,dir}]
-        //Pick one that has the smallest to-from delta?? Not sure how to pick the shortest list without more queries...
-        //however that would be probably worth it when we implement relationships
-        //complex queries will want to start with the narrowest set of potential matches to start
-        //so a few extra lookups could save hundreds of queries
-        range = timeRanges.sort((a,b)=>(a.to-a.from)-(b.to-b.from))[0]
-    }
-    if(format === undefined)format = true
-    return {range,limit,query,format}
-}
-function addDataToQobj(rowID, pval, data, qObj){
-    let idx = pval.slice(1)
-    if(!Array.isArray(qObj.data[rowID]))qObj.data[rowID] = []
-    if(!Array.isArray(qObj.retrievedCols[rowID]))qObj.retrievedCols[rowID] = []
-    qObj.data[rowID][idx] = data
-    qObj.retrievedCols[rowID].push(pval)
-    qObj.isRowDone(rowID)
 }
 
 
