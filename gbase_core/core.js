@@ -587,7 +587,7 @@ function handleCacheDep(nodeID, p, val){
         removeDep()
         return false
     }
-    const looksAtAddress = toAddress(inheritsNodeID,p)
+    const looksAtAddress = inheritsNodeID
     
     if(!downDeps[address]){//add
         addDep()
@@ -601,12 +601,12 @@ function handleCacheDep(nodeID, p, val){
     return false
     function addDep(){
         downDeps[address] = looksAtAddress
-        if(!upDeps[looksAtAddress])upDeps[looksAtAddress] = {[address]: true}
-        else Object.assign(upDeps[looksAtAddress], {[address]: true})
+        if(!upDeps[looksAtAddress])upDeps[looksAtAddress] = new Set()
+        upDeps[looksAtAddress].add(address)
     }
     function removeDep(){
         let oldDep = downDeps[address]
-        if(oldDep && upDeps[oldDep]) delete upDeps[oldDep][address]
+        if(oldDep && upDeps[oldDep]) delete upDeps[oldDep].remove(address)
         if(oldDep) delete downDeps[address]
     }
 }
@@ -670,7 +670,7 @@ function sendToCache(nodeID, p, value){
         function checkDeps(changedAddress){
             let deps = upDeps[changedAddress]
             if(deps){
-                for (const depAddr in deps) {
+                for (const depAddr of deps) {
                     let nodeID = removeP(depAddr)
                     handleNewPropData(nodeID,p,v)
                     checkDeps(startAddress)//recur... until it can't
@@ -750,78 +750,6 @@ function getCell(nodeID,p,cb,raw){
             cb.call(this,val, soul)
         })
     }
-}
-function getArray(nodeID,pval,cb){
-    //nodeID should be !#$&
-    let arrSoul = makeSoul(Object.assign(parseSoul(nodeID),{p:pval, '[':true}))
-    let arr = [], hashes = {}, length = 0, err
-    gun.get(arrSoul).get('length').get(function(msg,eve){
-        eve.off()
-        if(msg.put === undefined){
-            done()
-        }else{
-            length = msg.put*1 //coerce to number incase it is a string
-            getHashes()
-        }
-
-    })
-    function getHashes(){
-        if(length === 0 || length === NaN)done()
-        let have = 0
-        for (let i = 0; i < length; i++) {
-            gun.get(arrSoul).get(i).get(function(msg,eve){
-                eve.off()
-                let h = msg.put
-                if(msg.put === undefined){
-                    h = NULL_HASH
-                }
-                addHash(h,i)
-                have++
-                if(have === length){
-                    getValues()
-                }
-            })            
-        }
-    }
-    function getValues(){
-        let vals = Object.keys(hashes).length
-        let done = 0
-        for (const hash in hashes) {
-            gun.get(arrSoul).get(hash).get(function(msg,eve){
-                eve.off()
-                const idxArr = hashes[hash];
-                let value
-                let json = msg.put
-                if(json === undefined){
-                    value = null
-                }
-                try {
-                    value = JSON.parse(json)
-                } catch (e) {
-                    value = json //invalid json? shouldn't happen if gbase api is used
-                }
-                if(ISO_DATE_PATTERN.test(value)){//JSON takes a date object to ISO string on conversion
-                    value = new Date(value)
-                }
-                for (const idx of idxArr) {//replace hash with value to all indices in the output array
-                    arr[idx] = value
-                }
-                done++
-                if(done === vals){
-                    done()
-                }
-            })
-        }
-    }
-    function done(){
-        cb.call(cb,arr)
-    }
-    function addHash(hash,idx){
-        let idxArr = hashes[hash]
-        if(!Array.isArray(idxArr))idxArr = []
-        idxArr.push(idx)
-    }
-
 }
 
 
@@ -2170,9 +2098,6 @@ function query(path,qParams, cb, opts){
     if(checkNodes){//checkNodes can only come from the buffer
         bufferTrigger = true
         if(qParams.expand){
-            //if it is expand, then we need to see if anything that is created touches/is a node that is currently part of something valid
-            //.passing and .failing are for the sets
-            //must have another list of current nodeIDs (not relations) that are part of expand.
             //if a new relation comes in, then we need to get it's src & trgt to see if either of them are in the 'active' list
             //if nothing is touching the nodes that have passed, then stop. else, just start expand over from the top.
             let findSrcTrgt = []
@@ -2266,7 +2191,7 @@ function query(path,qParams, cb, opts){
         switch (bestIndex) {
             case 'id':
                 for (const id of ID) {
-                    qParams.elements[startVar].toCheck.add(ID)
+                    qParams.elements[startVar].toCheck.add(id)
                 }
                 check()
                 break;
@@ -2287,19 +2212,19 @@ function query(path,qParams, cb, opts){
             for (const id of types) {
                 // need existence soul for each type
                 if(isNode){
-                    let s = makeSoul({b,t:id,':':true})//created/existence soul
+                    let s = makeSoul({b,t:id,i:true})//created/existence soul
                     gun.get(s).once(function(node){
                         for (const nodeID in node) {
-                            const boolean = node[nodeID];
-                            if (DATA_INSTANCE_NODE.test(nodeID) && boolean) {
+                            const state = node[nodeID];
+                            if (DATA_INSTANCE_NODE.test(nodeID) && state === 'active') {
                                 qParams.elements[startVar].toCheck.add(nodeID)
                             }
                         }
                         toGet--
-                        if(!toGet)check()
+                        if(!toGet)evaluateNodes()
                     })
                 }else{
-                    let s = makeSoul({b,r:id})//created/existence soul
+                    let s = makeSoul({b,r:id})//type identifier
                     //if we have a "_CREATED" time range for these nodes, we can narrow further
                     let {from,to} = ranges.filter(x=>x.alias === '_CREATED')[0] || {}
                     getRelationNodes(gun,s,srcTypes,trgtTypes,function(relationIDarr){
@@ -2307,7 +2232,7 @@ function query(path,qParams, cb, opts){
                             qParams.elements[startVar].toCheck.add(id)
                         }
                         toGet--
-                        if(!toGet)check()
+                        if(!toGet)evaluateNodes()
                     },{from,to})
                 }
                 
@@ -2322,7 +2247,7 @@ function query(path,qParams, cb, opts){
                     for (const id of nodes) {
                         qParams.elements[startVar].toCheck.add(id)
                     }
-                    if(!toGet)check()
+                    if(!toGet)evaluateNodes()
                 })
                 //each node type is independent from each other
                 //but each nodeType added must have ALL labels
@@ -2333,25 +2258,19 @@ function query(path,qParams, cb, opts){
             let toGet = types.length
             for (const id of types) {
                 let sym = (isNode) ? 't' : 'r'
-                if(isNode || (!isNode && alias !== '_CREATED')){
+                if(alias !== '_CREATED'){
                     let idx
-                    if(alias === '_CREATED'){//only for nodes, not relations
-                        idx = makeSoul({b,t:id})
-                    }else{//all other are props !#. || !-. index
-                        let type = makeSoul({b,[sym]:id})
-                        let p = qParams.aliasToID[type][alias]
-                        idx = makeSoul({b,[sym]:id,p})
-                    }
+                    let type = makeSoul({b,[sym]:id})
+                    let p = qParams.aliasToID.id(type,alias)
+                    idx = makeSoul({b,[sym]:id,p})
                     qIndex(idx,function(nodes){
                         toGet--
                         for (const id of nodes) {
                             qParams.elements[startVar].toCheck.add(id)
                         }
-                        if(!toGet)check()
+                        if(!toGet)evaluateNodes()
                     },Infinity,from,to)
-
-
-                }else{//only created for relations is on a different index
+                }else if(!isNode){//only created for relations is on a different index
                     let s = makeSoul({b,r:id})//created/existence soul
                     //if we have a "_CREATED" time range for these nodes, we can narrow further
                     let {from,to} = ranges.filter(x=>x.alias === '_CREATED')[0] || {}
@@ -2360,8 +2279,10 @@ function query(path,qParams, cb, opts){
                             qParams.elements[startVar].toCheck.add(id)
                         }
                         toGet--
-                        if(!toGet)check()
+                        if(!toGet)evaluateNodes()
                     },{from,to})
+                }else{
+                    getTypes()//if isNode and _CREATED, not indexed
                 }
             }
         }

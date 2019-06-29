@@ -35,22 +35,21 @@ const newNodeTypeConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let log = config.log || false
-    let parent = config.parent || '' //should be !#. value if isChild
     let variants = config.variants || false //newFrom()
     let externalID = config.externalID || '' //pval of which prop is an ID
-    return {alias, log, archived, deleted, parent, variants, externalID}
+    let humanID = config.humanID
+    return {alias, log, archived, deleted, variants, externalID,humanID}
 }
 const newNodePropConfig = (config) =>{
     config = config || {}
-    let defType = {data:'string',date:'number',link:'string',pickList:'string',lookup:'string',file:'string'}
-    let defMulti = {link:true,lookup:false}
+    let defType = {data:'string',date:'number',pickList:'string',file:'string'}
+
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
     let hidden = config.hidden || false
     let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids
     let allowMultiple = config.allowMultiple || defMulti[propType] || false
-    let linksTo = config.linksTo || ""
     let required = config.required || false 
     let sortval = config.sortval || 0
     let defaultval = config.defaultval || null //null represents no default. Anything other than null will be injected at node creation.
@@ -79,7 +78,7 @@ const newRelationshipConfig = (config) =>{
 }
 const newRelationshipPropConfig = (config) =>{
     config = config || {}
-    let defType = {data:'string',date:'number',pickList:'string',lookup:'string',labels:'unorderedSet'}
+    let defType = {data:'string',date:'number',pickList:'string',labels:'unorderedSet'}
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -95,7 +94,7 @@ const newRelationshipPropConfig = (config) =>{
     return {alias, archived, deleted, hidden, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
 }
 const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
-const validNodePropTypes = ["data", "date", "pickList", "labels", "child", "parent", "lookup", "function", "file"]
+const validNodePropTypes = ["data", "date", "pickList", "labels", "state", "function", "file"]
 const validRelationPropTypes = ["data", "date", "pickList", "file"]
 const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj, type) =>{//use for new configs, or update to configs
@@ -1193,14 +1192,11 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
 
 //IMPORT STUFF
 
-const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, append, addBackLink)=>{
+const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, append)=>{
     // create configs
     let path = makeSoul({b, t})
     let gbpath = configPathFromChainPath(path)
-    let colspath = gbpath.slice()
-    colspath.push('props')
-    let cols = getValue(colspath, gb)
-    addBackLink = !!addBackLink
+    let {props:cols} = getValue(gbpath, gb) || {}
     let aliasLookup = {}
     let newPconfigs = {}
     let externalIDidx
@@ -1208,21 +1204,12 @@ const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, ap
         let i = colHeaders.indexOf(eID)
         externalIDidx = (i === -1) ? false : i
     }
-    if(addBackLink){
-        colHeaders.push('Parent Node')
-    }
     for (let i = 0; i < colHeaders.length; i++) {
         let col = colHeaders[i]
         let p = findID(cols, col),sortval
         if(cols === undefined || (p === undefined && append)){//need to create a new property
-            try {
-                //both will fail on cols === undefined (first import)
-                p = newID(gb,makeSoul({b,t,p:true})) 
-                sortval = nextSortval(gb,path)
-            } catch (error) {
-                p = i + 'I' + rand(2)
-                sortval = i*10
-            }
+            p = newID(gb,makeSoul({b,t,p:true})) 
+            sortval = nextSortval(gb,path,p)
             const palias = String(col);
             if(variant && palias === 'PROTOTYPE')continue//importing a table with variants, this column is metadata
             let enforceUnique = (externalIDidx === i) ? true : false
