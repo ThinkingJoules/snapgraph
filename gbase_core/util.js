@@ -176,7 +176,7 @@ function collectPropIDs(gb,path,name,isNode){
         const {props} = things[thing];
         for (const p in props) {
             const {alias} = props[p];
-            if([String(alias),String(thing)].includes(String(name))){
+            if([String(alias),String(p)].includes(String(name))){
                 let st = makeSoul({b,[sym]:thing})
                 setValue([st,alias],p,out)
             }
@@ -218,14 +218,14 @@ const findID = (objOrGB, name, path) =>{//obj is level above .props, input human
     for (const key in search) {
         if(gOrL){
             const id = search[key]
-            if(String(id) === String(name) || String(key) === String(name)){
+            if(id == name || key == name){
                 gbid = id
                 break
             }
         }else{
-            if(ignore && String(key) === String(ignore))continue
+            if(ignore && key == ignore)continue
             const {alias} = search[key]
-            if(String(alias) === String(name) || String(key) === String(name)){
+            if(alias == name || key == name){
                 gbid = key
                 break
             }
@@ -932,6 +932,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     function initialCheck(){//verifies everything user has entered to ensure it is valid, also finds id's for any alias' used in the obj
         let coercedPutObj = {}
         noRelations = noRelations || []
+        console.log(putObj)
         //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
         for (const palias in putObj) {
             let pval = findID(props, palias) 
@@ -1526,13 +1527,16 @@ function hasPropType(gb, tPathOrPpath, type){
         return false
     }
 }
-function getAllActiveProps(gb, tpath){
+function getAllActiveProps(gb, tpath,opts){
     let {b,t,r} = parseSoul(tpath)
     let {props} = getValue(configPathFromChainPath(makeSoul({b,t,r})), gb)
+    let {hidden,archived} = opts || {}
+    hidden = !!hidden
+    archived = !!archived
     let out = []
     for (const p in props) {
-        const {archived,deleted,sortval} = props[p];
-        if (!archived && !deleted) {
+        const {hidden:h,archived:a,deleted,sortval} = props[p];
+        if ((h && hidden || !h) && (a && archived || !a) && !deleted) {
             out[sortval] = p
         }
     }

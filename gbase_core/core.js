@@ -110,10 +110,14 @@ const {makenewBase,
     makedelete,
     makenullValue,
     makerelatesTo,
+    maketypeGet,
+    makenodeGet,
+    makeaddressGet
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
 let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
+let typeGet, nodeGet, addressGet
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgsub = makeshowgsub(gsubs)
@@ -173,6 +177,9 @@ const gunToGbase = (gunInstance,baseID) =>{
     config = makeconfig(handleConfigChange)
     subscribeQuery = makesubscribeQuery(setupQuery)
     retrieveQuery = makeretrieveQuery(setupQuery)
+    typeGet = maketypeGet(gb,setupQuery)
+    nodeGet = makenodeGet(gb,setupQuery)
+    addressGet = makeaddressGet(setupQuery)
 
 
 
@@ -236,7 +243,6 @@ function startGunConfigSubs(baseID){
             let data = Gun.obj.copy(gundata)
             delete data['_']
             for (const key in data) {
-                const value = data[key];
                 if (key === baseID) {
                     let baseconfig = makeSoul({b:key,'%':true})
                     gun.get(baseconfig).on(function(gundata, id){
@@ -246,6 +252,7 @@ function startGunConfigSubs(baseID){
                         data.props = {}
                         data.groups = {}
                         data.relations = {}
+                        data.labels = {}
                         let configpath = configPathFromSoul(id)
                         setMergeValue(configpath,data,gb)
                         setupTypesSubs(baseID)
@@ -253,9 +260,24 @@ function startGunConfigSubs(baseID){
                         triggerConfigUpdate(id)
                     })
 
-                    let baseGrps = makeSoul({b:key,'^':true})
+                    let baseGrps = makeSoul({b:key,g:true})
                     gun.get(baseGrps).on(function(gundata, id){
                         gunSubs[baseGrps] = true
+                        let data = Gun.obj.copy(gundata)
+                        delete data['_']
+                        let configpath = configPathFromSoul(id)
+                        let flip = {}
+                        console.log(configpath,data,flip)
+
+                        for (const id in data) {
+                            const alias = data[id];
+                            flip[alias] = id
+                        }
+                        setMergeValue(configpath,flip,gb)
+                    })
+                    let baseLabels = makeSoul({b:key,l:true})
+                    gun.get(baseLabels).on(function(gundata, id){
+                        gunSubs[baseLabels] = true
                         let data = Gun.obj.copy(gundata)
                         delete data['_']
                         let configpath = configPathFromSoul(id)
@@ -507,11 +529,11 @@ function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
 function nodeTypeChainOpt(_path){
-    let out = {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), prop,node}
+    let out = {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe:typeGet(_path,true),retrieve:typeGet(_path,false), prop,node}
     return out
 }
 function relationChainOpt(_path){
-    return {_path, config: config(_path), addProp: addProp(_path), importData: importData(_path),prop}
+    return {_path, config: config(_path), addProp: addProp(_path), importData: importData(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false),prop}
 }
 
 function propChainOpt(_path, propType, dataType){
@@ -525,18 +547,15 @@ function relationPropChainOpt(_path){
     let out = {_path, config: config(_path)}
     return out
 }
-function nodeChainOpt(_path, isData, allowNewFrom){
-    let out = {_path, edit: edit(_path,false,false), retrieve: retrieveQuery(_path), subscribe: subscribeQuery(_path),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
+function nodeChainOpt(_path, isData){
+    let out = {_path, edit: edit(_path,false,false), retrieve: nodeGet(_path,false), subscribe: nodeGet(_path,true),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
     if(isData){
-        Object.assign(out,{relatesTo:relatesTo(_path)})
-    }
-    if(allowNewFrom){
-        Object.assign(out,{newFrom:newFrom(_path)})
+        Object.assign(out,{relatesTo:relatesTo(_path),newFrom:newFrom(_path)})
     }
     return out
 }
 function nodeValueOpt(_path){
-    let out = {_path, edit: edit(_path,false,false), clearValue:nullValue(_path)}
+    let out = {_path, edit: edit(_path,false,false),subscribe: addressGet(_path,true),retrieve:addressGet(_path,false), clearValue:nullValue(_path)}
     return out
 }
 
@@ -633,7 +652,6 @@ function sendToCache(nodeID, p, value){
         from = lookup
     }
     if(newEnq || (from === address && value !== v)){//this is some sort of new/changed value
-        console.log('updating cache:',address,value)
         cache[address] = value//should fire the watch cb
         handlePropDataChange()
         return
@@ -662,7 +680,6 @@ function sendToCache(nodeID, p, value){
         }
     }
 }
-
 function getCell(nodeID,p,cb,raw){
     //will return the inheritted value if not found on own node
     raw = !!raw //if it is true, we skip the formatting
@@ -899,7 +916,7 @@ function QueryParse(path,qArr){
         value: function(alias,isNode){
             let a = Object.entries(this)
             let has = (isNode) ? '#' : '-'
-            let b = a.filter(ar => ar[0].includes(has) && (ar[1][alias] !== undefined)).map(arr => parseSoul(arr[0])[has])
+            let b = a.filter(ar => ar[0].includes(has) && (ar[1][alias] !== undefined || Object.values(ar[1]).includes(alias))).map(arr => parseSoul(arr[0])[has])
             return b
         }
     })
@@ -921,7 +938,8 @@ function QueryParse(path,qArr){
         value: function(node,alias){
             let {b,t,r} = parseSoul(node)
             let thingType = makeSoul({b,t,r})
-            return getValue([thingType,alias],this)
+            let id = getValue([thingType,alias],this) || Object.values(this[thingType]).includes(alias) && alias || undefined
+            return id
             
         }
     })
@@ -960,7 +978,7 @@ function QueryParse(path,qArr){
         },
         enumerable:true
     })
-    Object.defineProperty(this,'orderIdxMap',{
+    Object.defineProperty(this,'orderIdxMap',{//so we know the order of elements in the path array
         get(){
             let order = []
             let curThingVar = this.leftMostThing
@@ -999,7 +1017,7 @@ function QueryParse(path,qArr){
                 //then parse thing by thing
                 str = str.replace(/{[\s\S]*}/g,'')//remove any {prop: 'value'} filters
                 console.log(str)
-                str = str.replace(/(\(|\[)([a-zA-Z]+)?(:)?([a-zA-Z:\`|\s]+)?/g, function(match, $1, $2, $3, $4) {//find gbID's for aliases of types,relations,labels
+                str = str.replace(/(\(|\[)([a-zA-Z]+)?(:)?([a-zA-Z0-9:\`|\s]+)?/g, function(match, $1, $2, $3, $4) {//find gbID's for aliases of types,relations,labels
                     if(!$3)return match
                     let isNode = ($1 === '(')
                     let splitChar = (isNode) ? ':' : '|'
@@ -1265,7 +1283,6 @@ function QueryParse(path,qArr){
             [
             {   //these are the options for the whole return
                 sortBy: ['a',['pval1','DESC','pval2','ASC']],
-                groupBy: ['a','pval'],
                 limit: 50,
                 skip: 0,
                 idOnly: boolean
@@ -1293,7 +1310,7 @@ function QueryParse(path,qArr){
             elements[userVar].toReturn = true
             let args = tArg[userVar]
             for (const arg in args) {
-                if(!['returnAsArray','props','propsByID','noID','noAddress','raw','rawLinks'].includes(arg))continue
+                if(!['returnAsArray','props','propsByID','noID','noAddress','raw'].includes(arg))continue
                 const value = args[arg];
                 if(arg === 'props'){
                     if(!Array.isArray(value))throw new Error('"props" must be an array of values')
@@ -1358,7 +1375,6 @@ function QueryParse(path,qArr){
             //can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
             for (const arg of userArg) {
                 if(typeof arg === 'string'){
-                    console.log(elements[userVar])
                     elements[userVar].props.push({alias:arg})
                 }else if(typeof arg === 'object'){
                     let {alias,as,raw} = arg
@@ -1519,7 +1535,7 @@ function QueryParse(path,qArr){
             let key = Object.keys(qArgObj)[0]
             if(!parse.includes(key))continue
             if(!Array.isArray(qArgObj[key]))throw new Error('Query arguments must be in an array: [{ARG:[parameters]}]')
-            if(key==='FILTER')parseFilter(qArgObj,colArr)
+            if(key==='FILTER')parseFilter(qArgObj)
             else if(key==='RANGE')parseRange(qArgObj)
         }
 
@@ -1530,19 +1546,21 @@ function QueryParse(path,qArr){
             let [userVar,fnString] = obj.FILTER
             if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
             let fnSearch = /([A-Z]+)\(/g //get fn names
-            let IDpattern = /ID\(?:(.*)\)/
+            let IDpattern = /ID\((.*)\)/
             let noBT = fnString.replace(/`.*`/g,0)//backticks might match pattern accidentally
             let fn
-            let [idMatch] = noBT.match(IDpattern) || []
-            if(idMatch){
-                elements[userVar].ID = [...idMatch.match(/![a-z0-9]+(?:#|-)[a-z0-9]+\$[a-z0-9_]+/gi)]
+            let idMatch = noBT.match(IDpattern) || []
+            if(idMatch.length){
+                console.log(idMatch[1])
+                console.log(idMatch[1].matchAll(/![a-z0-9]+(?:#|-)[a-z0-9]+\$[a-z0-9_]+/gi))
+                elements[userVar].ID = [...idMatch[1].matchAll(/![a-z0-9]+(?:#|-)[a-z0-9]+\$[a-z0-9_]+/gi)].map(x => x[0])
                 return
             }
             let i = 0
             while (fn = fnSearch.exec(noBT)) {
+                let [m,a] = fn
                 if(i === 0 && a === 'AND')elements[userVar].filterArgs = findFNArgs(noBT).length
                 else if(!elements[userVar].filterArgs)elements[userVar].filterArgs = 1
-                let [m,a] = fn
                 if(!validFilterFN.includes(a))throw new Error('Invalid FN used inside of "FILTER". Valid FNs :' + validFilterFN.join(', '))
             }
             basicFNvalidity(fnString)//  ??
@@ -1783,7 +1801,7 @@ function QueryParse(path,qArr){
                 }
                 
             }
-            if(self.sortBy[0] === userVar){//has a sort output
+            if(self.sortBy && self.sortBy[0] === userVar){//has a sort output
                 let arr = self.sortBy.slice(1)
                 for (const {alias:name} of arr) {
                     allNames[name] = true
@@ -1796,7 +1814,7 @@ function QueryParse(path,qArr){
                     }
                 }
             }
-     
+            console.log(elements[userVar].types,self.aliasToID.types(Object.keys(allNames),isNode))
             elements[userVar].types = [...intersect(new Set(elements[userVar].types),new Set(self.aliasToID.types(Object.keys(allNames),isNode)))]
             //^^Intersect what is existing, with what is valid
         }
@@ -2104,6 +2122,7 @@ function query(path,qParams, cb, opts){
     opts = opts || {}
     let bufferTrigger = false
     let requery = !!qParams.pathStrings.size
+    console.log(qParams)
     if(checkNodes){//checkNodes can only come from the buffer
         bufferTrigger = true
         if(qParams.expand){
@@ -2841,49 +2860,69 @@ function query(path,qParams, cb, opts){
         //when do we apply group? Don't, group is up to user
 
         let {sortBy,limit,skip,returning} = qParams
-        buildPaths()
-        buildPreReturn()
-        
+        qParams.allNodes = {} //clear all nodes for each requery.
+        if(!sortBy){
+            applySkipLimit([...pathStrings]) //applySkipLimit then buildPaths, then buildResults
+        }else{
+            buildPreReturn() //gets sortvalues and does sorting, then applySkipLimit to sorted arr of pathStrings then buildPaths, then buildResults
+        }
+        function applySkipLimit(someArr){
+            if(limit > someArr.length)limit=someArr.length
+            if(skip === 0 && limit === someArr.length){//no skip or limit, avoid the copy
+                preReturn = someArr
+            }else{
+                preReturn = someArr.slice(skip,limit)
+            }
+            buildPaths()
+        }
         function buildPaths(){
-            qParams.allNodes = {} //clear all nodes for each requery.
-            for (const pathStr of pathStrings) {
+            for (const pathStr of preReturn) {
                 let pathArr = JSON.parse(pathStr)
                 let sorted = []
                 let pathOrder = qParams.orderIdxMap
-                
-                let i = 0
+                let j = 0
                 for (const id of pathArr) {
+                    if(!nodesNeeded[id])nodesNeeded[id] = {}
+                    nodesNeeded[id].userVar = returning[j]
                     if(!qParams.allNodes[id])qParams.allNodes[id] = new Set()
                     qParams.allNodes[id].add(pathStr)//add this path to paths that use this id
-                    let newIdx = returning.indexOf(pathOrder[i])
-                    i++
-                    if(newIdx === -1)continue
+                    let newIdx = returning.indexOf(pathOrder[j])
+                    if(newIdx === -1)continue//not part of the return
                     sorted[newIdx] = id
+                    j++
                 }
-                paths.push(sorted)
+                if(qParams.idOnly)result.push(sorted)
+                else paths.push(sorted)
             }
+            if(qParams.idOnly)queryDone(true)
+            else buildResults()
             
             //whatever paths is, we need to sort to match the return order user specified and add to paths
         }
         function buildPreReturn(){
             let beforeSkipLimit = []
             let sortArr = [] //[[pathsIdx, [value1,value2,...valueN]], [pathsIdx2, [value1,value2,...valueN]]]
-            if(!sortBy){
-                sortReturn()
-                return
-            }
             let [sortUserVar,...sortArgs] = sortBy
             let sortProps = sortArgs.map(x=>x.alias)
-            let returnIdx = qParams.returning.indexOf(sortUserVar)
-            let toGet = paths.length
+            let pathIdx = qParams.orderIdxMap.indexOf(sortUserVar)
+            let toGet = pathStrings.size
             let i = 0
-            for (const path of paths) {
+            for (const pathStr of pathStrings) {
+                let path = JSON.parse(pathStr)
                 if(!Array.isArray(sortArr[i]))sortArr[i] = [i,[]]
-                let node = path[returnIdx]
+                let nodeID = path[pathIdx]
                 let propsToGet = sortProps.length
                 let j = 0
                 for (const alias of sortProps) {
-                    const addVal = (i,j) => (val) =>{
+                    let p = qParams.aliasToID.id(nodeID,alias)
+                    if(p!==undefined){
+                        getCell(nodeID,p,addVal,true)
+                    }else{
+                        //what to do? put in a 0 so it is alway top or bottom?
+                        console.warn('Cannot find '+alias+' for '+nodeID+' ---  sorting as value: -1  ---')
+                        addVal(-1)
+                    }
+                    function addVal(val){
                         sortArr[i][1][j]=val
                         propsToGet--
                         if(!propsToGet){
@@ -2891,33 +2930,19 @@ function query(path,qParams, cb, opts){
                             if(!toGet)sortReturn()
                         }
                     }
-                    let p = qParams.aliasToID.id(node,alias)
-                    if(p!==undefined){
-                        getCell(node,p,addVal(i,j),true)
-                    }else{
-                        //what to do? put in a 0 so it is alway top or bottom?
-                        console.warn('Cannot find '+alias+' for '+node+' ---sorting as value: 0---')
-                        addVal(0)
-                    }
                     j++
                 }
                 i++
             }
             function sortReturn(){
-                if(!sortArr.length){
-                    beforeSkipLimit = paths
-                    //no sortBy
-                }else{
-                    sortArr.sort(compareSubArr(sortArgs.map(x=>x.dir)))
-                    let pathArr = [...pathStrings]
-                    let i = 0
-                    for (const [originalIdx] of sortArr) {
-                        beforeSkipLimit[i] = pathArr[originalIdx]//cannot get value by index in set, but order is preserved
-                        i++
-                    }
-                    //forof sortArr, and use the idx value to add to 'beforeSkipLimit' in new order
+                sortArr.sort(compareSubArr(sortArgs.map(x=>x.dir)))
+                let pathArr = [...pathStrings]
+                let i = 0
+                for (const [originalIdx] of sortArr) {
+                    beforeSkipLimit[i] = pathArr[originalIdx]//cannot get value by index in set, but order is preserved
+                    i++
                 }
-                applySkipLimit()
+                applySkipLimit(beforeSkipLimit)
                 function compareSubArr(sortQueries){
                     return function(a,b){
                         return multiCompare(0,sortQueries,a,b)
@@ -2946,33 +2971,6 @@ function query(path,qParams, cb, opts){
                     //sortQueries = [dir,dir,dir]
                     
                 }
-            
-            
-            }
-            function applySkipLimit(){
-                if(limit > beforeSkipLimit.length)limit=beforeSkipLimit.length
-                if(skip === 0 && limit === beforeSkipLimit.length){//no skip or limit, avoid the copy
-                    preReturn = beforeSkipLimit
-                }else{
-                    preReturn = beforeSkipLimit.slice(skip,limit)
-                }
-                if(qParams.idOnly){//only want ids for things, not the things themselves; ie list making, or user is doing serial queries
-                    for (const path of preReturn) {
-                        result.push(path)
-                    }
-                    queryDone(true)
-                    return
-                }
-                for (const strPath of preReturn) {//get ID's for only the things we are returning
-                    let pathArr = JSON.parse(strPath)
-                    let j = 0
-                    for (const id of pathArr) {
-                        if(!nodesNeeded[id])nodesNeeded[id] = {}
-                        nodesNeeded[id].userVar = returning[j]
-                        j++
-                    }
-                }
-                buildResults()
             }
         }
         function buildResults(){
@@ -2996,7 +2994,7 @@ function query(path,qParams, cb, opts){
                     let p = qParams.aliasToID.id(nodeID,alias)
                     if(p!==undefined){
                         //getCell(nodeID,p,addVal(nodeID,p,j,alias,propAs,propsByID,nodeObj,pending),raw)
-                        getCell(nodeID,p,addValue,raw)
+                        getCell(nodeID,p,addValue(j),raw)
                         qParams.elements[userVar].passing[nodeID].add(p)
                     }else{
                         //what to do? neo returns `null`
@@ -3004,25 +3002,29 @@ function query(path,qParams, cb, opts){
                         addValue(undefined)
                     }
                     j++
-                    function addValue(val){
-                        let property = propAs || (propsByID) ? p : alias
-                        if(returnAsArray){
-                            property = j
+                    function addValue(j){
+                        return function(val){
+                            let property = propAs || (propsByID) ? p : alias
+                            if(returnAsArray){
+                                property = j
+                            }
+                            nodeObj[property] = val
+                            console.log(nodeID,property,val)
+                            let fullPath = toAddress(nodeID,p)
+                            if(!noAddress){
+                                nodeObj.address[property] = fullPath
+                            }
+                            let {propType} = getValue(configPathFromChainPath(fullPath),gb)
+                            if(!rawLabels && ['labels'].includes(propType) && Array.isArray(val)){
+                                replaceLabelIDs(val,property)
+                            }
+                            propsToGet--
+                            if(!propsToGet){
+                                data[nodeID] = nodeObj
+                                propIsDone()
+                            }
                         }
-                        nodeObj[property] = val
-                        let fullPath = toAddress(nodeID,p)
-                        if(!noAddress){
-                            nodeObj.address[property] = fullPath
-                        }
-                        let {propType} = getValue(configPathFromChainPath(fullPath),gb)
-                        if(!rawLabels && ['labels'].includes(propType)){
-                            replaceLabelIDs(val,property)
-                        }
-                        propsToGet--
-                        if(!propsToGet){
-                            data[nodeID] = nodeObj
-                            propIsDone()
-                        }
+                        
                     }
                 }
                 function replaceLabelIDs(raw,prop){
