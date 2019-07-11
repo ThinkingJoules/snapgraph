@@ -2,6 +2,8 @@
 
 const IS_CONFIG_SOUL = /^![a-z0-9]+(((#|-)[a-z0-9]+)|((#|-)[a-z0-9]+.[a-z0-9]+))%/i
 const INSTANCE_OR_ADDRESS = /^![a-z0-9]+(#|-)[a-z0-9]+((.[a-z0-9]+\$[a-z0-9_]+)|\$[a-z0-9_]+)/i
+const ALL_ADDRESSES = /^![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
+const ALL_TYPE_PATHS = /^![a-z0-9]+(#|-|\^|&)[a-z0-9]+/i
 const ALL_INSTANCE_NODES = /^![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9_]+/i
 const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
 const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
@@ -10,6 +12,7 @@ const RELATION_PROP_SOUL = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
 const PROPERTY_PATTERN = /^![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9_]+/i
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const ENQ_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
+const USER_ENQ = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
 const LABEL_ID = /\d+f[a-z0-9]+/i
 const NULL_HASH = hash64(JSON.stringify(null))
 const ENQ = String.fromCharCode(5) //enquiry NP char. Using for an escape to say the value that follow is the node to find this prop on
@@ -114,6 +117,53 @@ function configSoulFromChainPath(thisPath){
     return soul
 
 }
+function findConfigFromID(gb,path,someID){
+    //look through base, then nodeTypes, then Relations, then Groups, then Labels, if still not found, look through all props
+    let {b} = parseSoul(path)
+    if(b === someID)return gb[b]
+    else if(INSTANCE_OR_ADDRESS.test(someID) || ALL_TYPE_PATHS.test(someID))return getValue(configPathFromChainPath(someID),gb)
+    else{//assumes someID has no symbols, only alphanumeric
+        if(/[^a-z0-9]/i.test(someID))throw new Error('The ID given should be the alphanumeric id value, no symbols')
+        let {props,relations,groups,labels} = gb[b]
+        //return first found, or return undefined if it can't find anything
+        if(props){
+            for (const id in props) {
+                const tconfig = props[id];
+                if(id == someID)return tconfig
+                if(tconfig.props){
+                    for (const pid in tconfig.props) {
+                        const pconfig = tconfig.props[pid];
+                        if(pid == someID)return pconfig
+                    }
+                }
+            }
+        }
+        if(relations){
+            for (const id in relations) {
+                const rconfig = relations[id];
+                if(id == someID)return rconfig
+                if(rconfig.props){
+                    for (const pid in rconfig.props) {
+                        const pconfig = rconfig.props[pid];
+                        if(pid == someID)return pconfig
+                    }
+                }
+            }
+        }
+        if(groups){
+            for (const galias in groups) {
+                const gid = groups[galias];
+                if(gid == someID)return galias
+            }
+        }
+        if(labels){
+            for (const lalias in labels) {
+                const lid = labels[lalias];
+                if(lid == someID)return lalias
+            }
+        }
+    }
+}
 function collectPropIDs(gb,path,name,isNode){
     //alias could be the actual ID, in which case it will simply just return {[id]:id}
     //need path for baseID
@@ -157,13 +207,14 @@ const findID = (objOrGB, name, path) =>{//obj is level above .props, input human
     //if !path, then objOrGB should be level above
     //if path, objOrGb should be gb, path must be !#, !-, !^, !&, !#., !-. 
    
-    let gbid //return undefined if not found
-    let {g,l} = parseSoul(path)
-    let cPath = configPathFromChainPath(path)
-    let ignore
-    let gOrL = (g || l) ? true : false 
-    if(!['groups','props','relations','labels'].includes(cPath[cPath.length-1]))ignore=cPath.pop()
-    search = (!path) ? objOrGB : getValue(cPath,objOrGB)
+    let gbid,gOrL,cPath,ignore//return undefined if not found
+    if(path){
+        let {g,l} = parseSoul(path)
+        cPath = configPathFromChainPath(path)
+        gOrL = (g || l) ? true : false 
+        if(!['groups','props','relations','labels'].includes(cPath[cPath.length-1]))ignore=cPath.pop()
+    }
+    let search = (!path) ? objOrGB : getValue(cPath,objOrGB)
     for (const key in search) {
         if(gOrL){
             const id = search[key]
@@ -391,20 +442,28 @@ function getRowPropFromCache(propertyPath, obj){//DUPLICATE, BUT CURRENTLY USED
     }
 }
 function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb){
+    let startTime = Date.now()
+    console.log('starting Put')
     let IDobj = parseSoul(nodeID) 
-    let {own,mirror,isNew,ctx,noRelations,internalCB} = opts
-    let deleteThis,archive,unarchive
+    let {own,inherit,isNew,ctx,noRelations,isUnique} = opts
+    let deleteThis,archive
+    // if(inherit && !['exact','reference'].includes(inherit)){
+    //     throwError(new Error('if you are copying a node and inheriting, you must specify how to handle the inheritance links'))
+    //     return
+    // }
+    
+    //inherit is for newFrom, it will determine how to handle any enq values 
+    //  (inherit = 'exact' for copying the exact link (parallel), otherwise anything truthy to make a new ref to the 'from' node(serial))
     //own is for editing, it will write putObj to variant even if values match prototype
-    //could use own for newFrom as well? would basically be 'copyFrom'
+    //isUnique will skip the unique check (used from config)
     //noRelations will not copy relationships in that array to the new node
-    //internalCB will basically do all logic, but instead of put data to db, will return all of the things to the CB?
     let ctxType = false
     let {b,t,r,i} = IDobj
     let isNode = !r
     let thingType = makeSoul({b,t,r})
-    let {props,log,parent,variants,labels} = getValue(configPathFromChainPath(nodeID),gb)
-    let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
-    let addedSets = [], refChanges = [], setState = false //contains what user requested in putObj
+    let {props} = getValue(configPathFromChainPath(nodeID),gb)
+    let {relations,labels} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
+    let refChanges = [], setState = false //contains what user requested in putObj
     if(ctx && isNew){
         if(DATA_INSTANCE_NODE.test(ctx)){
             let {t:ct} = parseSoul(ctx)
@@ -420,21 +479,11 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
 
     initialCheck()
     //findIDs and convert userValues to correct value type
-    let timeIndices = {}, logObj = {}, run = [], toPut = {}, err
+    let timeIndices = {},  relationsIndices = {}, logs = {}, run = [], toPut = {}, err
     let allProps = getAllActiveProps(gb,nodeID), putProps = Object.keys(putObj)
-    let newRelations = [], relationsToPut = {}, addRemoveRelations = {}
+    let addRemoveRelations = {}
     
     let ctxValues = {},ctxRaw = {}, existingValues = {}, existingRaw = {}
-    if(refChanges.length && !isNew){
-        run.push(['getRawNodeVals',[makeSoul({b,t,i}),putProps,existingRaw]])
-        run.push(['handleRefChange',[null]])
-        //looks at putObj pval's for those that changes are requested on
-        //for each 
-        //  if removing removeRef, simply put false for whatever id was marked false
-        //  if adding, will need to verify:
-        //      the nodeID exists/not archived,
-
-    }
 
     //if new, the goal is to construct an object given the params and user putObj
     //we will keep updating/mutating putObj through this function
@@ -458,33 +507,27 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         //set state idx value to `false`
         run.push(['changeArchive',[true]])
        
-    }else if(unarchive){
-        //inverse of archive
-        run.push(['changeArchive',[false]])
-
     }else if(isNew){
         if(isNode){
             if(!ctx){//just creating a regular new node
                 //gbase.base(b).nodeType(root:'').newNode()
                 //check userVals
+                if(refChanges.length)run.push(['handleRefChanges',[null]])
                 run.push(['constraintCheck',[null]])
             }else if(ctxType === 'from'){
                 run.push(['getCells',[ctx,allProps,ctxValues,false]])
-                if(!own)run.push(['getRawNodeVals',[ctx,allProps,ctxRaw]])
-                run.push(['getRelations',[null]])
+                if(inherit)run.push(['getRawNodeVals',[ctx,allProps,ctxRaw]])
+                run.push(['copyCtxRelations',[null]])
                 run.push(['cleanCopyCtx',[null]])
-                run.push(['handleRefChanges',[null]])
+                if(refChanges.length)run.push(['handleRefChanges',[null]])
                 run.push(['constraintCheck',[null]])
 
             }
         }else if(!isNode){//creating a new relationshipNode
             //gbase.node(SRC).relatesTo(TRGT,relationship,props)
             //putObj should have at least two props: source, target
-            run.push(['constraintCheck',[null]])//need to make this work with relations..
-            run.push(['setupRelationship',[r,putObj]])//need to break it out like this since isNew datanode uses the same function
-            //setupRelationship -> 
-            //  Need to add data to src and trgt dataNodes in appropriate places for this relation
-            //  Also need to index this relation node
+            run.push(['constraintCheck',[null]])
+            run.push(['setupRelationship',[nodeID,putObj]])//need to break it out like this since isNew (from) datanode uses the same function
         }
         
     }else if(isNode){//editing a dataNode
@@ -497,6 +540,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         run.push(['constraintCheck',[null]])
 
     }else if(!isNode){//editing a relation
+        //see if putProps.includes(srcP && trgtP) if not, add them to the putProps? Add them to the putObj?
+        let [srcP] = hasPropType(gb,nodeID,'source')
+        let [trgtP] = hasPropType(gb,nodeID,'target')
+        if(!putProps.includes(srcP))run.push(['getAddPvalToPutObj',[srcP]])
+        if(!putProps.includes(trgtP))run.push(['getAddPvalToPutObj',[trgtP]])
+
         run.push(['getRawNodeVals',[nodeID,putProps,existingRaw]])
         run.push(['constraintCheck',[null]])
     }
@@ -533,7 +582,17 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             for (const p of pvals) {
                 getCell(id,p,function(value,from){
                     if(!ownProp || (ownProp && from === id)){
+                        let {b,t,r} = parseSoul(id)
+                        let propPath = makeSoul({b,t,r,p})
+                        let {dataType} = getValue(configPathFromChainPath(propPath),gb)
                         //get all sets to {}?? Need to diff with raw,prev,new. raw and new should be objects already..
+                        if(dataType === 'unorderedSet' && Array.isArray(value)){
+                            let setObj = {}
+                            for (const val of value) {
+                                setObj[val] = true
+                            }
+                            value = setObj
+                        }
                         setValue([p],value,collector)
                     }
                     toGet--
@@ -543,40 +602,54 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 },true)
             }
         },
-        getRelations: function(){
+        getAddPvalToPutObj: function(pval){
+            getCell(nodeID,pval,function(value){
+                putObj[pval] = value
+                runNext()
+            },true)
+
+        },
+        copyCtxRelations: function(){
             let {b,t,i} = parseSoul(ctx)
             let idxSoul = makeSoul({b,t,r:true,i})
+            let relationSouls = []
             gun.get(idxSoul).once(function(firstIdx){
-                let firstGets = []
-                for (const key in firstIdx) {
-                    if(key === '_')continue
-                    if(typeof firstIdx[key] === 'object' && !noRelations.includes(key))firstGets.push(key)
+                let hasRs = []
+                for (const rID in firstIdx) {
+                    if(rID === '_')continue
+                    if(typeof firstIdx[rID] === 'object' && firstIdx[rID] !== null && !noRelations.includes(rID)){
+                        hasRs.push(makeSoul({b,t,r:rID,i}))
+                    }
                 }
-                if(firstGets.length){
-                    let secondGets = []
-                    for (const secondGet of firstGets) {
-                        gun.get(firstIdx).get(secondGet).once(function(list){
+                let hasR = hasRs.length
+                if(hasR){
+                    for (const relationList of hasRs) {
+                        gun.get(relationList).once(function(list){
                             for (const key in list) {
                                 if(key === '_')continue
-                                const [dir] = key.split(','), isRef = list[key];
-                                if(typeof isRef === 'object' && dir === '>')secondGets.push(isRef['#'])
+                                const [dir,rSoul] = key.split(','), isRef = list[key];
+                                if(typeof isRef === 'object' && isRef !== null && dir === '>')relationSouls.push(rSoul)
                             }
-                            if(secondGets.length){
-                                let count = secondGets.length
-                                for (const relationSoul of secondGets) {
-                                    gun.get(relationSoul).once(function(relationNode, soul){
-                                        let data = JSON.parse(JSON.stringify(relationNode))
-                                        delete data['_']
-                                        data.source = nodeID
-                                        let {r} = parseSoul(soul)
-                                        run.unshift(['setupRelationship',[r,data]])
-                                        count--
-                                        if(!count){
-                                            runNext()
-                                        }
-                                    })
-                                }
-                            }else{
+                            hasR--
+                            if(!hasR)getRelationNodes()
+                        })
+                    }
+                }else{
+                    runNext()
+                }
+            })
+            function getRelationNodes(){
+                let rToGet = relationSouls.length
+                if(rToGet){
+                    for (const relationSoul of relationSouls) {
+                        gun.get(relationSoul).once(function(relationNode){
+                            let data = JSON.parse(JSON.stringify(relationNode))
+                            delete data['_']
+                            let [srcPval] = hasPropType(gb,relationSoul,'source')
+                            data[srcPval] = nodeID //should overwrite the existing 'source' nodeID
+                            run.unshift(['setupRelationship',[relationSoul,data]])
+                            rToGet--
+                            if(!rToGet){
                                 runNext()
                             }
                         })
@@ -584,8 +657,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 }else{
                     runNext()
                 }
-            })
-    
+            }
                 // .map((node,key) =>{
                 //     firstCount++
                 //     if(noRelations.includes(key)){//key should be the rtID
@@ -615,76 +687,27 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 // })
         
         },
-        verifyNewChild: function(){
-
-            let curVal = Object.values(ctxValues)[0]//will only ever have a single value if this fn is running
-            let {b: cb,t: ct,i,p} = parseSoul(ctx)
-            let ctxNodeID = makeSoul({b: cb,t: ct,i})
-            let {allowMultiple} = getValue(configPathFromChainPath(makeSoul({b: cb,t: ct,p})),gb)
-            let [parentPval] = hasPropType(gb,makeSoul({b,t}),'parent') || []
-            if(!parentPval){
-                let e = new Error('Cannot find the "parent" property for this child node')
-                throwError(e)
-                return
-            }
-            //curVal could be Enq, undefined, null, string(!multi), object(multi)
-            if([undefined,null].includes(curVal)){
-                //we can perform this create, given any settings
-                //if multi need to addToPut a gun ref to the new unordered set
-            }else if(!allowMultiple && DATA_INSTANCE_NODE.test(curVal)){
-                let e = new Error('Cannot add a new node until you remove the old child')
-                throwError(e)
-            }else if(isEnq(curVal)){
-                changeEnq(false,ctxNodeID,curVal.slice(1),p)
-
-            }
-            if(allowMultiple && typeof curVal !== 'object'){
-                addToPut(ctxNodeID,{[p]:{'#':makeSoul({b: cb,t: ct,i,p})}})
-
-            }
-            putObj[parentPval] = ctxNodeID//other than an import, this is the only time/way to set this value
-
-            runNext()
-        },
-        cleanCopyCtx: function(){//kind of like cleanPut, but for isNew
+        cleanCopyCtx: function(){//kind of like cleanPut, but for isNew (from)
             let temp = {}
             console.log(props,ctxValues,ctxRaw)
             for (const pval in ctxValues) {
-                let {autoIncrement,enforceUnique,propType,dataType} = props[pval]
+                let {autoIncrement,enforceUnique} = props[pval]
                 let val = ctxValues[pval];
                 let raw = ctxRaw[pval]
                 let userVal = putObj[pval]
-                if(['lookup','child'].includes(propType)){
-                    val = convertValueToType(ctxValues[pval],dataType)
-                    userVal = (userVal) ? convertValueToType(userVal,dataType) : undefined
-                }
-                if(propType === 'parent'){
-                    if(userVal && DATA_INSTANCE_NODE.test(userVal) && parseSoul(userVal).t === parseSoul(parent).t){
-                        temp[pval] = userVal
-                    }else if(!userVal){
-                        temp[pval] = val
-                    }else{
-                        let e = new Error('Value specified for "parent" is of incorrect type')
-                        throwError(e)
-                        break
-                    }
-                }else if(!own && variants && (userVal === undefined || userVal && userVal === val) && !enforceUnique && !autoIncrement){
-                    if(isEnq(raw) && mirror){
+                if(inherit && (userVal === undefined || userVal && userVal === val) && !enforceUnique && !autoIncrement){
+                    if(isEnq(raw) && inherit === 'exact'){
                         temp[pval] = raw //directly look at the reference on the other node (parallel links)
                     }else{
-                        temp[pval] = makeEnq(ctx) //no user input, we will inheit from ref (potentially serial links)
+                        temp[pval] = makeEnq(ctx,pval) //no user input, we will inherit from ref (potentially serial links)
                     }
-                }else if((own || !variants) && userVal === undefined && !enforceUnique && !autoIncrement){
+                }else if(!inherit && userVal === undefined && !enforceUnique && !autoIncrement){
                     temp[pval] = val
                 }else if(userVal){//user values always go
                     temp[pval] = userVal
                 }
             }
             putObj = temp
-            for (const newRelation in newRelations) {
-                const rObj = newRelations[newRelation];
-                
-            }
             runNext()
         },
         cleanPut: function(){//ran on edit
@@ -706,9 +729,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             //if isNew, simply addEnq when found
             //  else need to removeEnq if changing a enq
 
-            //user could directly pass in an isEnq userVal? It would have gotten to here without being handled yet.
-            //would need to verify it is of same nodeType is all.
-
             for (const pval in putObj) {
                 let {dataType} = props[pval]
                 const val = putObj[pval];
@@ -717,17 +737,20 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 
                 if(isEnq(val)){//making new val an enq (or changing it)
                     let childAddress = val.slice(1)
+                    let thisAddr = toAddress(nodeID,pval)
                     if(isEnq(curR)){
                         let removeAddress = curR.slice(1)
-                        changeEnq(false,nodeID,removeAddress,pval)
+                        changeEnq(false,thisAddr,removeAddress,pval)
                     }
-                    changeEnq(true,nodeID,childAddress,pval)
+                    changeEnq(true,thisAddr,childAddress,pval)
                 }
                 
                 if(isEnq(curR) && dataType === 'unorderedSet' && !isEnq(val)){
-                    addedSets.push(pval)
-                    if(typeof val === 'object' && val !== null && typeof enqV === 'object' && enqV !== null ){ //?? Not sure...
-                        putObj[pval] = Object.assign({},enqV,val)
+                    if(typeof val === 'object' && val !== null){ //val must be an object
+                        let refVal = (typeof enqV === 'object' && enqV !== null) ? enqV : {}
+                        putObj[pval] = Object.assign({},refVal,val) //merge userVal with inherited value? Assumes user is giving partial changes to put on new Obj
+                    }else if(val === null){//or null
+                        putObj[pval] = val
                     }
                 }
             }
@@ -737,31 +760,28 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         constraintCheck: function(){
             for (const pval in props) {
                 let input = putObj[pval]
-                let pconfig = props[pval]
-                let {required,defaultval,autoIncrement, enforceUnique, alias, dataType} = pconfig
+                let {required,defaultval,autoIncrement, enforceUnique, alias, dataType} = props[pval]
                 if(input !== undefined//user putting new data in
                     || (isNew 
-                    && (required || autoIncrement !== ""))//need to have it or create it
+                        && (required || autoIncrement))//need to have it or create it
                     ){//autoIncrement on this property
                     if(isNew){
                         if(required 
                             && input === undefined 
                             && defaultval === null 
                             && !autoIncrement){//must have a value or autoIncrement enabled
-                            throw new Error('Required field missing: '+ alias)
+                            let e = new Error('Required field missing: '+ alias)
+                            throwError(e)
+                            return
                         }
                         if(input === undefined && defaultval !== null){
                             putObj[pval] = defaultval
                         }
                         
                     }
-                    if ((enforceUnique && putObj[pval] !== null && putObj[pval] !== undefined)//must be unique, and value is present OR
-                        || (autoIncrement !== "" && putObj[pval] === undefined && isNew)){//is an autoIncrement, no value provided and is a new node
+                    if (!isUnique && ((enforceUnique && putObj[pval] !== null && putObj[pval] !== undefined)//must be unique, and value is present OR
+                        || (autoIncrement && putObj[pval] === undefined && isNew))){//is an autoIncrement, no value provided and is a new node
                         run.unshift(['checkUnique',[pval]])
-                    }
-                    if(dataType === 'unorderedSet' && (addedSets.includes(pval) || typeof putObj[pval] === 'object')){//make sure set node is refd on node pval
-                        //have to addToPut directly, because putObj contains the actual set on that pval prop
-                        addToPut(nodeID,{[pval]:{'#':makeSoul({b,t,i,r,p:pval})}})
                     }
                 }else{//value undefined
                     if(dataType === 'unorderedSet' && isNew){//for new nodes, always put some value in for unorderedSets
@@ -772,10 +792,10 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             runNext()
         },
         checkUnique(pval){
-            let pconfig = props[pval]
-            let {start,inc} = parseIncrement(pconfig.autoIncrement) || {inc:false}
+            let {enforceUnique, alias, dataType, autoIncrement} = props[pval]//dataType can only be 'string' or 'number' w/ enforceUnique:true || 'number' w/ inc
+
+            let {start,inc} = parseIncrement(autoIncrement) || {inc:false}
             let {b,t,r} = parseSoul(nodeID)
-            let {enforceUnique, alias, dataType} = pconfig//dataType can only be 'string' or 'number' w/ enforceUnique:true || 'number' w/ inc
             let putVal
             let listID = makeSoul({b,t,r,p:pval})
             try {
@@ -845,9 +865,16 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 })
             }
         },
-        setupRelationship: function(relationType, rtInstancePut){
-            let {source,target} = rtInstancePut
-            let r = relationType
+        setupRelationship: function(relationTypepath, rtInstancePut){//create a relationship
+            let {b,r} = parseSoul(relationTypepath)
+            let [sPval] = hasPropType(gb,relationTypepath,'source')
+            let [tPval] = hasPropType(gb,relationTypepath,'target')
+            let [statePval] = hasPropType(gb,relationTypepath,'state')
+
+            let source = rtInstancePut[sPval]
+            let target = rtInstancePut[tPval]
+            rtInstancePut[statePval] = 'active'
+
             if(!DATA_INSTANCE_NODE.test(source)){
                 let e = new Error('Invalid Source')
                 throwError(e)
@@ -859,7 +886,11 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 return
             }
             let newRelationSoul = makeSoul({b,r,i:newRelationID(source,target)})
-            addToPut(newRelationSoul,rtInstancePut,relationsToPut)
+
+
+            //addToPut(newRelationSoul,rtInstancePut,relationsToPut)
+            decomposePutObj(newRelationSoul,rtInstancePut,true)
+
             addRemoveRelations[newRelationSoul] = true
             {
                 let {b,t,i} = parseSoul(source)
@@ -879,37 +910,11 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             }
         },
         deleteRelationship: function(relationID){
-            let {source,target} = rtInstancePut
-            let r = relationID
-            if(!DATA_INSTANCE_NODE.test(source)){
-                let e = new Error('Invalid Source')
-                throwError(e)
-                return
-            }
-            if(!DATA_INSTANCE_NODE.test(target)){
-                let e = new Error('Invalid Target')
-                throwError(e)
-                return
-            }
-            let newRelationSoul = makeSoul({b,r,i:newRelationID(source,target)})
-            addToPut(newRelationSoul,rtInstancePut,relationsToPut)
-            addRemoveRelations[newRelationSoul] = true
-            {
-                let {b,t,i} = parseSoul(source)
-                let srcIdx = makeSoul({b,t,r:true,i})
-                let rtSoul = makeSoul({b,t,r,i})
-                addToPut(srcIdx,{[r]:{'#':rtSoul}})//probably redundant, but can avoid a read this way
-                let key = '>,'+newRelationSoul
-                addToPut(rtSoul,{[key]:{'#':newRelationSoul}})
-            }
-            {
-                let {b,t,i} = parseSoul(target)
-                let trgtIdx = makeSoul({b,t,r:true,i})
-                let rtSoul = makeSoul({b,t,r,i})
-                addToPut(trgtIdx,{[r]:{'#':rtSoul}})//probably redundant, but can avoid a read this way
-                let key = '<,'+newRelationSoul
-                addToPut(rtSoul,{[key]:{'#':newRelationSoul}})
-            }
+            //need to have get Node, then null source and target references to this relation
+            //then get null allActiveProps for this type (leave source and target? state: 'deleted'?)
+            
+            addRemoveRelations[newRelationSoul] = false //for logObj??
+
         },
         deleteNode: function(){
 
@@ -917,7 +922,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         changeArchive: function(archiving){
             let [stateP] = hasPropType(gb,thingType,'state')
             let state = (archiving && 'archived') || 'active'
-            putObj = {[stateP]:state}
+            putObj[stateP] = state
             let stateSoul = makeSoul({b,t,r,i:true})
             addToPut(stateSoul,{[nodeID]:!archiving})
             runNext()
@@ -938,11 +943,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             if(dataType === 'array'){
                 cVal = JSON.parse(cVal)//convert value will stringify arrays so they are gun ready
             }
-            if(isEnq(cVal) && parseSoul(cVal.slice(1)).t !== t){
-                //should it error?
-                //For now, just remove?
-                throw new Error('Invalid inheritance marker on prop: '+ alias)
-            }else if(isEnq(cVal)){
+            if(isEnq(cVal)){
                 refChanges.push(cVal)
             }
             if(propType === 'labels'){
@@ -963,12 +964,10 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 }
             }else if(propType === 'state'){//need to do what the 'state' says
                 let validStates = ['active','archived','deleted']
-                if(!validStates.includes(cVal))throw new Error('Invalid state. Must be on of: '+validStates.join(', '))
+                if(!validStates.includes(cVal))throw new Error('Invalid state. Must be one of: '+validStates.join(', '))
                 if(cVal === 'archived')archive = true
-                if(cVal === 'active' && !isNew)unarchive = true
                 if(cVal === 'deleted')deleteThis = true
                 setState = true
-                //if(archived > active) need to truthy on all indices
                 //if(active> archived) need to falsy on all indices
                 //if( ... > deleted) ignore all values from user and make all props = null (including metaData, unorderedSets, relationships (delete those as well))
             }else if(propType === 'date'){
@@ -1000,66 +999,143 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         noRelations = found
     }
     function runNext(){
+        //console.log(JSON.stringify(run[0]))
         if(run.length && !err){
             let [fn, args] = run[0]
             run.shift()
             util[fn](...args)
         }else if (!err){
-            let sorted
-            try {
-                sorted = sortPutObj(gb,nodeID,putObj)
-            } catch (error) {
-                throwError(error)
-            }
-            Object.assign(toPut,sorted.toPut)
-            timeIndices = sorted.tIdx
-            logObj = sorted.logObj
+
+
+
+            decomposePutObj(nodeID,putObj,isNew)
+
+
+            // let sorted
+            // try {
+            //     sorted = sortPutObj(gb,nodeID,putObj)
+            // } catch (error) {
+            //     throwError(error)
+            // }
+            // Object.assign(toPut,sorted.toPut)
+            // timeIndices = sorted.tIdx
+            // logObj = sorted.logObj
             done()
         }
     }
-    function done(){
-        console.log(toPut)
-        //return
-
-        if(isNode){
-            
-            Object.assign(logObj,addRemoveRelations)
-            if(log)timeLog(nodeID,logObj)//log changes
-            if(isNew){//if new add to 'created' index for that thingType
-                let {b,t} = parseSoul(nodeID)
-                let typeSoul = makeSoul({b,t})
-                let stateIdx = makeSoul({b,t,i:true})
-                console.log('new created', typeSoul, nodeID)
-                timeIndex(typeSoul,nodeID,new Date())
-                gun.get(stateIdx).put({[nodeID]:true})
-            }
-
-            //run cascade here?????
+    function decomposePutObj(id,putObj,isNew){
+        let {b,t,r} = parseSoul(id)
+        let isNode = !r
+        let {log,props} = getValue(configPathFromChainPath(id),gb)
+        let source,target,logObj = {}
+        for (const pval in putObj) {
+            let propPath = toAddress(id,pval)
+            let value = putObj[pval]
+            let {propType, dataType, alias, pickOptions} = props[pval]
+            let v = convertValueToType(value,dataType,id)//Will catch Arrays, and stringify, otherwise probably unneccessary
+            let specials =  ['function']//["source", "target", "parent", "child", "lookup", "function"]//propTypes that can't be changed through the edit API
     
-        }else{//relations
-            //HANDLE ARCHIVE OR DELETE HERE?
+            if(propType === undefined || dataType === undefined){
+                throwError('Cannot find prop types for property: '+ alias +' ['+ pval+'].')
+                return
+            }
+            if(propType === 'date'){
+                timeIndices[propPath] = {value:id,unix:v}
+                addToPut(id,{[pval]:value})
+                logObj[pval] = value
+            }else if(dataType === 'unorderedSet'){
+                if(propType === 'pickList' && v !== null){
+                    for (const pick in v) {
+                        const boolean = v[pick];
+                        if(boolean && !pickOptions.includes(pick)){//make sure truthy ones are currently valid options
+                            let err = new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
+                            throw err
+                        }
+                    }
+                }else if(propType === 'labels' && v !== null){
+                    for (const label in v) {
+                        let labelIdx = makeSoul({b,t,l:label})
+                        const boolean = v[pick];
+                        if(boolean){
+                            let labelList =  makeSoul({b,t,l:true})
+                            addToPut(labelList,{[label]:true})
+                        }
+                        addToPut(labelIdx,{[id]:!!boolean})
+                    }
+                }
+                if(v === null){
+                    addToPut(id,{[pval]: v})
+                }else{
+                    addToPut(propPath,v)
+                    addToPut(id,{[pval]: {'#': propPath}})//make sure the set is linked to?
+                }
+                logObj[pval] = v
+    
+            }else if(propType === 'state'){
+                let stateIdx = makeSoul({b,t,r,i:true})
+                let stateValue
+                if(v === 'active')stateValue = true
+                else if(v === 'archived')stateValue = false
+                else if(v === 'deleted')stateValue = null
+                addToPut(stateIdx,{[id]:stateValue})
+                addToPut(id,{[pval]: v})//also on node
+                logObj[pval] = v
+            }else if(!specials.includes(propType)){
+                addToPut(id,{[pval]: v})
+                logObj[pval] = v
+           
+            }
+            if(propType === 'source')source = v
+            if(propType === 'target')target = v
+    
         }
+
+        //created index
+        if(isNew && isNode){//if new add to 'created' index for that thingType
+            let typeSoul = makeSoul({b,t})
+            let [rand, created] = id.split('_')
+            timeIndices[typeSoul] = {value:id,unix: created} 
+        }
+        if(isNew && !isNode){//if new add to 'created' index
+            let {t:st} = parseSoul(source)
+            let {t:tt} = parseSoul(target)
+            relationsIndices[id] = {sourceT: st, targetT: tt} 
+        }
+
+        //logs
+        if(isNode){
+            if(log)addToPut(id,logObj,logs)
+        }else{
+            let {log:sLog} = getValue(configPathFromChainPath(source),gb)
+            let {log:tLog} = getValue(configPathFromChainPath(target),gb)
+            if(sLog || tLog)addToPut(id,logObj,logs)
+        }
+    }
+    function done(){
+        if(err)return
+        console.log(toPut)
+        //return      
          
         for (const soul in toPut) {
             const putObj = toPut[soul];
-            if(Object.keys(putObj).length)continue
+            if(!Object.keys(putObj).length)continue
             gun.get(soul).put(putObj)
         }
-        for (const soul in relationsToPut) {
-            const putObj = relationsToPut[soul];
-            if(Object.keys(putObj).length)continue
-            let {source,target} = putObj
-            let {t:st} = parseSoul(source)
-            let {t:tt} = parseSoul(target)
-            relationIndex(gun,soul,st,tt)
-            //STILL NEED TO HANDLE ARCHIVE OR DELETING OF A RELATIONSHIP
-            gun.get(soul).put(putObj)
+        for (const index in timeIndices) {
+            const {value,unix} = timeIndices[index];
+            let d = new Date(unix*1)
+            timeIndex(index,value,new Date(unix*1))
         }
-        for (const key in timeIndices) {//for each 'date' column, index
-            const unixTS = timeIndices[key];
-            timeIndex(key,nodeID,new Date(unixTS))
-            console.log('indexing prop', key, unixTS)
+        for (const soul in relationsIndices) {
+            const {sourceT,targetT} = relationsIndices[soul];
+            relationIndex(gun,soul,sourceT,targetT)
         }
+
+        for (const nodeIDtoLog in logs) {
+            const logObj = logs[nodeIDtoLog];
+            timeLog(nodeIDtoLog,logObj)
+        }
+        console.log('ms to put Data:',Date.now()-startTime)
         cb.call(this, undefined, nodeID)
     }
     function throwError(errmsg){
@@ -1068,45 +1144,25 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         console.log(error)
         cb.call(cb,error)
     }
-    function changeEnq(add,parentID,childID,pval){
+    function changeEnq(add,parentAddr,childAddr){
         //verify parent and child are of the same nodeType
-        if(!DATA_INSTANCE_NODE.test(parentID) && !isEnq(parentID)){
+        if(!DATA_PROP_SOUL.test(parentAddr) && !isEnq(parentAddr)){
             let err = 'Invalid parent ID referenced for an inheritance'
             throwError(err)
             return
         }
-        if(!DATA_INSTANCE_NODE.test(childID) && !isEnq(childID)){
+        if(!DATA_PROP_SOUL.test(childAddr) && !isEnq(childAddr)){
             let err = 'Invalid child ID referenced for an inheritance'
             throwError(err)
             return
         }
-        parentID = (DATA_INSTANCE_NODE.test(parentID)) ? parentID : isEnq(parentID)//make sure it is in soul form
-        childID = (DATA_INSTANCE_NODE.test(childID)) ? childID : isEnq(childID)
-        let {b,t,i} = parseSoul(parentID)
-        parentID = makeSoul({b,t,i})
-        let {b:cb,t:ct,i:cr} = parseSoul(childID)
-        let p = pval
-        if(t !== ct){
-            let err = 'Can only inherit values from nodes of the same type'
-            throwError(err)
-            return
-        }
+        let cSoulObj = parseSoul(childAddr)
 
-        let childUP = makeSoul({b:cb,t:ct,i:cr,p,'/':'UP'})
-        let pputVal = (add) ? {[p]:makeEnq(childID)} : {[p]:null}
-        let cputVal = {[parentID] : !!add}
-        addToPut(parentID,pputVal)
+        let childUP = makeSoul(Object.assign(cSoulObj,{'/':'UP'}))
+        //let pputVal = (add) ? {[p]:makeEnq(childProp)} : {[p]:null}
+        let cputVal = {[parentAddr] : !!add}
+        //addToPut(parentNode,pputVal) parent is always the node being edited/created so it's values are in the putObj
         addToPut(childUP,cputVal)
-    }
-    function changeLabel(add,labelID){
-        let labelIndex = makeSoul({b,t,f:labelID})
-        let putVal = {[nodeID]:false}
-        if(add){
-            let labelList =  makeSoul({b,t,f:true})
-            addToPut(labelList,{[listID]:true})
-            putVal = {[nodeID]:{'#':nodeID}}
-        }
-        addToPut(labelIndex,putVal)
     }
     function addToPut(soul,putObj,obj){
         obj = obj || toPut
@@ -1178,8 +1234,10 @@ function makeEnq(nodeOrAddress,p){
     let soul = nodeOrAddress
     if(p && DATA_INSTANCE_NODE.test(nodeOrAddress)){
         soul = makeSoul(Object.assign({},parseSoul(nodeOrAddress),{p}))
+    }else if(USER_ENQ.test(nodeOrAddress)){
+        soul = nodeOrAddress.match(USER_ENQ)[1]
     }
-    if(!PROPERTY_PATTERN.test(soul))throw new Error('Must specify a full address for a substitute.')
+    if(!ALL_ADDRESSES.test(soul))throw new Error('Must specify a full address for a substitute.')
     return ENQ+soul
 }
 function parseIncrement(incr){
@@ -1256,6 +1314,9 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
     if(toType === undefined) throw new Error('Must specify what "type" you are trying to convert ' + value + ' to.')
     if(isEnq(value))return value//this is a lookup value, just return it.
+    if(USER_ENQ.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
+        return makeEnq(value)
+    }
     delimiter = delimiter || ', '
 
     if(toType === 'string'){
@@ -1449,8 +1510,8 @@ function removeFromArr(item,arr){
     return arr
 }
 function hasPropType(gb, tPathOrPpath, type){
-    let {b,t} = parseSoul(tPathOrPpath)
-    let tPath = makeSoul({b,t})
+    let {b,t,r} = parseSoul(tPathOrPpath)
+    let tPath = makeSoul({b,t,r})
     let {props} = getValue(configPathFromChainPath(tPath), gb) || {}
     let cols = []
     for (const pval in props) {
@@ -1735,31 +1796,34 @@ Object.defineProperty(Cache.prototype, "watch", {
   , configurable: true
   , writable: false
   , value: function (prop, handler) {
-        const getter = function () {
-            let val = this[prop]
-            let lookup = isEnq(val)
-            if(lookup){
-                return this[lookup]
-            }else{
-                return [prop, val]
-            }
-        }
-        const setter = function (newval) {
-            this[prop] = newval;
-            //we cannot check to see if it has changed automatically
-            //must do that by other means before setting value
-            //once set, callback will fire
-            let get = this[prop] //if isEnq, will not be the same as newval, getter is different
-            handler.call(this,prop,get);
-        }
         Object.defineProperty(this, prop, {
-            get: getter
-            , set: setter
+            get: function () {
+                let val = this[prop]
+                let lookup = isEnq(val)
+                console.log(this,prop,val,lookup)
+    
+                if(lookup){
+                    return this[lookup]
+                }else{
+                    return [prop, val]
+                }
+            }
+            , set: function (newval) {
+                this[prop] = newval;
+                console.log(this)
+                //we cannot check to see if it has changed automatically
+                //must do that by other means before setting value
+                //once set, callback will fire
+
+                //let get = this[prop] //if isEnq, will not be the same as newval, getter is different
+                //handler.call(this,prop,newval);
+            }
             , enumerable: true
             , configurable: true
         });
     }
 });
+const cache = {}
 
 module.exports = {
     cachePathFromChainPath,
@@ -1781,6 +1845,7 @@ module.exports = {
     getDataType,
     tsvJSONgb,
     Cache,
+    cache,
     allUsedIn,
     removeFromArr,
     hasPropType,
@@ -1789,7 +1854,6 @@ module.exports = {
     setRowPropCacheValue,
     bufferPathFromSoul,
     getAllActiveProps,
-    formatQueryResults,
     buildPermObj,
     rand,
     makeSoul,
@@ -1817,5 +1881,6 @@ module.exports = {
     getAllActiveNodeTypes,
     getAllActiveRelations,
     collectPropIDs,
-    intersect
+    intersect,
+    findConfigFromID
 }

@@ -15,7 +15,8 @@ const {convertValueToType,
     DATA_INSTANCE_NODE,
     PROPERTY_PATTERN,
     sortPutObj,
-    IS_CONFIG_SOUL
+    IS_CONFIG_SOUL,
+    putData
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -35,10 +36,9 @@ const newNodeTypeConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let log = config.log || false
-    let variants = config.variants || false //newFrom()
     let externalID = config.externalID || '' //pval of which prop is an ID
-    let humanID = config.humanID
-    return {alias, log, archived, deleted, variants, externalID,humanID}
+    let humanID = config.humanID || ''
+    return {alias, log, archived, deleted, externalID, humanID}
 }
 const newNodePropConfig = (config) =>{
     config = config || {}
@@ -49,7 +49,7 @@ const newNodePropConfig = (config) =>{
     let deleted = config.deleted || false
     let hidden = config.hidden || false
     let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids
-    let allowMultiple = config.allowMultiple || defMulti[propType] || false
+    let allowMultiple = config.allowMultiple || false
     let required = config.required || false 
     let sortval = config.sortval || 0
     let defaultval = config.defaultval || null //null represents no default. Anything other than null will be injected at node creation.
@@ -67,7 +67,7 @@ const newNodePropConfig = (config) =>{
         dataType = 'number'
     }
 
-    return {alias, archived, deleted, hidden, propType, dataType, linksTo, sortval, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple}
+    return {alias, archived, deleted, hidden, propType, dataType, sortval, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple}
 }
 const newRelationshipConfig = (config) =>{
     config = config || {}
@@ -95,7 +95,7 @@ const newRelationshipPropConfig = (config) =>{
 }
 const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
 const validNodePropTypes = ["data", "date", "pickList", "labels", "state", "function", "file"]
-const validRelationPropTypes = ["data", "date", "pickList", "file"]
+const validRelationPropTypes = ["data", "date", "pickList", "file","source","target","state","function"]
 const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj, type) =>{//use for new configs, or update to configs
     if(!type)throw new Error('Must specify whether this is a node or a relation')
@@ -144,7 +144,7 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
     }
 }
 
-const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => function cChange(configObj, path, opts, cb){
+const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog, timeIndex) => (configObj, path, opts, cb) =>{
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let {isNew,internalCB} = opts || {}
@@ -153,7 +153,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
     let cpath = configPathFromChainPath(path)
     let csoul = configSoulFromChainPath(path)
     let thisConfig = getValue(cpath,gb) || {}
-    let toPut = {},configPuts={}, cPut = configPuts[csoul] = {}, tempStore = {},soulList = [],run = [],prevHIDs= {},nextHIDs= {}
+    let toPut = {},configPuts={}, cPut = configPuts[csoul] = {}, tempStore = {},soulList = [],run = []
     let getData = false, convertData = false,err, typeChange = false
     let pType = (configObj.propType !== undefined) ? configObj.propType : thisConfig.propType
     let delimiter = configObj.delimiter || ', '
@@ -185,7 +185,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
     }else if(configObj.dataType && thisConfig.propType === 'data'){//only changing dataType
         run.push(['changeDataType',[configObj.dataType]])
     }else if(!run.length && !Object.keys(cPut).length){
-        throw new Error('Cannot make changes specified. Be sure to use the correct API for linking/lookup changes.')
+        throw new Error('No configs to change')
     }
     const util = {
         getList: function(whatPath,toObj,listOnly){
@@ -221,27 +221,6 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
                 
             })
         },
-        getUniques: function(whatPath,toObj,byValue){
-            //whatPath must be !#. It should be base,nodeType/relationType,prop
-            //Check to make sure soul is correct
-            let {b,t,r,p} = parseSoul(whatPath)
-            let dataIndex = makeSoul({b,t,r,p})//uniques, soul
-            gun.get(dataIndex).once(function(data){
-                if(data === undefined){runNext(); return}//for loop would error if not stopped
-                for (const soul in data) {
-                    if(!DATA_INSTANCE_NODE.test(soul))continue
-                    let v = data[soul]
-                    if(v !== null && v !== ''){
-                        if(byValue){
-                            toObj[v] = soul
-                        }else{
-                            toObj[soul] = v
-                        }
-                    }
-                }
-                runNext()
-            })
-        },
         changeDataType: function(toType){//only used to convert all values for property this config() was called for. any others need manual conversion
             let from = thisConfig.dataType
             let toSingle = (configObj.allowMultiple === false && thisConfig.allowMultiple === true) ? true : false
@@ -250,81 +229,107 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
                 throwErr('Can only change unorderedSet to: "array" or "string". Can only change an array to: "unorderedSet" or "string"')
                 return
             }
-            for (const soul in tempStore) {
-                const value = tempStore[soul];
-                if(Array.isArray(value) && toSingle && value.length > 1){
-                    throwErr('Too many values in Array for {allowMultiple: false} setting')
-                    return
-                }
-                try {
-                    let v = convertValueToType(value,toType,soul,delimiter)
-                    tempStore[soul] = v
-                    addToPut(soul,{[p]:v},toPut)//might be overwritten later, but if not, this is the only time it is added to the output
-                } catch (error) {
-                    if(pType === 'date'){
-                        throwErr('Cannot parse values into a date.')
-                    }else{
-                        throwErr(error)
+            getList(function(list){
+                for (const idOnList in list) {
+                    const value = list[idOnList];
+                    if(Array.isArray(value) && toSingle && value.length > 1){
+                        throwErr('Too many values in Array for {allowMultiple: false} setting')
+                        return
                     }
-                    return
+                    try {
+                        let v = convertValueToType(value,dType,idOnList,delimiter)
+                        tempStore[soul] = v
+                        addToPut(soul,{[p]:v},toPut)//might be overwritten later, but if not, this is the only time it is added to the output
+                    } catch (error) {
+                        if(pType === 'date'){
+                            throwErr('Cannot parse values into a date.')
+                        }else{
+                            throwErr(error)
+                        }
+                        return
+                    }
                 }
+                runNext()
+            })
+            function getList(cb){
+                let stateSoul = makeSoul({b,t,r,i:true})
+                let toObj = {}
+                let soulList = []
+                gun.get(stateSoul).once(function(data){
+                    if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
+                    for (const soul in data) {
+                        if(!ALL_INSTANCE_NODES.test(soul))continue
+                        if(data[soul] !== null){//not Deleted
+                            //this means `false` will pass through, so archived items will still keep increment and unique values enforced
+                            soulList.push(soul)
+                        }
+                    }
+                    let toGet = soulList.length
+                    if(!toGet)cb.call(cb,toObj)
+                    for (const soul of soulList) {
+                        getCell(soul,p,function(val,from){
+                            toGet--
+                            if(soul === from){
+                                toObj[from] = val
+                            }
+                            if(!toGet){
+                                cb.call(cb,toObj)
+                            }
+                        },true)
+                    }
+                })
             }
-            runNext()
         },
         checkUnique: function(){
-            let vals = Object.values(tempStore)
-            let set = new Set(vals)
-            if(set.size !== vals.length){
-                throwErr('Non-Unique values already exist. Remove duplicates and try again. Expected: '+vals.length+' unique values. Found: '+set.size)
+
+            getList(function(list){
+                list = list || {}
+                let vals = Object.values(list)
+                let set = new Set(vals)
+                if(set.size !== vals.length){
+                    throwErr('Non-Unique values already exist. Remove duplicates and try again. Expected: '+vals.length+' unique values. Found: '+set.size)
+                }
+                runNext()
+            })
+            function getList(cb){
+                let stateSoul = makeSoul({b,t,r,i:true})
+                let toObj = {}
+                let soulList = []
+                gun.get(stateSoul).once(function(data){
+                    if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
+                    for (const soul in data) {
+                        if(!ALL_INSTANCE_NODES.test(soul))continue
+                        if(data[soul] !== null){//not Deleted
+                            //this means `false` will pass through, so archived items will still keep increment and unique values enforced
+                            soulList.push(soul)
+                        }
+                    }
+                    let toGet = soulList.length
+                    if(!toGet)cb.call(cb,toObj)
+                    for (const soul of soulList) {
+                        getCell(soul,p,function(val,from){
+                            toGet--
+                            toObj[soul] = val
+                            if(!toGet){
+                                cb.call(cb,toObj)
+                            }
+    
+                        },true)
+                    }
+                })
             }
-            for (const nodeID in tempStore) {
-                const value = tempStore[nodeID];
-                addToPut(nodeID,{[p]:value}, toPut)
-            }
-            runNext()
         },
         changePropType: function(){
             //determine from type > to type, determine if it is possible or what calls are needed
             let {propType:fType} = thisConfig
 
             //undo stuff
-            if(['link'].includes(fType)){//changing a link column to non-link, need to find the linked one
-                if(dType !== 'string' || dType === 'array'){throwErr('Link property can only be converted to a string or an array');return}
-                if(thisConfig.usedIn.length !== 0){throwErr('Cannot change this property. A function references it');return}
-                run.unshift(['handleLinking',['unlink']])
-            }else if(fType === 'lookup'){
-                if(dType !== 'string' || dType === 'array'){throwErr('Lookup property can only be converted to a string or an array');return}
-                if(thisConfig.usedIn.length !== 0){throwErr('Cannot change this property. A function references it');return}
-                run.unshift(['handleLookup',['unlink']])
-            }else if(fType === 'function'){//clear out old fn values (remove all usedIn)
+            if(fType === 'function'){//clear out old fn values (remove all usedIn)
                 run.unshift(['handleFN',[{fn:''}]])//can be ran in any order
             }
             
             //new stuff
-            if (['link'].includes(pType)){//parse values for linking
-                if(thisConfig.humanIdentifier){throwErr('Cannot create link on the Human Identifier property');return}
-                let {b:lb,t:lt,p:lp} = (configObj.linksTo) ? parseSoul(configObj.linksTo) : {b:false}
-                if(!lb || !lt || !lp){throwErr('You must specify another nodeType and what property matches the link values in this column');return}
-                let linkConfig = getValue(configPathFromChainPath(configObj.linksTo), gb)
-                if(linkConfig && ['string','number','array'].includes(linkConfig.dataType)){//check linksTo is valid table
-                    run.unshift(['handleLinking',['link']])
-                    //handleLinkColumn(path, configObj, backLinkCol,cb) 
-                }else{
-                    throwErr('config({linksTo: '+configObj.linksTo+' } is either not defined or of invalid dataType. Should be a property on another nodeType')
-                }            
-            }else if (pType === 'lookup'){//
-                if(thisConfig.humanIdentifier){throwErr('Cannot create lookup on the Human Identifier property');return}
-                let {b:lb,t:lt} = (configObj.linksTo) ? parseSoul(configObj.linksTo) : {b:false}
-                if(!lb || !lt){throwErr('You must specify another nodeType to lookup values on.');return}
-                let linkHID = findHIDprop(gb,makeSoul({b:lb,t:lt}))
-                let linkConfig = getValue(configPathFromChainPath(linkHID), gb)
-                if(linkConfig && ['string','number'].includes(linkConfig.dataType)){//check linksTo is valid table
-                    run.unshift(['handleLookup',['link']])
-                    //handleLinkColumn(path, configObj, backLinkCol,cb) 
-                }else{
-                    throwErr('config({linksTo: '+configObj.linksTo+' } is either not defined or of invalid dataType. Should be a property on another nodeType')
-                }        
-            }else if (pType === 'function'){//parse equation and store
+            if (pType === 'function'){//parse equation and store
                 let fn = configObj.fn
                 if(!fn){throwErr('Must specify a function');return}
                 //check equation for valididty? balanced () and only one comparison per comma block?
@@ -350,152 +355,10 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
             cPut.propType = pType
             runNext()
         },
-        handleLinking: function(dir){
-            if(configObj.linkNodeTypes === undefined && dir === 'link'){throwErr('Must use the ".linkNodeTypes" API to make a property a link'); return}
-            let prevHID = findHIDprop(gb,path)
-            let linkPath = (dir === 'link') ? configObj.linksTo : thisConfig.linksTo
-            let nextHID = findHIDprop(gb,linkPath) 
-            if(!prevHID || !nextHID){throwErr('Cannot find HID Prop'); return}
-           
-            run.unshift(['parseLinkData',[dir,nextHID]])
-            if(Object.keys(tempStore).length === 0){
-                runNext()
-                return console.log('No data to convert, config updated')
-            }
-            //if there is data, need to go get a bunch more data
-            let byValue = (dir==='unlink') ? false : true
-            if(dir === 'unlink'){//only need prev HIDs on an unlink
-                run.unshift(['getUniques',[prevHID,prevHIDs,false]])
-            }
-            run.unshift(['getUniques',[nextHID,nextHIDs,byValue]])
-
-            runNext()    
-        }, 
-        parseLinkData: function(dir,nextPath){
-            //dir = 'link' || 'unlink'
-            //if dir='link' prev/nextHIDs are keys of HID and values of souls
-            let {p:lp} = parseSoul(nextPath)
-            if(dir === 'link'){
-                addToPut(configSoulFromChainPath(nextPath),{propType:'next',dataType:'string',allowMultiple:false,linksTo:path},configPuts)
-                cPut.linksTo = nextPath
-            }else{
-                addToPut(configSoulFromChainPath(nextPath),{propType:'data',dataType:'string',linksTo:""},configPuts)
-                cPut.linksTo = ""
-            }
-            let prevObj = {}
-            let nextObj = {}
-            for (const parentSoul in tempStore) {
-                let links = tempStore[parentSoul]
-                let parentHID = (dir==='unlink') ? prevHIDs[parentSoul] : false //don't need this for linking
-                const linkArr = (Array.isArray(links)) ? links : (typeof links === 'string' && links[0] === "[") ? JSON.parse(links) : links.split(delimiter)
-                if(linkArr.length){
-                    prevObj[parentSoul] = {}
-                    for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
-                        const ID = String(linkArr[i]);//could be either a soul or a HID, depending on `dir`
-                        let linkHID = (dir==='unlink') ? nextHIDs[ID] : ID
-                        let linkSoul = (dir==='unlink') ? ID : nextHIDs[ID]
-                        let found = (dir==='unlink') ? linkHID : linkSoul
-                        let parentKey = (dir==='unlink') ? parentHID : parentSoul
-                        let linkKey = (dir==='unlink') ? linkHID : linkSoul
-                        if(found){
-                            if(!nextObj[linkSoul]){nextObj[linkSoul] = {}}
-                            if(!prevObj[parentSoul]){prevObj[parentSoul] = {}}
-                            prevObj[parentSoul][linkKey] = true
-                            nextObj[linkSoul][parentKey] = true
-                        }else if(ID !== 'null'){
-                            if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
-                                let err = 'LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable
-                                throw new Error(err)
-                            }
-                        }
-                    }
-                }
-            }
-            //prepare and place in toPut
-            for (const nodeID in prevObj){
-                const value = prevObj[nodeID];
-                let val = (dir === 'unlink') ? {[p]:Object.keys(value).join(delimiter)}: value
-                addToPut(nodeID,val,toPut)
-            }
-            for (const nodeID in nextObj){
-                const value = nextObj[nodeID];
-                let nexts = Object.keys(value)
-                if(nexts.length > 1 && dir === 'link'){throwErr('Linked to records must be exclusive, too many parent items linked to a child node')}
-                let val = {[lp]: nexts.join(delimiter)}
-                addToPut(nodeID,val,toPut)
-            }
-            runNext()
-        },
-        handleLookup: function(dir){
-            if(configObj.createLookup === undefined && dir === 'link'){throwErr('Must use the ".createLookup" API to make a property a lookup'); return}
-            let linkPath = (dir === 'link') ? configObj.linksTo : thisConfig.linksTo
-            let nextHID = findHIDprop(gb,linkPath) 
-            if(!nextHID){throwErr('Cannot find HID Prop'); return}
-           
-            run.unshift(['parseLookupData',[dir,nextHID]])
-            if(Object.keys(tempStore).length === 0){
-                runNext()
-                return console.log('No data to convert, config updated')
-            }
-            //if there is data, need to go get more data
-            let byValue = (dir==='unlink') ? false : true
-            run.unshift(['getUniques',[nextHID,nextHIDs,byValue]])
-
-            runNext()    
-        },
-        parseLookupData: function(dir,nextPath){
-            //dir = 'link' || 'unlink'
-            //if dir='link' prev/nextHIDs are keys of HID and values of souls
-            let {p:lp} = parseSoul(nextPath)
-            if(dir === 'link'){
-                cPut.linksTo = nextPath
-            }else{
-                cPut.linksTo = ""
-            }
-            let prevObj = {}
-            let nextObj = {}
-            for (const parentNodeID in tempStore) {
-                let links = tempStore[parentNodeID]
-                const linkArr = (Array.isArray(links)) ? links : (typeof links === 'string' && links[0] === "[") ? JSON.parse(links) : links.split(delimiter)
-                if(linkArr.length){
-                    prevObj[parentNodeID] = {}
-                    for (let i = 0; i < linkArr.length; i++) {//build new objects of GBids, prev and next links
-                        const ID = String(linkArr[i]);//could be either a soul or a HID, depending on `dir`
-                        let linkHID = (dir==='unlink') ? nextHIDs[ID] : ID
-                        let linkID = (dir==='unlink') ? ID : nextHIDs[ID]
-                        let {b,t,r,i} = parseSoul(linkID)
-                        let linkSoul = makeSoul({b,t,r,i,'[':'lookup'})
-                        let found = (dir==='unlink') ? linkHID : linkID
-                        let linkKey = (dir==='unlink') ? linkHID : linkID
-                        if(found){
-                            if(!nextObj[linkSoul]){nextObj[linkSoul] = {}}
-                            prevObj[parentNodeID][linkKey] = true
-                            nextObj[linkSoul][parentNodeID] = (dir==='unlink') ? false : true
-                        }else if(ID !== 'null'){
-                            if(!confirm('Cannot find: '+ HID + '  Continue linking?')){
-                                let err = 'LINK ABORTED: Cannot find a match for: '+ HID + ' on table: ' + targetTable
-                                throw new Error(err)
-                            }
-                        }
-                    }
-                }
-            }
-            //prepare and place in toPut
-            for (const nodeID in prevObj){
-                const value = prevObj[nodeID];
-                let val = (dir === 'unlink') ? {[p]:Object.keys(value).join(delimiter)}: value
-                addToPut(nodeID,val,toPut)
-            }
-            for (const lookupNextSoul in nextObj){
-                const value = nextObj[lookupNextSoul];
-                addToPut(lookupNextSoul,value,toPut)
-            }
-            runNext()
-        },
         handleFN: function(argObj){
             //parse equation for all links
             let fn = argObj.fn
-            let oldfn = thisColConfig.fn
+            let oldfn = thisConfig.fn
             try {
                 verifyLinksAndFNs(gb,path,fn)
             } catch (error) {
@@ -547,7 +410,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
                 solve(rowid,fn,function(val){
                     addToPut(rowid,{[p]:val},toPut)
                     toSolve--
-                    if(toSolve <= 0){
+                    if(!toSolve){
                         runNext()
                     }
                 })
@@ -575,7 +438,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
             if(['nodeType','relationType'].includes(pathType)){
                 let list
                 if(pathType === 'nodeType'){//cannot set these vals on creation, forcing to default
-                    cPut.externalID = ''
+                    //cPut.externalID = '' //allow it to be set on creation
                     list = '#' + t
                     
                 }else{
@@ -583,9 +446,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
                 }
                 addToPut(makeSoul({b}),{[list]:{'#':csoul}},configPuts)
             }else if(['nodeProp','relationProp'].includes(pathType)){
-                if(pathType === 'nodeProp'){
-                    cPut.fn = "" 
-                }
+                cPut.fn = "" 
                 addToPut(makeSoul({b,t,r}),{[p]:{'#':csoul}},configPuts)
             }
             runNext()
@@ -627,12 +488,12 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
             pathType = 'base'
             validConfig = newBaseConfig()
         }
-        let validNew = ["function"]
-        if(isNew && ['nodeProp','relationProp'].includes(pathType) && validNew.includes(configObj.propType)){
-            throw new Error('New properties can only be created as one of these propTypes: '+validNew.join(', '))
-        }
+        // let validNew = ["data", "date", "pickList", "file"]
+        // if(isNew && ['nodeProp','relationProp'].includes(pathType) && !validNew.includes(configObj.propType)){
+        //     throw new Error('New properties can only be created as one of these propTypes: '+validNew.join(', '))
+        // }
         //these should throw errors and stop the call if they don't pass
-        checkConfig(validConfig, configObj,type) //SHOULD ADD VALIDATION FOR SPECIAL PROP STRING FORMATTING (autoIncrement, format)
+        checkConfig(validConfig, configObj,type) //SHOULD ADD VALIDATION FOR SPECIAL PROP STRING FORMATTING (format?)
         checkUniques(gb, path, configObj)//will pass if alias/sortval is not present
         if(['nodeType','relationType'].includes(pathType))return //rest is for properties
         //config obj has valid keys/values, next is figuring out if the dataType is valid
@@ -642,7 +503,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
         let enforceUnique = (configObj.enforceUnique !== undefined) ? configObj.enforceUnique : thisConfig.enforceUnique
         let autoIncrement = (configObj.autoIncrement !== undefined) ? configObj.autoIncrement : thisConfig.autoIncrement
         let requiredType = requiredTypes()
-        console.log(pType, requiredType)
+        console.log(pType, dType, requiredType)
         if(!requiredType.includes(dType)){
             dType = requiredType[0]//take first (or only) one
             if(configObj.dataType && configObj.dataType !== dType){
@@ -653,9 +514,10 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
         if(dType !== thisConfig.dataType){//need to change the dataType
             convertData = dType
             getData = true
-        }else if((enforceUnique && !thisConfig.enforceUnique) || configObj.humanIdentifier){//turning on enforceUnique, dataType is already correct
+        }else if((enforceUnique && !thisConfig.enforceUnique) || configObj.externalID){//turning on enforceUnique, dataType is already correct
             getData = true
         }else if(configObj.fn){
+            getData = true
             listOnly = true
         }
         if(!isNew && getData)run.push(['getList',[path,tempStore,listOnly]])
@@ -675,9 +537,8 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
             }
             if(pType === 'data')return ['string','number','boolean','unorderedSet','array','file']
             if(pType === 'date')return ['number']
-            if((pType === 'child' || pType === 'lookup' || pType === 'pickList') && allowMultiple)return ['unorderedSet']
+            if(pType === 'pickList' && allowMultiple)return ['unorderedSet']
             if((pType === 'pickList' && !allowMultiple) || pType === 'function')return ['string','number']
-            if(((pType === 'link' || pType === 'lookup' || pType === 'parent') && !allowMultiple) || pType === 'next')return ['string']
             return ['string']
         }
     }
@@ -706,154 +567,37 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
     }
     function done(){
         if(err !== undefined)return
-        let timeIndices = {}, dataPut = {}, setPut = {}, uniques = {}, lookupNexts = {}
-        try {
-            if(!isNew){
-                //all of this might be able to go through putData?
+        let dataToPut = Object.keys(toPut).length
+
+        if(internalCB && internalCB instanceof Function){
+            internalCB.call(this,{path,configPuts,toPut})
+        }else{
+            if(!isNew && dataToPut){
                 for (const nodeID in toPut) {//data soul = dataID, (!#$ || !-$) or it is lookupNexts !#$[lookup
                     const putObj = toPut[nodeID];
-                    let {b,t,r,i} = parseSoul(nodeID)
-                    for (const pval in putObj) {//stole most of this from .edit()/putData()/runValidation()
-                        let p = pval
-                        let uIndex = makeSoul({b,t,r,p})
-                        let propPath = makeSoul({b,t,r,i,p}), pconfigsoul = configSoulFromChainPath(uIndex)
-                        let updatedConfig = configPuts[pconfigsoul] || {} //must merge updated values since gb has not been updated yet
-                        let {propType, dataType, alias, pickOptions,enforceUnique} = Object.assign({},getValue(configPathFromChainPath(uIndex),gb),updatedConfig)
-                        let value = putObj[pval]
-                        if(propType === undefined || dataType === undefined){
-                            let err = 'Cannot find prop types for column: '+ alias +' ['+ pval+'].'
-                            throw new Error(err)
+                    putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, {own:true}, function(err){
+                        if(err){
+                            throwErr(err)
+                            return
                         }
-
-                        if(propType === 'date'){
-                            let testDate = new Date(value)
-                            if(testDate.toString() === 'Invalid Date'){
-                                throw new Error ('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
-                            }else{
-                                timeIndices[propPath] = value = testDate.getTime()
-                                addToPut(nodeID,{[pval]:value},dataPut)//put in to data put
-                            }
-                        }else if(dataType === 'unorderedSet'){
-                            if(propType === 'pickMultiple'){
-                                for (const pick in value) {
-                                    const boolean = value[pick];
-                                    if(boolean && !pickOptions.includes(pick)){//make sure truthy ones are currently valid options, falsy are fine
-                                        throw new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
-                                    }
-                                }
-                            }
-                            setPut[propPath] = value
-                        }else if((nodeID.includes('['))){//is lookupNext
-                            addToPut(nodeID,{[pval]:!!value},lookupNexts)
-                        }else{//straight up data on the regular node
-                            addToPut(nodeID,{[pval]:convertValueToType(value,dataType,nodeID)},dataPut)//Will catch Arrays, and stringify, otherwise probably unneccessary
-                        }
-
-                        if(enforceUnique)addToPut(uIndex,{[nodeID]:value},uniques)//will catch any unique data
-                    }
+                        dataToPut--
+                        if(!dataToPut)putConfigs()
+                    })
                 }
-            }
-
-        } catch (error) {
-            throwErr(error)
-            return
-        }
-        
-        if(!err){//log config changes
-            if(internalCB && internalCB instanceof Function){
-                internalCB.call(this,{path,configPuts,dataPut})
             }else{
                 putConfigs()
-                //putData()
-                testOutput()
-                console.log(configPuts)
-            }
-            
+            }  
+            console.log(configPuts)  
         }
-        let triggers = cPut.usedIn || []
-        if(triggers.length){
-            for (const nodeid of soulList) {
-                //cascade(nodeid,p)//fire cascade? always?
-            }
-        }
+
+        
         function putConfigs(){
             for (const csoul in configPuts) {//put all configs in
                 const cObj = configPuts[csoul];
                 if(IS_CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
                 gun.get(csoul).put(cObj)
             }
-        }
-        function putData(){//stole most of this from .edit()/putData()/done()
-            if(Object.keys(dataPut).length){
-                for (const nodeID in dataPut) {
-                    const putObj = dataPut[nodeID];
-                    gun.get(nodeID).put(putObj)
-                }
-            }
-            if(Object.keys(timeIndices).length){
-                for (const nodePropPath in timeIndices) {//for each 'date' column, index
-                    const unixTS = timeIndices[nodePropPath];
-                    timeIndex(nodePropPath,path,new Date(unixTS))
-                }
-            }
-            if(Object.keys(setPut).length){
-                for (const nodePropPath in sets) {//for each 'set' column, put data on the prop soul (instead of the node soul)
-                    const setObj = setPut[nodePropPath];
-                    if(setObj === null){//handle nulling out the set (remove everything from set)
-                        gun.get(nodePropPath).once(function(setItems){
-                            if(setItems === undefined)return
-                            for (const item in setItems) {
-                                if(item === '_')continue
-                                gun.get(nodePropPath).get(item).put(false)
-                            }
-                        })
-                    }else{
-                        gun.get(nodePropPath).put(setObj)
-                    }
-                }
-            }
-            if(Object.keys(uniques).length){
-                for (const uIndex in uniques) {
-                    const uObj = uniques[uIndex];
-                    gun.get(uIndex).put(uObj)
-                }
-            }
-            for (const nodeID in toPut) {
-                let {b,t,r} = parseSoul(nodeID)
-                let {log} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-                if(log && !nodeID.includes('[')){//ignore next puts
-                    const nodeChanges = toPut[nodeID];
-                    timeLog(nodeID,nodeChanges)
-                }
-                
-                    
-            }
-            
-        }
-        function testOutput(){//stole most of this from .edit()/putData()/done()
-            let log = {}
-            if(Object.keys(dataPut).length){
-                log.dataPut = dataPut
-            }
-            if(Object.keys(timeIndices).length){
-                log.timeIndices = timeIndices
-            }
-            if(Object.keys(setPut).length){
-                log.setPut = setPut
-            }
-            if(Object.keys(uniques).length){
-                log.uniques = uniques
-            }
-            log.timelog = toPut
-            // for (const nodeID in toPut) {
-            //     let {b,t,r} = parseSoul(nodeID)
-            //     let {log} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-            //     if(log && !nodeID.includes('[')){//ignore next puts
-            //         const nodeChanges = toPut[nodeID];
-            //         addToPut(nodeID,nodeChanges,log.timeLog)
-            //     }
-            // }
-            console.log('OUTPUT:',log)
+            cb.call(cb,undefined)
         }
     }
     function checkFormat(){
@@ -885,16 +629,18 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog) => functio
             const cObj = configPuts[csoul];
             let curC = getValue(configPathFromChainPath(csoul),gb) || {}
             for (const key in cObj) {
-                const v = cObj[key];
-                const curv = curC[key]
+                let v = cObj[key];
+                let curv = curC[key]
+                if(Array.isArray(v)){
+                    cObj[key] = v = JSON.stringify(v)
+                }
+                if(Array.isArray(curv)){
+                    curv = JSON.stringify(curv)
+                }
                 if(curv === v){
                     delete configPuts[csoul][key]
                     continue
-                }
-                if(Array.isArray(v)){
-                    cObj[key] = JSON.stringify(v)
-                }
-                    
+                }                    
             }
                 
         }

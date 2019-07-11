@@ -24,12 +24,17 @@ let gbase = {}
 let gb = {}
 let gsubs = {}
 let pendingQueries = new Set()
-let gsubsParams = {}
 let gunSubs = {}
 let subBuffer = {}
 let bufferState = false
 let reactConfigCB
 let gbChainState = true
+
+//cache
+const cache = {}
+const upDeps = {}
+const downDeps = {}
+
 
 const {
     cachePathFromChainPath,
@@ -49,7 +54,6 @@ const {
     findID,
     bufferPathFromSoul,
     getAllActiveProps,
-    Cache,
     formatQueryResults,
     hasPropType,
     makeSoul,
@@ -74,9 +78,7 @@ const {
     collectPropIDs,
     intersect
 } = require('./util.js')
-const cache = new Cache()
-const upDeps = {}
-const downDeps = {}
+
 
 const {makehandleConfigChange,
     basicFNvalidity
@@ -103,9 +105,6 @@ const {makenewBase,
     makeaddUser,
     makeuserAndGroup,
     makechp,
-    makeimportChildData,
-    makeaddChildProp,
-    makepropIsLookup,
     makearchive,
     makeunarchive,
     makedelete,
@@ -114,10 +113,10 @@ const {makenewBase,
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
-let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp,importChildData,addChildProp,propIsLookup
+let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
-const showgsub = makeshowgsub(gsubsParams)
+const showgsub = makeshowgsub(gsubs)
 const showgunsub = makeshowgunsub(gunSubs)
 
 const {makesolve,
@@ -136,7 +135,7 @@ const {timeIndex,
     getRelationNodes,
     getLabeledNodes
 } = require('../chronicle/chronicle')
-let qIndex,tIndex,tLog,crawlIndex
+let qIndex,tIndex,tLog
 
 
 
@@ -147,20 +146,14 @@ const gunToGbase = (gunInstance,baseID) =>{
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
     qIndex = queryIndex(gun)
-    crawlIndex = makecrawlIndex(gun)
 
 
 
 
-    newBase = makenewBase(gun)
+    newBase = makenewBase(gun,tLog)
     newNodeType = makenewNodeType(gun,gb,tLog)
     importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate)
     addProp = makeaddProp(gun,gb,tLog)
-    addChildProp = makeaddChildProp(gun,gb,tLog,triggerConfigUpdate)
-    importChildData = makeimportChildData(gun,gb,getCell,tLog,tIndex,triggerConfigUpdate)
-
-
-    propIsLookup = makepropIsLookup(gun,gb,getCell,triggerConfigUpdate)
     
     
     newNode = makenewNode(gun,gb,getCell,cascade,tLog,tIndex)   
@@ -176,10 +169,10 @@ const gunToGbase = (gunInstance,baseID) =>{
   
 
     importData = makeimportData(gun, gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,getCell,cascade,solve,tLog)
+    handleConfigChange = makehandleConfigChange(gun,gb,getCell,cascade,solve,tLog,tIndex)
     config = makeconfig(handleConfigChange)
-    subscribeQuery = makesubscribeQuery(gb,setupQuery)
-    retrieveQuery = makeretrieveQuery(gb,setupQuery)
+    subscribeQuery = makesubscribeQuery(setupQuery)
+    retrieveQuery = makeretrieveQuery(setupQuery)
 
 
 
@@ -446,7 +439,7 @@ function prop(prop){
     let {b,t,r,i} = pathO
     let id
     let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-    let isNode = path.includes('#')
+    let isNode = !r
     let ptype,dtype
     for (const pval in pvals) {
         const {alias, propType, dataType} = pvals[pval];
@@ -467,11 +460,7 @@ function prop(prop){
     }else if(!i){
         out = relationPropChainOpt(newPath, ptype, dtype)
     }else{//called prop from gbase.node(ID).prop(name)
-        let isChild = false
-        if(isNode){
-            isChild = (ptype === 'child') ? true : false
-        }
-        out = nodeValueOpt(newPath, isChild)
+        out = nodeValueOpt(newPath)
     }
     return out
 }
@@ -490,21 +479,13 @@ function node(nodeID){
     let {b,t,p} = parseSoul(testPath)
 
     if(DATA_INSTANCE_NODE.test(testPath)){
-        let {parent} = getValue(configPathFromChainPath(makeSoul({b,t})),gb)
-        let allowNewFrom = !parent //if '' then true if 'value' then false
-        if(!allowNewFrom){//is child table, but see if allowMultiple = true
-            let {allowMultiple} = getValue(configPathFromChainPath(parent),gb)
-            allowNewFrom = allowMultiple
-        }
-        return nodeChainOpt(testPath,true,allowNewFrom)
+        return nodeChainOpt(testPath,true)
     }else if(RELATION_INSTANCE_NODE.test(testPath)){
         return nodeChainOpt(testPath,false)
     }else if(DATA_PROP_SOUL.test(testPath)){//is a nodeProp
-        let {propType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
-        let isChild = (propType === 'child') ? true : false
-        return nodeValueOpt(testPath,isChild)
+        return nodeValueOpt(testPath)
     }else if(RELATION_PROP_SOUL.test(testPath)){//is a relationProp
-        return nodeValueOpt(testPath,false)
+        return nodeValueOpt(testPath)
     }else{
         throw new Error('Cannot decipher rowID given')
     }
@@ -520,27 +501,24 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), newNodeType: newNodeType(_path), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path, config: config(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
 }
 function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
-function nodeTypeChainOpt(_path,isRoot){
-    let out = {_path, config: config(_path), addProp: addProp(_path), addChildProp: addChildProp(_path), importData: importData(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path),prop,node}
-    if(isRoot){
-        Object.assign(out,{newNode: newNode(_path)})
-    }
+function nodeTypeChainOpt(_path){
+    let out = {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), prop,node}
     return out
 }
 function relationChainOpt(_path){
-    return {_path, config: config(_path), newRow: newNode(_path), newColumn: addProp(_path), importData: importData(_path),prop}
+    return {_path, config: config(_path), addProp: addProp(_path), importData: importData(_path),prop}
 }
 
 function propChainOpt(_path, propType, dataType){
     let out = {_path, config: config(_path)}
-    if(['string','number'].includes(dataType) && propType === 'data'){
-        out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
-    }
+    // if(['string','number'].includes(dataType) && propType === 'data'){
+    //     out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
+    // }
     return out
 }
 function relationPropChainOpt(_path){
@@ -557,11 +535,8 @@ function nodeChainOpt(_path, isData, allowNewFrom){
     }
     return out
 }
-function nodeValueOpt(_path, isChild){
+function nodeValueOpt(_path){
     let out = {_path, edit: edit(_path,false,false), clearValue:nullValue(_path)}
-    if(isChild){
-        Object.assign(out,{newNode:newNode(_path)})
-    }
     return out
 }
 
@@ -606,13 +581,13 @@ function handleCacheDep(nodeID, p, val){
     }
     function removeDep(){
         let oldDep = downDeps[address]
-        if(oldDep && upDeps[oldDep]) delete upDeps[oldDep].remove(address)
+        if(oldDep && upDeps[oldDep]) upDeps[oldDep].delete(address)
         if(oldDep) delete downDeps[address]
     }
 }
 function setupSub(soul, p){
     let sname = soul+'+'+p
-    if(gunSubs[subname])return
+    if(gunSubs[sname])return
     let {b,t,r} = parseSoul(soul)
     let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
 
@@ -649,19 +624,21 @@ function setupSub(soul, p){
 }
 function sendToCache(nodeID, p, value){
     let newEnq = handleCacheDep(nodeID,p,value)//will get deps correct so we can return proper data to buffer
-    let {b,t,r,i} = parseSoul(nodeID)
-    let address = makeSoul({b,t,r,i,p})
-    let [from,v] = cache[address] || []//if it is inherited we want the value to go out to buffer
-
-    if(v === undefined){
-        cache.watch(address,handlePropDataChange)
+    let address = toAddress(nodeID,p)
+    let v = cache[address]//if it is inherited we want the value to go out to buffer
+    let from = address
+    while (isEnq(v)) {
+        let lookup = isEnq(v)
+        v = cache[lookup]  
+        from = lookup
     }
     if(newEnq || (from === address && value !== v)){//this is some sort of new/changed value
+        console.log('updating cache:',address,value)
         cache[address] = value//should fire the watch cb
+        handlePropDataChange()
         return
     }
-    function handlePropDataChange(address,getterVal){
-        let [from,v] = getterVal
+    function handlePropDataChange(){
         let {p} = parseSoul(address)
         let startAddress = (address === from) ? from : address
         let nodeID = removeP(startAddress)
@@ -673,7 +650,7 @@ function sendToCache(nodeID, p, value){
                 for (const depAddr of deps) {
                     let nodeID = removeP(depAddr)
                     handleNewPropData(nodeID,p,v)
-                    checkDeps(startAddress)//recur... until it can't
+                    checkDeps(depAddr)//recur... until it can't
                 }
             }
         }
@@ -690,48 +667,56 @@ function getCell(nodeID,p,cb,raw){
     //will return the inheritted value if not found on own node
     raw = !!raw //if it is true, we skip the formatting
     cb = (cb instanceof Function && cb) || function(){}
-    let {b,t,r,i} = parseSoul(nodeID)
+    let {b,t,r} = parseSoul(nodeID)
     let propPath = makeSoul({b,t,r,p})
     let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
-    let address = makeSoul({b,t,r,i,p})
-    let [from, cVal] = cache[address] || []
+    let address = toAddress(nodeID,p)
+    let cVal = cache[address]
+    let from = address
+    while (isEnq(cVal)) {
+        let lookup = isEnq(cVal)
+        cVal = cache[lookup]  
+        from = lookup
+    }
     if(cVal !== undefined){
         if(!raw)cVal = formatData(format,propType,dataType,cVal)
         cb.call(this,cVal, from)
         return
     }
-    getData(nodeID)
-    function getData(soul){
-        //if nodeID != proto nodeID, run getVar, after this
+    getData(nodeID,p)
+    function getData(soul,pval){
         let {b,t,r} = parseSoul(soul)
-        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
-        gun.get(soul).get(p, function(msg,eve){//check for existence only
+        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
+        gun.get(soul).get(pval, function(msg,eve){//check for existence only
             eve.off()
             let val = msg.put
-            setupSub(soul,p)
+            setupSub(soul,pval)
             if([null,undefined].includes(val)){
-                sendToCache(soul,p,null)
+                //sendToCache(soul,pval,null)
                 cb.call(this,null,soul)
                 return
             }else if(isEnq(val)){//will keep getting inherited props until we get to data.
-                let inheritFrom = val.slice(1)
-                sendToCache(soul,p,val)//put the lookup in cache
-                getData(inheritFrom)
+                let fromSoul = parseSoul(val.slice(1))
+                let fromP = fromSoul.p
+                delete fromSoul.p
+                delete fromSoul['.']
+                //sendToCache(soul,pval,val)//put the lookup in cache
+                getData(fromSoul,fromP)
                 return
             }
             //so we have data on this soul and this should be returned to the cb
             if(dataType === 'unorderedSet'){//this will be a full object
                 let data = JSON.parse(JSON.stringify(val))
-                let links = []
+                let setVals = []
                 for (const key in data) {
                     if(key === '_')continue
-                    const obj = data[key];
-                    if (typeof obj === 'object' && obj !== null) {//if current link
-                        links.push(key) 
+                    const boolean = data[key];
+                    if (boolean) {//if currently part of the set
+                        setVals.push(key) 
                     }
                 }
-                if(propType === 'labels')links.unshift(t)
-                val = links
+                if(propType === 'labels')setVals.unshift(t)
+                val = setVals
             }else if(dataType = 'array'){
                 try {
                     val = JSON.parse(val)
@@ -745,7 +730,7 @@ function getCell(nodeID,p,cb,raw){
                     // leave as is..
                 }
             }
-            sendToCache(soul,p,val)
+            //sendToCache(soul,pval,val)
             if(!raw)val = formatData(format,propType,dataType,val)
             cb.call(this,val, soul)
         })
@@ -846,11 +831,15 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
 
 
 //EVENT HANDLING AND BUFFER
+let attempts = 0
 function flushSubBuffer(){
-    if(pendingQueries.size){
+    if(pendingQueries.size && attempts<200){
+        console.log('waiting to flush buffer, pending queries:', pendingQueries.size)
         setTimeout(flushSubBuffer,50)
+        attempts ++
         return
     }
+    attempts = 0
     let buffer = Object.assign({},subBuffer)
     subBuffer = {}
     bufferState = false
@@ -863,14 +852,13 @@ function flushSubBuffer(){
         }
     }
 }
-function handleNewPropData(rowID,pval){
+function handleNewPropData(nodeID,pval){
     //parse gun soul and keys in data
-    //console.log('handle new Data' ,soul)
-    if(!subBuffer[rowID])subBuffer[rowID] = new Set()
-    subBuffer[rowID].add(pval)
+    if(!subBuffer[nodeID])subBuffer[nodeID] = new Set()
+    subBuffer[nodeID].add(pval)
     if(!bufferState){
         bufferState = true
-        setTimeout(flushSubBuffer, 250)
+        setTimeout(flushSubBuffer, 50)
     }
 }
 
@@ -880,8 +868,8 @@ function handleNewPropData(rowID,pval){
 function setupQuery(path,queryArr,cb,isSub,sVal){
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
     if(!Array.isArray(queryArr) || !queryArr.length)throw new Error('Must provide arguments in the query Array')
-    if(!qArr.filter(x => x.CYPHER)[0])throw new Error('Must specify a single CYPHER pattern to complete the query!')
-    if(!qArr.filter(x => x.RETURN)[0] || !qArr.filter(x => x.EXPAND)[0])throw new Error('Must specify a single RETURN or EXPAND statement in your query!')
+    if(!queryArr.filter(x => x.CYPHER)[0])throw new Error('Must specify a single CYPHER pattern to complete the query!')
+    if(!queryArr.filter(x => x.RETURN)[0] && !queryArr.filter(x => x.EXPAND)[0])throw new Error('Must specify a single RETURN or EXPAND statement in your query!')
     if(isSub && !sVal)throw new Error('Must give this subscriptions an ID so you can reference it again to cancel it')
     let qParameters = new QueryParse(path,queryArr)
     if(isSub){
@@ -894,12 +882,10 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
     }
     query(path,qParameters,cb,{sVal,isSub})
 }
-
 function QueryParse(path,qArr){
     let {b} = parseSoul(path)
     this.elements= {}
     this.sortBy = false // || ['userVar',{alias,dir}, {alias,dir},...]
-    this.groupBy = false // || ['userVar',{alias}]
     this.limit = Infinity
     this.skip = 0
     this.idOnly = false
@@ -913,7 +899,8 @@ function QueryParse(path,qArr){
         value: function(alias,isNode){
             let a = Object.entries(this)
             let has = (isNode) ? '#' : '-'
-            return a.filter(ar => ar[0].includes(has) && (ar[1][alias] !== undefined)).map(arr => arr[0])
+            let b = a.filter(ar => ar[0].includes(has) && (ar[1][alias] !== undefined)).map(arr => parseSoul(arr[0])[has])
+            return b
         }
     })
     Object.defineProperty(this.aliasToID,'types',{
@@ -921,7 +908,7 @@ function QueryParse(path,qArr){
             let a = Object.entries(this)
             let sym = (isNode) ? '#' : '-'
             let valid = a.filter(ar => ar[0].includes(sym))
-            let allTypes = new Set(valid.map(x => x[0]))
+            let allTypes = new Set(valid.map(x => parseSoul(x[0])[sym]))
             for (const alias of aliasArr) {
                 let has = new Set(this.aliasTypes(alias,isNode))
                 allTypes = intersect(allTypes,has)
@@ -1011,6 +998,7 @@ function QueryParse(path,qArr){
                 //assign id's to each () [] or use user var
                 //then parse thing by thing
                 str = str.replace(/{[\s\S]*}/g,'')//remove any {prop: 'value'} filters
+                console.log(str)
                 str = str.replace(/(\(|\[)([a-zA-Z]+)?(:)?([a-zA-Z:\`|\s]+)?/g, function(match, $1, $2, $3, $4) {//find gbID's for aliases of types,relations,labels
                     if(!$3)return match
                     let isNode = ($1 === '(')
@@ -1034,7 +1022,6 @@ function QueryParse(path,qArr){
                     return start+ids.join(splitChar)
                 });
                 self.cleanMatch = 'MATCH '+str //what user passed in, but with no {} and ID's instead of alias'
-                metaOut.byID = 'MATCH '+str 
                 str = str.replace(/(<-|-)(\[[^\[\]]+\])?(->|-)/g,function(match,$1,$2,$3){// if ()--() make ()-[]-()
                     if(!$2)return $1+'[]'+$3
                     return match
@@ -1043,15 +1030,17 @@ function QueryParse(path,qArr){
                     if (!$1)return match+rand(8,'abcdefghijklmnopqrstuvwxyz')
                     return match
                 });
-                let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
+                console.log(str)
+
+                let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z0-9:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
                 //m[i] = ['(allParts)' || (-|->|<-), '('||'['|| undefined, id||undefined, labels||undefined, undefined||undefined||*length')'||']'|| undefined, undefined||(-|->|<-)]
                 for (let i = 0; i < m.length; i+=2) {//every other element, create collector nodes first, then evaluate string
-                    const leftID = m[i-2][2];
-                    const rightID = m[i+2][2]
+                    const leftID = m[i-2] && m[i-2][2] || null
+                    const rightID = m[i-2] && m[i+2][2] || null
                     let [match,left,id,types] = m[i];
                     let isNode = (left === '(')
                     let idx = i/2
-                    //future development: negated labels. So you can specify it has x labels && !y labels :HasLabel:!NotHasLabel
+
                     if(isNode){//(id:Type:Label)
                         let typesArr = [],labelArr = [],notLabels = []
                         if(types){
@@ -1080,7 +1069,6 @@ function QueryParse(path,qArr){
                             typesArr = [getAllActiveRelations(gb,path)]//double array on purpose
                         }
                         elements[id] = new MatchRelation(id,typesArr, leftID, rightID,idx)
-    
                     }
                 }
                 //if m.length === 1 simple nodeType query
@@ -1283,7 +1271,7 @@ function QueryParse(path,qArr){
                 idOnly: boolean
             },
             {a:{//<<userVar, Options for returning this particular nodeThing
-                returnAs: {},
+                returnAsArray: false,
                 props: [],//can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
                 propsByID:false,//only for returnAs {}, false={'Prop Alias': propValue}, true={pval: propValue} >> also applies for include
                 noID: false,//on returnAs object> object.ID = NodeID
@@ -1296,14 +1284,7 @@ function QueryParse(path,qArr){
         */
         //parse first arg, that should be easy
         let [mainArgs,...thingsArgs] = args
-        for (const key in mainArgs) {
-            const arg = mainArgs[key];
-            if(key === 'sortBy')parseSort(arg)
-            else if(key === 'groupBy')parseGroup(arg)
-            else if(key === 'limit')parseLimit(arg)
-            else if(key === 'skip')parseSkip(arg)
-            else if(key === 'idOnly')self.idOnly = !!arg
-        }
+        
 
         for (const tArg of thingsArgs) {
             let userVar = Object.keys(tArg)[0]
@@ -1317,10 +1298,17 @@ function QueryParse(path,qArr){
                 if(arg === 'props'){
                     if(!Array.isArray(value))throw new Error('"props" must be an array of values')
                     parseProps(userVar,value)
-                }else elements[userVar] = !!value
+                }else elements[userVar][arg] = !!value
             }
         }
-
+        for (const key in mainArgs) {
+            const arg = mainArgs[key];
+            if(key === 'sortBy')parseSort(arg)
+            else if(key === 'groupBy')parseGroup(arg)
+            else if(key === 'limit')parseLimit(arg)
+            else if(key === 'skip')parseSkip(arg)
+            else if(key === 'idOnly')self.idOnly = !!arg
+        }
         //parse each thing arg.
         //  convert props to objects. If thing already has a types.length === 1 then we can get propID as well. store as !#. ,since could have multiple types
         
@@ -1347,7 +1335,7 @@ function QueryParse(path,qArr){
             for (let i = 0; i < args.length; i+=2) {
                 const alias = args[i];
                 if(alias === undefined)throw new Error('Must specify a property to sortBy')
-                const dir = args[i+1]
+                let dir = args[i+1]
                 if(!dir)dir = 'DESC'
                 if(!['ASC','DESC'].includes(dir))throw new Error('Direction must be either "ASC" or "DESC".')
                 self.sortBy.push({alias,dir})
@@ -1370,10 +1358,10 @@ function QueryParse(path,qArr){
             //can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
             for (const arg of userArg) {
                 if(typeof arg === 'string'){
+                    console.log(elements[userVar])
                     elements[userVar].props.push({alias:arg})
                 }else if(typeof arg === 'object'){
-                    let alias = Object.keys(arg)[0]
-                    let {as,raw} = arg[alias]
+                    let {alias,as,raw} = arg
                     elements[userVar].props.push({alias,as,raw})
                 }
             }
@@ -1756,7 +1744,7 @@ function QueryParse(path,qArr){
         //  else if the potential is shorter, update the things.types array with the potentials
 
         for (const userVar in elements) {
-            const {isNode,filter,ranges} = elements[userVar];
+            const {isNode,filter,ranges,props} = elements[userVar];
             let propRef = /\{(?:`([^`]+)`|([a-z0-9]+))\}/gi
             let allNames = {}
             if(filter){
@@ -1765,30 +1753,50 @@ function QueryParse(path,qArr){
                     let name = (a !== undefined) ? a : b
                     allNames[name] = true
                     elements[userVar].filterProps.push(name)
-                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+
+                    let v = collectPropIDs(gb,path,name,isNode)
+                    for (const key in v) {
+                        const vals = v[key];
+                        if(!self.aliasToID[key])self.aliasToID[key] = vals
+                        else Object.assign(self.aliasToID[key],vals)
+                    }
                 }
             }
             for (const name in ranges) {
                 if(name === '_CREATED')continue //??
                 allNames[name] = true
-                Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+                let v = collectPropIDs(gb,path,name,isNode)
+                for (const key in v) {
+                    const vals = v[key];
+                    if(!self.aliasToID[key])self.aliasToID[key] = vals
+                    else Object.assign(self.aliasToID[key],vals)
+                }
+            }
+            for (const {alias:name} of props) {
+                allNames[name] = true
+                
+                let v = collectPropIDs(gb,path,name,isNode)
+                for (const key in v) {
+                    const vals = v[key];
+                    if(!self.aliasToID[key])self.aliasToID[key] = vals
+                    else Object.assign(self.aliasToID[key],vals)
+                }
+                
             }
             if(self.sortBy[0] === userVar){//has a sort output
                 let arr = self.sortBy.slice(1)
                 for (const {alias:name} of arr) {
                     allNames[name] = true
-                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
-                }
-
-            }
-            if(self.groupBy[0] === userVar){//has a group output
-                let arr = self.groupBy.slice(1)
-                for (const {alias:name} of arr) {
-                    allNames[name] = true
-                    Object.assign(self.aliasToID,collectPropIDs(gb,path,name,isNode))
+                    
+                    let v = collectPropIDs(gb,path,name,isNode)
+                    for (const key in v) {
+                        const vals = v[key];
+                        if(!self.aliasToID[key])self.aliasToID[key] = vals
+                        else Object.assign(self.aliasToID[key],vals)
+                    }
                 }
             }
-            
+     
             elements[userVar].types = [...intersect(new Set(elements[userVar].types),new Set(self.aliasToID.types(Object.keys(allNames),isNode)))]
             //^^Intersect what is existing, with what is valid
         }
@@ -2078,6 +2086,7 @@ function QueryParse(path,qArr){
     
 }
 function query(path,qParams, cb, opts){
+    let startTime = Date.now()
     let {b} = parseSoul(path)
     let {isSub,sVal,checkNodes} = opts
     if(isSub)pendingQueries.add(sVal)
@@ -2087,7 +2096,7 @@ function query(path,qParams, cb, opts){
     let preReturn = [] //process paths with sort/group/limit/etc.
     let data = {}
     const result = []  //using preReturn, preserve order and get the props user requested. This is what is returned
-    Object.defineProperty(this.result,'out',{value:{}})
+    Object.defineProperty(result,'out',{value:{}})
     const metaOut = result.out
     metaOut.query = qParams.cleanQuery.slice() //what user can pass back in/save as a 'saved' query
     metaOut.parsed = JSON.parse(JSON.stringify(qParams)) //freeze object at creation
@@ -2178,13 +2187,14 @@ function query(path,qParams, cb, opts){
 
     function startQuery(){
         if(expand)expandNodes()//expand starts over regardless of if it has been run before
-        else if(bufferTrigger)evaluateNodes()
-        else if(requery)assmebleOutput()
+        else if(bufferTrigger){console.log('Beginning query by evaluating new data');evaluateNodes()}
+        else if(requery){console.log('Requery, assmbling output from previous query results');assmebleOutput();}
         else getIndex()//firstCall not expand
     
     }
    
     function getIndex(){
+        console.log('Beginning query by an index')
         let startVar = qParams.elementRank[0]
         let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes} = qParams.elements[startVar]
         //bestIndex could be one of ['id','range','types','labels']
@@ -2193,7 +2203,7 @@ function query(path,qParams, cb, opts){
                 for (const id of ID) {
                     qParams.elements[startVar].toCheck.add(id)
                 }
-                check()
+                evaluateNodes()
                 break;
             case 'types':
                 getTypes()
@@ -2215,8 +2225,8 @@ function query(path,qParams, cb, opts){
                     let s = makeSoul({b,t:id,i:true})//created/existence soul
                     gun.get(s).once(function(node){
                         for (const nodeID in node) {
-                            const state = node[nodeID];
-                            if (DATA_INSTANCE_NODE.test(nodeID) && state === 'active') {
+                            const isActive = node[nodeID];//true = 'active', false = 'archived', null = 'deleted
+                            if (DATA_INSTANCE_NODE.test(nodeID) && isActive) {
                                 qParams.elements[startVar].toCheck.add(nodeID)
                             }
                         }
@@ -2288,6 +2298,8 @@ function query(path,qParams, cb, opts){
         }
     }
     function expandNodes(){
+        console.log('Beginning query by expansion')
+
         let varsToCheck = qParams.shortestToCheck
         if(!varsToCheck){
             queryDone(!bufferTrigger)
@@ -2543,7 +2555,9 @@ function query(path,qParams, cb, opts){
         //otherwise there will only be one userVar that has toCheck
         //either way, our runner needs to be able to start anywhere in the match statement
         //will need to make a little query object to pass around 
-        let varsToCheck = qParams.shortestToCheck
+        let varsToCheck = qParams.elementRank
+        console.log(varsToCheck)
+
         if(!varsToCheck){
             queryDone(!bufferTrigger)
             return
@@ -2551,7 +2565,7 @@ function query(path,qParams, cb, opts){
         metaOut.approach = []
         let openPaths = 0
         for (const startVar of varsToCheck) {
-            metaOut.approach.push('Started with '+startVar+' and traversed '+dir )
+            metaOut.approach.push('Started with '+startVar)
             let thing = qParams.elements[startVar];
             const {toCheck} = thing
             for (const nodeID of toCheck) {
@@ -2569,20 +2583,20 @@ function query(path,qParams, cb, opts){
                 startVar = pathParams[dir].curVar
                 startID = pathParams[dir].curID
             }else{
-                const dirParams = (leftOrRight) =>{ return {done:!qParams[startVar][leftOrRight+'Thing'],curVar:startVar,curID:startID}} //both are the same at the start
-                dir = (qParams[startVar].leftScore < qParams[startVar].rightScore) ? 'right' : 'left'
+                const dirParams = (leftOrRight) =>{ return {done:!qParams.elements[startVar][leftOrRight+'Thing'],curVar:startVar,curID:startID}} //both are the same at the start
+                dir = (qParams.elements[startVar].leftScore < qParams.elements[startVar].rightScore) ? 'right' : 'left'
                 pathParams = {
                     startVar,
                     startID,
                     left:dirParams('left'),
                     right:dirParams('right'),
-                    curDir = dir,
+                    curDir: dir,
                     rTraversed: new Set()
 
                 }
             }
-            let thing = qParams[startVar]
-            let {b,t,r,i} = parseSoul(node)
+            let thing = qParams.elements[startVar]
+            let {b,t,r,i} = parseSoul(startID)
             let thingType = makeSoul({b,t,r})
             let {isNode} = thing//notDistinct is not yet implemented
             otherDir = (dir === 'right') ? 'left' : 'right'//might already be done, but his way we can check easily
@@ -2598,7 +2612,7 @@ function query(path,qParams, cb, opts){
             }
             function checkID(){
                 if(isNode){//checking created date in ID
-                    let hasCreated = ranges.filter(x=>x.alias === '_CREATED')[0]
+                    let hasCreated = thing.ranges.filter(x=>x.alias === '_CREATED')[0]
                     if(hasCreated){
                         let [id,createdUnix] = i.split('_')
                         let {from,to} = hasCreated
@@ -2655,7 +2669,7 @@ function query(path,qParams, cb, opts){
                 },true)
             }
             function checkRange(){
-                let propRanges = ranges.filter(x=>x.alias !== '_CREATED')
+                let propRanges = thing.ranges.filter(x=>x.alias !== '_CREATED')
                 let toGet = propRanges.length
                 if(!toGet){checkFilter();return}
                 let values = []
@@ -2684,7 +2698,7 @@ function query(path,qParams, cb, opts){
                 }
             }
             function checkFilter(){
-                let toGet = filterProps.length
+                let toGet = thing.filterProps.length
                 if(!toGet){localDone(true);return}
                 let values = {}
                 for (const alias of filterProps) {
@@ -2714,18 +2728,21 @@ function query(path,qParams, cb, opts){
 
             function localDone(passed){
                 if(!passed){
+                    console.log(startID, 'did not pass')
                     delete qParams.elements[startVar].passing[startID]
                     qParams.elements[startVar].failing[startID] = pvals
                     //TODO!! check prevPaths to see if it was used in anything
                     let wasIn = qParams.allNodes[startID] //undefined || Set{pathStrings}
                     if(wasIn){//this was passing, and was in some path(s)
                         for (const nowInvalidPathStr of wasIn) {
-                            qParams.pathStrings.remove(nowInvalidPathStr)
+                            qParams.pathStrings.delete(nowInvalidPathStr)
                         }
                     }
                     openPaths--
                     return
                 }
+                console.log(startID, 'passed')
+
                 qParams.elements[startVar].passing[startID] = pvals
                 delete qParams.elements[startVar].failing[startID]
 
@@ -2797,7 +2814,7 @@ function query(path,qParams, cb, opts){
                     
                 }
                 function dirDone(){
-                    pathparams[dir].done = true
+                    pathParams[dir].done = true
                     if(pathParams[otherDir].done){
                         openPaths--
                         //add to paths array that we will be using to assembleOutput
@@ -2866,7 +2883,7 @@ function query(path,qParams, cb, opts){
                 let propsToGet = sortProps.length
                 let j = 0
                 for (const alias of sortProps) {
-                    const addVal = (val) =>{
+                    const addVal = (i,j) => (val) =>{
                         sortArr[i][1][j]=val
                         propsToGet--
                         if(!propsToGet){
@@ -2876,7 +2893,7 @@ function query(path,qParams, cb, opts){
                     }
                     let p = qParams.aliasToID.id(node,alias)
                     if(p!==undefined){
-                        getCell(node,p,addVal,true)
+                        getCell(node,p,addVal(i,j),true)
                     }else{
                         //what to do? put in a 0 so it is alway top or bottom?
                         console.warn('Cannot find '+alias+' for '+node+' ---sorting as value: 0---')
@@ -2903,7 +2920,7 @@ function query(path,qParams, cb, opts){
                 applySkipLimit()
                 function compareSubArr(sortQueries){
                     return function(a,b){
-                        return multiCompare(0,sortQueries,colKey,a,b)
+                        return multiCompare(0,sortQueries,a,b)
                         function multiCompare(idx,dirArr,a,b){
                             const varA = (typeof a[1][idx] === 'string') ?
                                 a[1][idx].toUpperCase() : a[1][idx];
@@ -2921,7 +2938,7 @@ function query(path,qParams, cb, opts){
                                 }
                             }
                             return (
-                                (order == 'DESC') ? (comparison * -1) : comparison
+                                (dirArr[0] == 'DESC') ? (comparison * -1) : comparison
                                 );
                         }
                     }
@@ -2946,9 +2963,10 @@ function query(path,qParams, cb, opts){
                     queryDone(true)
                     return
                 }
-                for (const result of preReturn) {//get ID's for only the things we are returning
+                for (const strPath of preReturn) {//get ID's for only the things we are returning
+                    let pathArr = JSON.parse(strPath)
                     let j = 0
-                    for (const id of result) {
+                    for (const id of pathArr) {
                         if(!nodesNeeded[id])nodesNeeded[id] = {}
                         nodesNeeded[id].userVar = returning[j]
                         j++
@@ -2963,16 +2981,30 @@ function query(path,qParams, cb, opts){
             let nodesToGet = Object.keys(nodesNeeded).length
             for (const nodeID in nodesNeeded) {
                 let {userVar} = nodesNeeded[nodeID]
-                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLabels} = qParams[userVar]
+                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLabels} = qParams.elements[userVar]
+                // if(!props || (Array.isArray(props) && !props.length)){
+                //     props = getAllActiveProps(gb,nodeID)
+                // }
                 let propsToGet = props.length
+
                 const nodeObj = (returnAsArray) ? [] : {}
                 if(!noID)Object.defineProperty(nodeObj,'id',{value: nodeID})
                 if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
                 let j = 0
                 for (const {alias,as:propAs,raw:rawProp} of props) {
                     let raw = !!allRaw || !!rawProp
-                    let p = qParams.aliasToID.id(node,alias)
-                    const addVal = (val) =>{
+                    let p = qParams.aliasToID.id(nodeID,alias)
+                    if(p!==undefined){
+                        //getCell(nodeID,p,addVal(nodeID,p,j,alias,propAs,propsByID,nodeObj,pending),raw)
+                        getCell(nodeID,p,addValue,raw)
+                        qParams.elements[userVar].passing[nodeID].add(p)
+                    }else{
+                        //what to do? neo returns `null`
+                        console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
+                        addValue(undefined)
+                    }
+                    j++
+                    function addValue(val){
                         let property = propAs || (propsByID) ? p : alias
                         if(returnAsArray){
                             property = j
@@ -2986,16 +3018,12 @@ function query(path,qParams, cb, opts){
                         if(!rawLabels && ['labels'].includes(propType)){
                             replaceLabelIDs(val,property)
                         }
-                        propIsDone()
+                        propsToGet--
+                        if(!propsToGet){
+                            data[nodeID] = nodeObj
+                            propIsDone()
+                        }
                     }
-                    if(p!==undefined){
-                        getCell(node,p,addVal,raw)
-                    }else{
-                        //what to do? put in a 0 so it is alway top or bottom?
-                        console.warn('Cannot find '+alias+' for '+node+' ---setting value as: `undefined`---')
-                        addVal(undefined)
-                    }
-                    j++
                 }
                 function replaceLabelIDs(raw,prop){
                     //raw could be either a string (soul) or array of souls (or if Label labelID)
@@ -3009,20 +3037,18 @@ function query(path,qParams, cb, opts){
                     nodeObj[prop] = out
                 }
                 function propIsDone(){
-                    propsToGet--
-                    if(!propsToGet){
-                        nodesToGet--
-                        if(!nodesToGet)makeResult()
-                    }
+                    nodesToGet--
+                    if(!nodesToGet)makeResult()
                 }
-                data[nodeID] = nodeObj
+                
             }
 
 
             function makeResult(){
                 //go through preReturn, for the ID grab the node arr/obj and put in result. If returning.length ===1 don't double up the array
                 let i = 0
-                for (const row of preReturn) {
+                for (const strPath of preReturn) {
+                    let row = JSON.parse(strPath)
                     let j = 0
                     let newRow = []
                     for (const id of row) {
@@ -3041,11 +3067,13 @@ function query(path,qParams, cb, opts){
         //setup up subscription, fire user cb
         if(isSub){
             console.log('setting up or updating sub: '+ sVal)
-            if(!gsubs[b])gsubs[b] = {}
+            //if(!gsubs[b])gsubs[b] = {}
             let basePath = makeSoul({b})
-            gsubs[basePath][sVal] = {qParams,cb}
-            pendingQueries.remove(isSub)
+            setValue([basePath,sVal],{qParams,cb},gsubs)
+            console.log(gsubs)
+            pendingQueries.delete(sVal)
         }
+        metaOut.time = Date.now()-startTime
         if(returnResult)cb(result)
 
 
@@ -3675,12 +3703,14 @@ function testRequest(root, request, testSoul){
 
 
 
-//REACT STUFF
+//NON CHAIN STUFF
 function loadGBaseConfig(cb){
     reactConfigCB = cb
 
 }
-
+const {makegetAlias,makegetProps} = require('../util/util')
+const getAlias = makegetAlias(gb)
+const getProps = makegetProps(gb)
 
 
 //WIP___________________________________________________
@@ -3832,5 +3862,7 @@ module.exports = {
     verifyPermissions,
     clientAuth,
     verifyClientConn,
-    clientLeft
+    clientLeft,
+    getAlias,
+    getProps
 }

@@ -9,7 +9,9 @@ const {
         verifyPermissions,
         clientAuth,
         verifyClientConn,
-        clientLeft
+        clientLeft,
+        getAlias,
+        getProps
         }=require('./gbase_core/core')
 const { fnHelp }=require('./function_lib/functions')
 
@@ -27,5 +29,7 @@ module.exports = {
     verifyPermissions,
     clientAuth,
     verifyClientConn,
-    clientLeft
+    clientLeft,
+    getAlias,
+    getProps
 }

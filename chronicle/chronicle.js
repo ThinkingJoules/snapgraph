@@ -185,11 +185,10 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   let root = gun.back(-1)
   let soulObj = parseSoul(idxID)
 
-
+  opts = opts || {}
   let {archive, deleteThis} = opts
   let idIdx = makeSoul(Object.assign({},soulObj,{':':true}))
   let blockIdxSoul = makeSoul(Object.assign({},soulObj,{':':'BLKIDX'}))
-
   idxDate = idxDate || Date.now() //index as 'now' such for creation
   if (!(idxDate instanceof Date) || isNaN(idxDate*1)){ // TODO: Do magic
     console.warn('Warning: Improper idxDate used. Must be a Date Object or unix time')
@@ -272,31 +271,74 @@ const timeLog = (gun) => (idxID, changeObj) =>{
 
   //BREAK OUT AND STORE BY PVAL!!
   let root = gun.back(-1)
-  let soulObj = parseSoul(idxID)
-  let idxSoul = makeSoul(Object.assign({}, soulObj,{':':true}))
   let user = root.user()
   let pub = user && user.is && user.is.pub || false
   let idxDate = new Date().getTime()
-  changeObj = (typeof changeObj === 'object') ? JSON.stringify(changeObj) : changeObj
+  for (const pval in changeObj) {
+    const value = changeObj[pval];
+    logPval(pval,value)
+  }
   
-  let logObj = {who:pub,what:changeObj,when:idxDate}
+  function logPval(p,val){
+    let soulObj = Object.assign({},parseSoul(idxID),{p})
 
-  root.get(idxSoul).get('tail').get(function(msg, ev) {
-    let lastEdit = msg.put
-    let newLog = (lastEdit === undefined) ? true : false
-    ev.off()
-    let lastSoul = makeSoul(Object.assign({},soulObj,{':':lastEdit}))
-    let nextSoul = makeSoul(Object.assign({},soulObj,{':':idxDate}))
-    let prevO = (newLog) ? {prev: null} : {prev:{'#':lastSoul}}
-    Object.assign(logObj,prevO)
-    if (newLog){//new object
-      root.get(idxSoul).put({head:idxDate})
-    }else{
-      root.get(lastSoul).put({next:{'#':nextSoul}})//old tail, update next
-    }
-    root.get(idxSoul).put({tail:idxDate})//new tail
-    root.get(nextSoul).put(logObj)//put data and prev in new block
-  })
+    let log = JSON.stringify({who:pub,what:val})
+    let blockIdxSoul = makeSoul(Object.assign({},soulObj,{';':'BLKIDX'}))
+    let correctBlock = getBlockTime(idxDate)
+    const correctSoul = makeSoul(Object.assign({},soulObj,{';':correctBlock}))
+    root.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+      if(allBlocks !== undefined){
+        if(allBlocks[correctSoul] !== undefined){//add to existing block
+          root.get(correctSoul).put({[idxDate]:log})
+        }else{//make new block 
+          newBlock(allBlocks)
+        }
+      }else{//newSoul, with new src/trgt combo
+        newIndex()
+      }
+      function newBlock(blockList){
+        let {head, tail} = blockList
+        let list = JSON.parse(JSON.stringify(blockList))
+        delete list.head; delete list.tail; delete list['_']
+        let sortedList = Object.entries(list).sort((a,b)=>Math.abs(a[1]-correctBlock)-Math.abs(b[1]-correctBlock))//sorted in unix closest to blockTime 4>[5,2,1,7]
+        let prevSoul,nextSoul
+        for (let i = 0; i < sortedList.length; i++) {
+          const [soul,unix] = sortedList[i];
+          if(prevSoul !== undefined && nextSoul !==undefined)break
+          if(unix>correctBlock && nextSoul === undefined){//past either limit, first value will snag one of these if statements
+            if(i===0)prevSoul=null
+            nextSoul = soul
+          }else if(unix<correctBlock && prevSoul === undefined){
+            if(i===0)nextSoul=null
+            prevSoul = soul
+          }
+        }
+        let block = {prev:prevSoul ,next: nextSoul, [idxDate]:log}
+        root.get(correctSoul).put(block)//put data and prev in new block
+        if(prevSoul){
+          gun.get(prevSoul).put({next:correctSoul})
+        }
+        if(prevSoul === null){
+          let firstBlock = makeSoul(Object.assign({},soulObj,{';':head}))
+          gun.get(firstBlock).put({prev:correctSoul})
+          root.get(blockIdxSoul).put({head:correctBlock})
+        }
+        if(nextSoul){
+          gun.get(nextSoul).put({prev:correctSoul})
+        }
+        if(nextSoul === null){
+          let lastBlock = makeSoul(Object.assign({},soulObj,{';':tail}))
+          gun.get(lastBlock).put({next:correctSoul})
+          root.get(blockIdxSoul).put({tail:correctBlock})
+        }
+      }
+      function newIndex(){
+        let firstBlock = {prev:null,next:null,[idxDate]:log}
+        root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+        root.get(correctSoul).put(firstBlock)
+      }
+    })
+  }
 }
 
 const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{

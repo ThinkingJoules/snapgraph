@@ -6,7 +6,6 @@ const{newBaseConfig,
     newRelationshipPropConfig,
     handleImportColCreation,
     handleTableImportPuts,
-    checkConfig,
     makehandleConfigChange
 } = require('./configs')
 
@@ -15,17 +14,9 @@ const{getValue,
     findID,
     findRowID,
     tsvJSONgb,
-    watchObj,
     convertValueToType,
     checkUniques,
-    nextSortval,
-    getColumnType,
     hasPropType,
-    handleDataEdit,
-    addAssociation,
-    removeAssociation,
-    getRetrieve,
-    checkAliasName,
     getAllActiveProps,
     buildPermObj,
     makeSoul,
@@ -66,30 +57,36 @@ group: 100
 
 
 //GBASE CHAIN COMMANDS
-const makenewBase = gun => (alias, basePermissions, baseID) =>{
+const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID) =>{
     try{
         let user = gun.user()
         let pub = user && user.is && user.is.pub || false
         let invalidID = /[^a-zA-Z0-9]/
-        baseID = baseID || rand(10)
+        let b = baseID || rand(10)
         if(!pub){
             throw new Error('Must be signed in to perform this action')
         }
         if(invalidID.test(baseID)){
             throw new Error('baseID must only contain letters and numbers')
         }
-        gun.get(makeSoul({'!':baseID,'|':'super'})).put({[pub]:true})
+        gun.get(makeSoul({b,'|':'super'})).put({[pub]:true})
         
         const putRest = () =>{
             let perms = buildPermObj('base',pub,basePermissions)
             let adminID = rand(5)
             let anyID = rand(5)
-            gun.get(makeSoul({'!':baseID,'|':true})).put(perms)
-            gun.get(makeSoul({'!':baseID,'^':true})).put({[adminID]: 'admin', [anyID]: 'ANY'})
-            gun.get(makeSoul({'!':baseID,'^':anyID,'|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
-            gun.get(makeSoul({'!':baseID,'^':adminID,'|':true})).put(buildPermObj('group'))
-            gun.get('GBase').put({[baseID]: true})
-            gun.get(makeSoul({'!':baseID,'%':true})).put(newBaseConfig({alias}))
+            gun.get(makeSoul({b,'|':true})).put(perms)
+            gun.get(makeSoul({b,'^':true})).put({[adminID]: 'admin', [anyID]: 'ANY'})
+            gun.get(makeSoul({b,'^':anyID,'|':true})).put(buildPermObj('group',false,{add: 'ANY'}))
+            gun.get(makeSoul({b,'^':adminID,'|':true})).put(buildPermObj('group'))
+            gun.get('GBase').put({[b]: true})
+            let baseC = newBaseConfig({alias})
+            gun.get(makeSoul({b,'%':true})).put(baseC)
+
+            let newgb = Object.assign({},{[b]:baseC},{[b]:{props:{},relations:{},groups:{}}})
+            const newNodeType = makenewNodeType(gun,newgb,timeLog)
+            const newType = newNodeType(makeSoul({b}),'t')
+            newType({alias: 'Users',humanID:'ALIAS'},false,[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
         }
         setTimeout(putRest,1000)
         return baseID
@@ -98,36 +95,41 @@ const makenewBase = gun => (alias, basePermissions, baseID) =>{
         return e
     }
 }
-const makenewNodeType = (gun, gb, timeLog) => (path) => (configObj,cb,propConfigArr)=>{
+const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configObj,cb,propConfigArr)=>{
+    //relationOrNode = 't' || 'r'
     let {b} = parseSoul(path)
+    let isNode = (relationOrNode === 't')
     let {id:tid} = configObj
     let toPut = {}
     let newGB = Object.assign({},gb)
     let err
+    propConfigArr = propConfigArr || []
+    propConfigArr.push({alias: 'STATE', propType:'state'})
+    if(isNode)propConfigArr.push({alias:'LABELS',propType:'labels'})
+    if(!isNode){
+        propConfigArr.push({alias: 'SRC',propType: 'source'})
+        propConfigArr.push({alias:'TRGT',propType: 'target'})
+    }
 
     if(!tid){
-        tid = newID(newGB,makeSoul({b,t:true}))
+        tid = newID(newGB,makeSoul({b,[relationOrNode]:true}))
     }else if(tid && /[^a-z0-9]/i.test(tid)){
         throw new Error('Invalid ID supplied. Must be [a-zA-z0-9]')
     }else{
         //using user supplied id
         delete configObj.id
     }
-    let tconfig = newNodeTypeConfig(configObj)
-    let newPath = makeSoul({b,t:tid})
+    let tconfig = (isNode) ? newNodeTypeConfig(configObj) : newRelationshipConfig(configObj)
+    let newPath = makeSoul({b,[relationOrNode]:tid})
     let tCsoul = configSoulFromChainPath(newPath)
     console.log(newPath,tCsoul)
     const config = makehandleConfigChange(gun,newGB)
     config(tconfig,newPath,{isNew:true, internalCB:function(obj){
         let {configPuts} = obj
         Object.assign(toPut,configPuts)
-        if(propConfigArr && propConfigArr.length){
-            let forGB = Object.assign({},configPuts[tCsoul],{props:{}})
-            setValue(configPathFromChainPath(newPath),forGB,newGB)
-            makeProp()
-        }else{
-            done()
-        }
+        let forGB = Object.assign({},configPuts[tCsoul],{props:{}})
+        setValue(configPathFromChainPath(newPath),forGB,newGB)
+        makeProp()
     }},throwError)
     function handlePropCreation(o){
         propConfigArr.shift()
@@ -151,7 +153,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path) => (configObj,cb,propConfig
         let nextPconfig = propConfigArr[0]
         let {id} = nextPconfig
         if(!id){
-            id = newID(newGB,makeSoul({b,t:tid,p:true}))
+            id = newID(newGB,makeSoul({b,[relationOrNode]:tid,p:true}))
         }else if(id && /[^a-z0-9]/i.test(id)){
             throw new Error('Invalid ID supplied. Must be [a-zA-z0-9]')
         }else{
@@ -159,7 +161,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path) => (configObj,cb,propConfig
             delete nextPconfig.id
         }
         let pconfig = newNodePropConfig(nextPconfig)
-        let newPpath = makeSoul({b,t:tid,p:id})
+        let newPpath = makeSoul({b,[relationOrNode]:tid,p:id})
         config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
 
     }
@@ -185,7 +187,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path) => (configObj,cb,propConfig
 const makeaddProp = (gun, gb, timeLog) => (path) => (configObj)=>{
     let {b,t,r} = parseSoul(path)
     let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
-    let isNode = t || false
+    let isNode = !r
     let toPut = {}
     let newGB = Object.assign({},gb)
     let err
@@ -298,56 +300,54 @@ const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb)
 const makeedit = (gun,gb,getCell,cascade,timeLog,timeIndex) => (path) => (editObj, cb, opt)=>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
-        let {b,t,r} = parseSoul(path)
+        let pathObj = parseSoul(path)
+        let {b,t,r,p} = pathObj
         let {own} = opt || {}
         let type = makeSoul({b,t,r})
-        let [p] = hasPropType(gb,type,'state')
+        let [stateP] = hasPropType(gb,type,'state')
+        if(p){
+            let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
+            delete pathObj.p
+            delete pathObj['.']
+            if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
+            else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
+            else if(typeof editObj === 'object' && ['unorderedSet','array'].includes(dataType))throw new Error('Value must not be an object')
+
+            editObj = {[p]:editObj}
+            path = makeSoul(pathObj)
+        }
         const checkForState = (value) =>{
             let e
             if(value === null){
                 e = new Error('Node does not exist, must create a new one through ".newNode()" api.')
-            }else if(value === 'archived'){//check existence
-                e = new Error('Node is archived or deleted. Must create a new one through ".newRow()" api. Or ... "unarchiveRow()"??')
             }else if(value === 'deleted'){//check existence
                 e = new Error('Node is deleted. Must create a new one through ".newNode()"')
-            }else if(value === 'active'){
+            }else if(['active','archived'].includes(value)){
                 putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,path,editObj,{own},cb)
             }
             console.log(e)
             cb.call(cb,e) 
         }
-        getCell(path,p,checkForState,true)
+        getCell(path,stateP,checkForState,true)
     }catch(e){
         console.log(e)
         cb.call(this, e)
     }
 }
 
-const makeretrieveQuery = (gb,setupQuery) => (path) => (cb, queryArr) =>{
+const makeretrieveQuery = (setupQuery) => (path) => (cb, queryArr) =>{
     try{//path = base/tval CAN ONLY QUERY TABLES
-        let {props} = getValue(configPathFromChainPath(path),gb)
-        let pvalArr = []
-        colArr = colArr || getAllActiveProps(gb,path)
         queryArr = queryArr || []
-        for (const palias of colArr) { 
-            pvalArr.push(findID(props, palias))
-        }
-        setupQuery(path,pvalArr,queryArr,cb)
+        setupQuery(path,queryArr,cb)
     }catch(e){
         console.warn(e)
         return e
     }
 }
-const makesubscribeQuery = (gb,setupQuery) => (path) => (cb, queryArr,subID) =>{
+const makesubscribeQuery = (setupQuery) => (path) => (cb, queryArr,subID) =>{
     try{
-        let {props} = getValue(configPathFromChainPath(path),gb)
-        let pvalArr = []
-        colArr = colArr || getAllActiveProps(gb,path)
         queryArr = queryArr || []
-        for (const palias of colArr) { 
-            pvalArr.push(findID(props, palias))
-        }
-        setupQuery(path,pvalArr,queryArr,cb,true,subID)
+        setupQuery(path,queryArr,cb,true,subID)
     }catch(e){
         console.warn(e)
         return e
@@ -545,7 +545,7 @@ const makerelatesTo = (gun,gb,getCell) => path => (trgt,r,rtProps) =>{//TODO
             throw new Error('Must use a nodeID with a pattern of '+DATA_INSTANCE_NODE.toSting()+' for both `ID` node(ID).relatesTo(ID, relationship)')
         }
         let {b} = parseSoul(path)
-        if(!rtProps)rtProps = {}
+        rtProps = rtProps || {}
         
         let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
         r = findID(relations,r)//r will be '-'id, will throw error if not found
@@ -558,7 +558,7 @@ const makerelatesTo = (gun,gb,getCell) => path => (trgt,r,rtProps) =>{//TODO
         let i = hash64(hashStr)//should never have two relation nodes (of same r id) with same src+trgt
         let newID = makeSoul({b,r,i})
         let opts = {isNew:true}
-        let eSoul = makeSoul({b,r,i:true})//look for a created time for this id, might be archived.
+        let eSoul = makeSoul({b,r,i:true})//state index
         gun.get(eSoul).get(newID).get(function(msg,eve){
             let value = msg.put
             eve.off()
@@ -714,9 +714,6 @@ module.exports = {
     makeaddUser,
     makeuserAndGroup,
     makechp,
-    makeimportChildData,
-    makeaddChildProp,
-    makepropIsLookup,
     makearchive,
     makeunarchive,
     makedelete,
