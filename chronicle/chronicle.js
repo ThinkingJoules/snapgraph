@@ -259,7 +259,7 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   }
   function newIndex(){
     let firstBlock = {prev:null,next:null,[idxData]:idxDate}
-    root.get(idxID).put({[idxData]:idxDate})
+    root.get(idIdx).put({[idxData]:idxDate})
     root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
     root.get(correctSoul).put(firstBlock)
   }

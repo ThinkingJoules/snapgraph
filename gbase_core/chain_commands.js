@@ -32,7 +32,9 @@ const{getValue,
     newDataNodeID,
     configSoulFromChainPath,
     IS_CONFIG_SOUL,
-    makeEnq
+    makeEnq,
+    toAddress,
+    setMergeValue
 } = require('./util')
 
 const {relationIndex} = require('../chronicle/chronicle')
@@ -57,8 +59,9 @@ group: 100
 
 
 //GBASE CHAIN COMMANDS
-const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID) =>{
+const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID,cb) =>{
     try{
+        cb = (cb instanceof Function && cb) || function(){}
         let user = gun.user()
         let pub = user && user.is && user.is.pub || false
         let invalidID = /[^a-zA-Z0-9]/
@@ -84,9 +87,7 @@ const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID) =>{
             gun.get(makeSoul({b,'%':true})).put(baseC)
 
             let newgb = Object.assign({},{[b]:baseC},{[b]:{props:{},relations:{},groups:{}}})
-            const newNodeType = makenewNodeType(gun,newgb,timeLog)
-            const newType = newNodeType(makeSoul({b}),'t')
-            newType({alias: 'Users',humanID:'ALIAS'},false,[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
+            makenewNodeType(gun,newgb,timeLog)(makeSoul({b}),'t')({alias: 'Users',humanID:'ALIAS'},false,[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
         }
         setTimeout(putRest,1000)
         return baseID
@@ -97,19 +98,20 @@ const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID) =>{
 }
 const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configObj,cb,propConfigArr)=>{
     //relationOrNode = 't' || 'r'
+    cb = (cb instanceof Function && cb) || function(){}
     let {b} = parseSoul(path)
     let isNode = (relationOrNode === 't')
     let {id:tid} = configObj
     let toPut = {}
-    let newGB = Object.assign({},gb)
+    let newGB = JSON.parse(JSON.stringify(gb))
     let err
     propConfigArr = propConfigArr || []
-    propConfigArr.push({alias: 'STATE', propType:'state'})
-    if(isNode)propConfigArr.push({alias:'LABELS',propType:'labels'})
-    if(!isNode){
-        propConfigArr.push({alias: 'SRC',propType: 'source'})
-        propConfigArr.push({alias:'TRGT',propType: 'target'})
+    if(isNode && !propConfigArr.filter(x => x.propType === 'labels')[0])propConfigArr.unshift({alias:'LABELS',propType:'labels',id:'LABELS'})
+    else{
+        if(!propConfigArr.filter(x => x.propType === 'target')[0])propConfigArr.unshift({alias:'TRGT',propType: 'target',id:'TRGT'})
+        if(!propConfigArr.filter(x => x.propType === 'source')[0])propConfigArr.unshift({alias: 'SRC',propType: 'source',id:'SRC'})
     }
+    if(!propConfigArr.filter(x => x.propType === 'state')[0])propConfigArr.unshift({alias: 'STATE', propType:'state',id:'STATE'})
 
     if(!tid){
         tid = newID(newGB,makeSoul({b,[relationOrNode]:true}))
@@ -122,7 +124,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
     let tconfig = (isNode) ? newNodeTypeConfig(configObj) : newRelationshipConfig(configObj)
     let newPath = makeSoul({b,[relationOrNode]:tid})
     let tCsoul = configSoulFromChainPath(newPath)
-    console.log(newPath,tCsoul)
+    //console.log(newPath,tCsoul)
     const config = makehandleConfigChange(gun,newGB)
     config(tconfig,newPath,{isNew:true, internalCB:function(obj){
         let {configPuts} = obj
@@ -134,13 +136,13 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
     function handlePropCreation(o){
         propConfigArr.shift()
         let {path,configPuts} = o
-        console.log(path,configPuts)
+        //console.log(path,configPuts)
         let cSoul = configSoulFromChainPath(path)
         for (const soul in configPuts) {
             addToPut(soul,configPuts[soul])
         }
         if(propConfigArr.length){
-            console.log(configPathFromChainPath(path),configPuts[cSoul],newGB)
+            //console.log(configPathFromChainPath(path),configPuts[cSoul],newGB)
             setValue(configPathFromChainPath(path),configPuts[cSoul],newGB)
             makeProp()
         }else{
@@ -162,6 +164,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
         }
         let pconfig = newNodePropConfig(nextPconfig)
         let newPpath = makeSoul({b,[relationOrNode]:tid,p:id})
+        console.log(pconfig)
         config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
 
     }
@@ -169,9 +172,14 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
         if(err)return
         for (const csoul in toPut) {//put all configs in
             const cObj = toPut[csoul];
-            if(IS_CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
+            if(IS_CONFIG_SOUL.test(csoul)){
+                timeLog(csoul,cObj)
+                console.log(csoul,cObj)
+                setMergeValue(configPathFromChainPath(csoul),cObj,newGB)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
+            }
             gun.get(csoul).put(cObj)
         }
+        cb.call(cb,undefined,newGB)
     }
     function throwError(errmsg){
         let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
@@ -189,7 +197,7 @@ const makeaddProp = (gun, gb, timeLog) => (path) => (configObj)=>{
     let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
     let isNode = !r
     let toPut = {}
-    let newGB = Object.assign({},gb)
+    let newGB = JSON.parse(JSON.stringify(gb))
     let err
     const config = makehandleConfigChange(gun,newGB)
     makeProp()
@@ -228,7 +236,10 @@ const makeaddProp = (gun, gb, timeLog) => (path) => (configObj)=>{
         if(err)return
         for (const csoul in toPut) {//put all configs in
             const cObj = toPut[csoul];
-            if(IS_CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
+            if(IS_CONFIG_SOUL.test(csoul)){
+                timeLog(csoul,cObj)
+                setValue(configPathFromChainPath(csoul),cObj,gb)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
+            }
             gun.get(csoul).put(cObj)
         }
     }
@@ -336,17 +347,10 @@ const makeedit = (gun,gb,getCell,cascade,timeLog,timeIndex) => (path) => (editOb
     }
 }
 
-const makeretrieveQuery = (setupQuery) => (path) => (cb, queryArr) =>{
-    try{//path = base/tval CAN ONLY QUERY TABLES
-        queryArr = queryArr || []
-        setupQuery(path,queryArr,cb)
-    }catch(e){
-        console.warn(e)
-        return e
-    }
-}
-const makesubscribeQuery = (setupQuery) => (path) => (cb, queryArr,subID) =>{
+
+const makeperformQuery = (setupQuery) => (path,isSub) => (cb, queryArr,subID) =>{
     try{
+        if(isSub && !subID)throw new Error('Must specify a subscription ID!')
         queryArr = queryArr || []
         setupQuery(path,queryArr,cb,true,subID)
     }catch(e){
@@ -381,9 +385,11 @@ const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
                 const alias = sortBy[i];
                 let dir = sortBy[i+1]
                 if(!['ASC','DESC'].includes(dir)) dir = 'DESC'
-                retFirstArg.sortBy.push({alias,dir})
+                retFirstArg.sortBy.push(alias)
+                retFirstArg.sortBy.push(dir)
             }
         }
+        console.log(retFirstArg)
         retArg.push(retFirstArg)
 
         let propArr = []
@@ -396,7 +402,8 @@ const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
         retArg.push(retSecArg)
 
         let queryArr = [match,ret]
-        setupQuery(path,queryArr,cb,!!isSub,subID)
+        console.log(propArr)
+        setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
     }catch(e){
         console.warn(e)
         return e
@@ -488,16 +495,9 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not u
 
 
     cb = (cb instanceof Function && cb) || function(){}
-    if(ovrwrt !== undefined){//turn truthy falsy to boolean
-        ovrwrt = (ovrwrt) ? true : false
-    }else{
-        ovrwrt = false
-    }
-    if(append !== undefined){
-        append = (append) ? true : false
-    }else{
-        append = true
-    }
+    ovrwrt = (ovrwrt === undefined) ? false : !!ovrwrt
+    append = !!append
+    
     //append && ovrwrt: Add non-existing rows, and update existing rows
     //append && !ovrwrt: Add non-exiting rows, do not update existing rows <---Default
     //!append && ovrwrt: Do not add non-existing rows, update existing rows
@@ -531,115 +531,112 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not u
     }
     handleTableImportPuts(gun, path, result, cb)
 }
-// vvvvv these are to build parent child relations (lookup will function much the same as parent child but can have many to many relationships)
-const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate) => (path) => (tsv, alias,opts, cb)=>{//updated
+const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getCell) => (path) => (tsv, configObj,opts, cb)=>{//updated
     //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
     try{
         let {b} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
-        let {variants,externalID,delimiter,labels} = opts
-        variants = !!variants
-        externalID = externalID || ''
+        let {delimiter,labels} = opts
         delimiter = delimiter || ', '
-        if(variants && !externalID)throw new Error('If you want to enable variants, you must specify the property name that would have unique values to use as external IDs')
-        let cpath = configPathFromChainPath(path)
-        alias = alias || 'New NodeType' + rand(2)
+        let t = (typeof configObj === 'object') ? configObj.id : undefined
+        configObj = configObj && newNodeTypeConfig(configObj) || newNodeTypeConfig()
+        configObj.alias = configObj.alias || 'New NodeType' + rand(2)
+        let {externalID} = configObj
+        if(t && !/[^a-z0-9]/i.test(t) || !t){
+            t = newID(gb,makeSoul({b,t:true}))
+        }
+        let altgb = JSON.parse(JSON.stringify(gb))
+        configObj.id = t
+        setMergeValue(configPathFromChainPath(makeSoul({b,t})),configObj,altgb)
+        //console.log(b,t)
         let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
-        let t = newID(gb,makeSoul({b,t:true}))
-        let tconfig = newNodeTypeConfig({alias,variants,externalID})
-        checkUniques(gb,cpath, tconfig)
-        let result = {}, IDs = {}, rid = 0
-        let headers = dataArr[0]
-        let {newPconfigs, aliasLookup} = handleImportColCreation(gb, b, t, headers, dataArr[1],variants, externalID, true)
-        let temp = {}
-        let externalIDidx = headers.indexOf(externalID)
-        if(externalIDidx === -1 && variants)throw new Error('Cannot find the external IDs specified')
+        let colHeaders = dataArr[0]
+        let [newParr, aliasLookup] = handleImportColCreation(altgb, path , colHeaders, dataArr[1],{externalID,labels, append:true})
+        console.log(newParr)
+        let externalIDidx = colHeaders.indexOf(externalID)
+        if(externalIDidx === -1 && externalID)throw new Error('Cannot find the external IDs specified')
+        if(externalIDidx !== -1){
+            configObj.externalID = aliasLookup[externalID] //change externalID in config from the alias to the new pval
+        }
         let invalidData = {}
+
+        let rid = 0,IDs={},temp ={},result ={}
 
         for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
             const rowArr = dataArr[i];
             let curID
-            if(variants){
+            if(externalIDidx !== -1){
                 curID = rowArr[externalIDidx]
-                assignID(eid)
+                assignID(curID)
             }else{
-                curID = assignID(eid)
+                curID = assignID()
             }
             for (let j = 0; j < rowArr.length; j++) {
                 let value = rowArr[j];
-                if(!['',null,undefined].includes(value)){//ignore empty values
-                    if(!temp[curID])temp[curID] = {}
-                    const headerPval = aliasLookup[headers[j]]
-                    let {dataType} = newPconfigs[headerPval]
-                    try {
-                        value = convertValueToType(value,dataType,eid,delimiter)
-                    } catch (error) {
-                        //need to fail back to a 'string' type on this pval and re-convert all data on final time through
-                        //convert will not throw errors on 'string' everything else will.
-                        invalidData[headerPval] = dataType
-                    }
-                    temp[eid][headerPval] = value
+                value = (['',null,undefined].includes(value)) ? null : value
+                if(!temp[curID])temp[curID] = {}
+                let {dataType,id:headerPval} = newParr[j]
+                try {
+                    value = convertValueToType(value,dataType,curID,delimiter)
+                } catch (error) {
+                    //need to fail back to a 'string' type on this pval and re-convert all data on final time through
+                    //convert will not throw errors on 'string' everything else will.
+                    invalidData[j] = dataType
                 }
+                temp[curID][headerPval] = value
             }
         }
         let typeChange = Object.keys(invalidData)
         for (const pval of typeChange) {
-            newPconfigs[pval].dataType = 'string'
-            newPconfigs[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
+            let {propType} = newParr[pval]
+            if(propType === 'labels')throw new Error('Cannot convert your label field to an array. Please check your data to make sure it can be converted to an array.')
+            newParr[pval].dataType = 'string'
+            newParr[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
         }
         const isVariant = /\$\{(.+)\}/
         for (const curID in temp) {
             const node = temp[curID];
-            let rowsoul = curID
-            if(variants){
-                let i = IDs[curID]
-                rowsoul = makeSoul({b,t,i})
-            }
+            let rowsoul = (externalIDidx !== -1) ? IDs[curID] : curID
+
             for (const p in node) {
-                let {dataType} = newPconfigs[p]
-                const v = convertValueToType(node[p],dataType,eid,delimiter)//shouldn't error
-                let [m,eid] = (dataType === 'string' && v.match(isVariant)) || []
-                if(variants && eid){//add all values
-                    setValue([rowsoul,p],makeEnq(IDs[eid],p),result)
-                }else{
-                    setValue([rowsoul,p],v,result)
+                let v = node[p]
+                if(typeof v === 'string' && isVariant.test(v)){
+                    v = v.replace(isVariant, function(m,$1){
+                        let soul = ID[$1]
+                        if(!DATA_INSTANCE_NODE.test(soul))return m
+                        let addr = toAddress(soul,p)
+                        return '${'+addr+'}'
+
+                    })
+                    v = makeEnq(v)
                 }
+                setValue([rowsoul,p],v,result)
             }
         }
-        Object.assign(gb,{[b]:{[t]:newPconfigs}}) //merge config directly so putData api's 'gb' is accurate
-        putData()
+        done()
         //console.log(newPconfigs,result)
-        triggerConfigUpdate()//fire callback for app code to get new config data.
         function assignID(alias){
-            let id = newDataNodeID(rid)
-            IDs[alias] = id
+            let id = makeSoul({b,t,i:newDataNodeID(rid)})
+            if(alias)IDs[alias] = id
             rid++
             return id
         }
-        function putData(){
-            for (const p in newPconfigs) {
-                const cObj = newPconfigs[p];
-                let {alias} = cObj
-                if(externalID && externalID === alias)tconfig.externalID = p
-                let configSoul = makeSoul({b,t,p,'%':true})
-                let listSoul = makeSoul({b,t})
-                gun.get(configSoul).put(cObj)
-                gun.get(listSoul).put({[p]:true})
-            }
-    
-    
-            gun.get(makeSoul({b,t,'%':true})).put(tconfig)
-            let tval = '#' + t
-            let tpath = makeSoul({b,t})
-            gun.get(makeSoul({b})).put({[tval]: true})//table on base index
-            handleTableImportPuts(gun, result, cb)//put data on each node
-            let now = new Date()
-            for (const newSoul in result) {
-                let put = result[newSoul]
-                putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb)
-                timeIndex(tpath,newSoul,now)//index new souls on the 'created' index
-                timeLog(newSoul,put)//log the first edits for each node (basically double data at this point...)
-            }           
+        function done(){
+            makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newGB){
+                if(!err){
+                    triggerConfigUpdate()//fire callback for app code to get new config data.
+                    for (const newSoul in result) {
+                        let put = result[newSoul]
+                        putData(gun, newGB, getCell, false, timeLog, timeIndex, false, newSoul, put, {isNew:true,isUnique:true}, function(err){
+                            console.log('put errors',newSoul,err)
+                        })
+                    } 
+                }else{
+                    console.log(e)
+                    cb.call(this,e)
+                }
+            },newParr.slice())
+                      
         }
     }catch(e){
         console.log(e)
@@ -833,8 +830,7 @@ module.exports = {
     makeshowcache,
     makeshowgsub,
     makeshowgunsub,
-    makesubscribeQuery,
-    makeretrieveQuery,
+    makeperformQuery,
     makesetAdmin,
     makenewGroup,
     makeaddUser,

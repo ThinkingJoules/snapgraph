@@ -76,7 +76,8 @@ const {
     getAllActiveNodeTypes,
     getAllActiveRelations,
     collectPropIDs,
-    intersect
+    intersect,
+    union
 } = require('./util.js')
 
 
@@ -98,8 +99,7 @@ const {makenewBase,
     makeshowcache,
     makeshowgsub,
     makeshowgunsub,
-    makesubscribeQuery,
-    makeretrieveQuery,
+    makeperformQuery,
     makesetAdmin,
     makenewGroup,
     makeaddUser,
@@ -116,7 +116,7 @@ const {makenewBase,
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
-let subscribeQuery,retrieveQuery,setAdmin,newGroup,addUser,userAndGroup,chp
+let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 let typeGet, nodeGet, addressGet
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
@@ -156,7 +156,7 @@ const gunToGbase = (gunInstance,baseID) =>{
 
     newBase = makenewBase(gun,tLog)
     newNodeType = makenewNodeType(gun,gb,tLog)
-    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate)
+    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)
     addProp = makeaddProp(gun,gb,tLog)
     
     
@@ -175,8 +175,7 @@ const gunToGbase = (gunInstance,baseID) =>{
     importData = makeimportData(gun, gb)
     handleConfigChange = makehandleConfigChange(gun,gb,getCell,cascade,solve,tLog,tIndex)
     config = makeconfig(handleConfigChange)
-    subscribeQuery = makesubscribeQuery(setupQuery)
-    retrieveQuery = makeretrieveQuery(setupQuery)
+    performQuery = makeperformQuery(setupQuery)
     typeGet = maketypeGet(gb,setupQuery)
     nodeGet = makenodeGet(gb,setupQuery)
     addressGet = makeaddressGet(setupQuery)
@@ -267,8 +266,6 @@ function startGunConfigSubs(baseID){
                         delete data['_']
                         let configpath = configPathFromSoul(id)
                         let flip = {}
-                        console.log(configpath,data,flip)
-
                         for (const id in data) {
                             const alias = data[id];
                             flip[alias] = id
@@ -523,7 +520,7 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), subscribe: subscribeQuery(_path), retrieve: retrieveQuery(_path), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path, config: config(_path), subscribeQuery: performQuery(_path,true), retrieveQuery: performQuery(_path,false), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
 }
 function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
@@ -680,7 +677,8 @@ function sendToCache(nodeID, p, value){
         }
     }
 }
-function getCell(nodeID,p,cb,raw){
+function FULLgetCell(nodeID,p,cb,raw,addSub){
+    let start = Date.now()
     //will return the inheritted value if not found on own node
     raw = !!raw //if it is true, we skip the formatting
     cb = (cb instanceof Function && cb) || function(){}
@@ -690,14 +688,201 @@ function getCell(nodeID,p,cb,raw){
     let address = toAddress(nodeID,p)
     let cVal = cache[address]
     let from = address
-    while (isEnq(cVal)) {
-        let lookup = isEnq(cVal)
-        cVal = cache[lookup]  
-        from = lookup
-    }
     if(cVal !== undefined){
+        while (isEnq(cVal)) {
+            let lookup = isEnq(cVal)
+            cVal = cache[lookup]  
+            from = lookup
+        }
         if(!raw)cVal = formatData(format,propType,dataType,cVal)
         cb.call(this,cVal, from)
+        console.log('getCell,cache in:',Date.now()-start)
+        return
+    }
+    getData(nodeID,p)
+    function getData(soul,pval,cb,raw,addSub){
+        let {b,t,r} = parseSoul(soul)
+        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
+        if(dataType === 'unorderedSet'){
+            let addr = toAddress(soul,pval)
+            gun.get(addr).once(function(val){//check for existence only
+                //eve.off()
+                //let val = msg.put
+                if(addSub)setupSub(soul,pval)
+                if([null,undefined].includes(val)){
+                    if(addSub)sendToCache(soul,pval,null)
+                    cb.call(this,null,soul)
+                    console.log('getCell,NULL in:',Date.now()-start)
+    
+                    return
+                }
+                //so we have data on this soul and this should be returned to the cb
+                if(dataType === 'unorderedSet'){//this will be a full object
+                    let data = JSON.parse(JSON.stringify(val))
+                    let setVals = []
+                    for (const key in data) {
+                        if(key === '_')continue
+                        const boolean = data[key];
+                        if (boolean) {//if currently part of the set
+                            setVals.push(key) 
+                        }
+                    }
+                    if(propType === 'labels')setVals.unshift(t)
+                    val = setVals
+                }
+                if(addSub)sendToCache(soul,pval,val)
+                if(!raw)val = formatData(format,propType,dataType,val)
+                cb.call(this,val, soul)
+                console.log('getCell,DATA in:',Date.now()-start)
+    
+            })
+        }else{
+            gun.get(soul).once(function(node){//check for existence only
+                //eve.off()
+                //let val = msg.put
+                let val = node[pval]
+                if(addSub)setupSub(soul,pval)
+                if([null,undefined].includes(val)){
+                    if(addSub)sendToCache(soul,pval,null)
+                    cb.call(this,null,soul)
+                    console.log('getCell,NULL in:',Date.now()-start)
+    
+                    return
+                }else if(isEnq(val)){//will keep getting inherited props until we get to data.
+                    let fromSoul = parseSoul(val.slice(1))
+                    let fromP = fromSoul.p
+                    delete fromSoul.p
+                    delete fromSoul['.']
+                    //sendToCache(soul,pval,val)//put the lookup in cache
+                    getData(makeSoul(fromSoul),fromP)
+                    return
+                }
+                //so we have data on this soul and this should be returned to the cb
+                if(dataType = 'array'){
+                    try {
+                        val = JSON.parse(val)
+                        for (let i = 0; i < val.length; i++) {
+                            const el = val[i];
+                            if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                                val[i] = new Date(el)
+                            }
+                        }
+                    } catch (error) {
+                        // leave as is..
+                    }
+                }
+                if(addSub)sendToCache(soul,pval,val)
+                if(!raw)val = formatData(format,propType,dataType,val)
+                cb.call(this,val, soul)
+                console.log('getCell,DATA in:',Date.now()-start)
+    
+            })
+        }
+        
+    }
+}
+function getCell(nodeID,p,cb,raw,addSub){
+    //let start = Date.now()
+    //will return the inheritted value if not found on own node
+    raw = !!raw //if it is true, we skip the formatting
+    cb = (cb instanceof Function && cb) || function(){}
+    let {b,t,r} = parseSoul(nodeID)
+    let propPath = makeSoul({b,t,r,p})
+    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
+    let address = toAddress(nodeID,p)
+    let cVal = cache[address]
+    let from = address
+    if(cVal !== undefined){
+        while (isEnq(cVal)) {
+            let lookup = isEnq(cVal)
+            cVal = cache[lookup]  
+            from = lookup
+        }
+        if(!raw)cVal = formatData(format,propType,dataType,cVal)
+        cb.call(this,cVal, from)
+        //console.log('getCell,cache in:',Date.now()-start)
+        return
+    }
+    getData(nodeID,p)
+    function getData(soul,pval){
+        let {b,t,r} = parseSoul(soul)
+        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
+        gun._.on('out', {
+            get: {'#':soul,'.':pval},
+            '#': gun._.ask(function(msg){
+                let val = msg.put && msg.put[soul] && msg.put[soul][pval]
+                if(addSub)setupSub(soul,pval)
+                if([null,undefined].includes(val)){
+                    if(addSub)sendToCache(soul,pval,null)
+                    cb.call(this,null,soul)
+                    //console.log('getCell,NULL in:',Date.now()-start)
+    
+                    return
+                }else if(isEnq(val)){//will keep getting inherited props until we get to data.
+                    let fromSoul = parseSoul(val.slice(1))
+                    let fromP = fromSoul.p
+                    delete fromSoul.p
+                    delete fromSoul['.']
+                    //sendToCache(soul,pval,val)//put the lookup in cache
+                    getData(makeSoul(fromSoul),fromP)
+                    return
+                }
+                //so we have data on this soul and this should be returned to the cb
+                if(dataType === 'unorderedSet'){//this will be a full object
+                    let data = JSON.parse(JSON.stringify(val))
+                    let setVals = []
+                    for (const key in data) {
+                        if(key === '_')continue
+                        const boolean = data[key];
+                        if (boolean) {//if currently part of the set
+                            setVals.push(key) 
+                        }
+                    }
+                    if(propType === 'labels')setVals.unshift(t)
+                    val = setVals
+                }else if(dataType = 'array'){
+                    try {
+                        val = JSON.parse(val)
+                        for (let i = 0; i < val.length; i++) {
+                            const el = val[i];
+                            if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                                val[i] = new Date(el)
+                            }
+                        }
+                    } catch (error) {
+                        // leave as is..
+                    }
+                }
+                if(addSub)sendToCache(soul,pval,val)
+                if(!raw)val = formatData(format,propType,dataType,val)
+                cb.call(this,val, soul)
+                //console.log('getCell,DATA in:',Date.now()-start)
+    
+            })
+        })
+
+    }
+}
+function ORIGgetCell(nodeID,p,cb,raw,addSub){
+    let start = Date.now()
+    //will return the inheritted value if not found on own node
+    raw = !!raw //if it is true, we skip the formatting
+    cb = (cb instanceof Function && cb) || function(){}
+    let {b,t,r} = parseSoul(nodeID)
+    let propPath = makeSoul({b,t,r,p})
+    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
+    let address = toAddress(nodeID,p)
+    let cVal = cache[address]
+    let from = address
+    if(cVal !== undefined){
+        while (isEnq(cVal)) {
+            let lookup = isEnq(cVal)
+            cVal = cache[lookup]  
+            from = lookup
+        }
+        if(!raw)cVal = formatData(format,propType,dataType,cVal)
+        cb.call(this,cVal, from)
+        console.log('getCell,cache in:',Date.now()-start)
         return
     }
     getData(nodeID,p)
@@ -707,10 +892,12 @@ function getCell(nodeID,p,cb,raw){
         gun.get(soul).get(pval, function(msg,eve){//check for existence only
             eve.off()
             let val = msg.put
-            setupSub(soul,pval)
+            if(addSub)setupSub(soul,pval)
             if([null,undefined].includes(val)){
-                //sendToCache(soul,pval,null)
+                if(addSub)sendToCache(soul,pval,null)
                 cb.call(this,null,soul)
+                console.log('getCell,NULL in:',Date.now()-start)
+
                 return
             }else if(isEnq(val)){//will keep getting inherited props until we get to data.
                 let fromSoul = parseSoul(val.slice(1))
@@ -718,7 +905,7 @@ function getCell(nodeID,p,cb,raw){
                 delete fromSoul.p
                 delete fromSoul['.']
                 //sendToCache(soul,pval,val)//put the lookup in cache
-                getData(fromSoul,fromP)
+                getData(makeSoul(fromSoul),fromP)
                 return
             }
             //so we have data on this soul and this should be returned to the cb
@@ -747,9 +934,11 @@ function getCell(nodeID,p,cb,raw){
                     // leave as is..
                 }
             }
-            //sendToCache(soul,pval,val)
+            if(addSub)sendToCache(soul,pval,val)
             if(!raw)val = formatData(format,propType,dataType,val)
             cb.call(this,val, soul)
+            console.log('getCell,DATA in:',Date.now()-start)
+
         })
     }
 }
@@ -850,32 +1039,30 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
 //EVENT HANDLING AND BUFFER
 let attempts = 0
 function flushSubBuffer(){
-    if(pendingQueries.size && attempts<200){
-        console.log('waiting to flush buffer, pending queries:', pendingQueries.size)
-        setTimeout(flushSubBuffer,50)
+    if(pendingQueries.size && attempts<5){
+        console.log('waiting to flush buffer, pending queries:', pendingQueries.size, 'remaining attempts:',attempts)
+        setTimeout(flushSubBuffer,250)
         attempts ++
         return
     }
     attempts = 0
-    let buffer = Object.assign({},subBuffer)
-    subBuffer = {}
-    bufferState = false
-    console.log('flushing buffer', buffer)
     for (const base in gsubs) {
         let baseSubs = gsubs[base]
         for (const subID in baseSubs) {
-            const {qParams,cb} = baseSubs[subID];
-            query(base,qParams,cb,{isSub:true,sVal:subID,checkNodes:buffer})
+            const qParams = baseSubs[subID];
+            if(qParams.state && qParams.state === 'pending'){
+                query(qParams)
+            }
         }
     }
 }
 function handleNewPropData(nodeID,pval){
-    //parse gun soul and keys in data
-    if(!subBuffer[nodeID])subBuffer[nodeID] = new Set()
-    subBuffer[nodeID].add(pval)
-    if(!bufferState){
-        bufferState = true
-        setTimeout(flushSubBuffer, 50)
+    for (const base in gsubs) {
+        let baseSubs = gsubs[base]
+        for (const sVal in baseSubs) {
+            const qParams = baseSubs[sVal];
+            qParams.checkNewValue(nodeID,pval)
+        }
     }
 }
 
@@ -888,19 +1075,37 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
     if(!queryArr.filter(x => x.CYPHER)[0])throw new Error('Must specify a single CYPHER pattern to complete the query!')
     if(!queryArr.filter(x => x.RETURN)[0] && !queryArr.filter(x => x.EXPAND)[0])throw new Error('Must specify a single RETURN or EXPAND statement in your query!')
     if(isSub && !sVal)throw new Error('Must give this subscriptions an ID so you can reference it again to cancel it')
-    let qParameters = new QueryParse(path,queryArr)
+    let qParameters = new QueryParse(path,queryArr,cb,sVal)
     if(isSub){
         let {b} = parseSoul(path)
         let bpath = makeSoul({b})
-        let {qParams} = getValue([bpath,sVal],gsubs) || {}
+        let qParams = getValue([bpath,sVal],gsubs)
         if(qParams && qParams.originalQueryArr && qParams.originalQueryArr === JSON.stringify(queryArr)){
             qParameters = qParams
         }
     }
-    query(path,qParameters,cb,{sVal,isSub})
+    query(qParameters)
 }
-function QueryParse(path,qArr){
+function beginRequery(qParams){
+    qParams.state = 'running'
+    qParams.checkNodes = {}
+
+    for (const id in qParams.pendingNodes) {
+        const set = qParams.pendingNodes[id];
+        qParams.checkNodes[id] = new Set(set)
+        delete qParams.pendingNodes[id]
+    }
+    qParams.hasPending = false
+    console.log('attempting requery', qParams)
+    query(qParams)
+    //for ALL elements, merge souls in to one obj for failing and filtered objects 
+    //for elements returned, get passing
+}
+function QueryParse(path,qArr,userCB,sVal){
     let {b} = parseSoul(path)
+    this.userCB = userCB
+    this.sVal = sVal
+    this.base = b
     this.elements= {}
     this.sortBy = false // || ['userVar',{alias,dir}, {alias,dir},...]
     this.limit = Infinity
@@ -912,6 +1117,13 @@ function QueryParse(path,qArr){
     this.expand = false
     this.allNodes = {} //{nodeID: Set{pathString}} this is a reverse lookup for nodes that are passing, pathStrings are they contained in.
     this.originalQueryArr = JSON.stringify(qArr)
+    this.runs = 0
+    this.checkNodes = {}
+    this.state = ''
+    this.hasPending = false
+    this.requeryTriggers = {}
+    this.pendingNodes = {}
+
     Object.defineProperty(this.aliasToID,'aliasTypes',{
         value: function(alias,isNode){
             let a = Object.entries(this)
@@ -992,6 +1204,52 @@ function QueryParse(path,qArr){
         },
         enumerable:true
     })
+    Object.defineProperty(this,'calcTriggers',{
+        value: function(){
+            this.requeryTriggers = {}
+            for (const el in this.elements) {
+                const {toReturn,passing,failing,filtered} = this.elements[el];
+
+                for (const nodeID in failing) {
+                    const pSet = failing[nodeID];
+                    if(!this.requeryTriggers[nodeID])this.requeryTriggers[nodeID] = pSet
+                    else this.requeryTriggers[nodeID] = union(requeryTriggers[nodeID],pSet) 
+                }
+                for (const nodeID in filtered) {
+                    const pSet = filtered[nodeID];
+                    if(!this.requeryTriggers[nodeID])this.requeryTriggers[nodeID] = pSet
+                    else this.requeryTriggers[nodeID] = union(requeryTriggers[nodeID],pSet) 
+                }
+                if(toReturn){
+                    for (const nodeID in passing) {
+                        const pSet = passing[nodeID];
+                        if(!this.requeryTriggers[nodeID])this.requeryTriggers[nodeID] = pSet
+                        else this.requeryTriggers[nodeID] = union(this.requeryTriggers[nodeID],pSet)
+                    }
+                }
+            }
+            //for ALL elements, merge souls in to one obj for failing and filtered objects 
+            //for elements returned, get passing
+        }
+    })
+    Object.defineProperty(this,'checkNewValue',{
+        value: function(nodeID, pval){
+            if(this.requeryTriggers[nodeID] && this.requeryTriggers[nodeID].has(pval)){
+                if(!this.pendingNodes[nodeID])this.pendingNodes[nodeID] = new Set()
+                this.pendingNodes[nodeID].add(nodeID)
+                console.log('REQUERY TRIGGERED FROM NEW DATA')
+
+                if(!this.hasPending && this.state === ''){
+                    this.hasPending = true
+                    let self = this
+                    setTimeout(beginRequery,250,self)
+                }
+            }
+            //for ALL elements, merge souls in to one obj for failing and filtered objects 
+            //for elements returned, get passing
+        }
+    })
+    
     this.cleanMatch = ''//String of user MATCH with it cleaned, and id's swapped out (must maintain original userVar assignment (no randIDs))
     this.cleanQuery = [] //[{CYPHER:[cleanMatch]},...EXPAND?Clean?...FILTER,SEARCH,ID,RANGE,RETURN(all as-is)]
     
@@ -1342,7 +1600,7 @@ function QueryParse(path,qArr){
             self.skip = userArg*1
         }
         function parseSort(userArg){//done
-            //obj = {SORT: [pval, asc || dsc]}
+            //args =[pval, asc || dsc]
             let [userVar, ...args] = userArg
             //can't replace pval unless we know the userVar.types.length===1
             if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
@@ -1814,7 +2072,7 @@ function QueryParse(path,qArr){
                     }
                 }
             }
-            console.log(elements[userVar].types,self.aliasToID.types(Object.keys(allNames),isNode))
+            //console.log(elements[userVar].types,self.aliasToID.types(Object.keys(allNames),isNode))
             elements[userVar].types = [...intersect(new Set(elements[userVar].types),new Set(self.aliasToID.types(Object.keys(allNames),isNode)))]
             //^^Intersect what is existing, with what is valid
         }
@@ -1859,8 +2117,6 @@ function QueryParse(path,qArr){
         }
     }
     
-    
-    
     function MatchNode(userVar,types,labelArr,notLabels,lid,rid,mIdx){
         this.userVar = userVar
         this.isNode = true
@@ -1896,6 +2152,7 @@ function QueryParse(path,qArr){
         this.toCheck = new Set()
         this.traversed = new Set()
         this.passing = {}//things that passed locally (filters,ranges. Nothing todo with connected nodes)
+        this.filtered = {}
         this.failing = {}
         this.activeExpandNodes = new Set()
 
@@ -2103,11 +2360,13 @@ function QueryParse(path,qArr){
     }
     
 }
-function query(path,qParams, cb, opts){
+function query(qParams){
     let startTime = Date.now()
-    let {b} = parseSoul(path)
-    let {isSub,sVal,checkNodes} = opts
-    if(isSub)pendingQueries.add(sVal)
+    let time = [startTime]
+    qParams.state = 'running'
+    qParams.lastStart = startTime
+    qParams.runs++
+    let b = qParams.base
     const pathStrings = qParams.pathStrings //Set
     const paths = []
     const nodesNeeded = {}
@@ -2118,13 +2377,11 @@ function query(path,qParams, cb, opts){
     const metaOut = result.out
     metaOut.query = qParams.cleanQuery.slice() //what user can pass back in/save as a 'saved' query
     metaOut.parsed = JSON.parse(JSON.stringify(qParams)) //freeze object at creation
-    let {expand} = qParams
-    opts = opts || {}
+    let {expand,checkNodes,sVal,userCB} = qParams
     let bufferTrigger = false
-    let requery = !!qParams.pathStrings.size
+    let requery = !!pathStrings.size
     console.log(qParams)
     if(checkNodes){//checkNodes can only come from the buffer
-        bufferTrigger = true
         if(qParams.expand){
             //if a new relation comes in, then we need to get it's src & trgt to see if either of them are in the 'active' list
             //if nothing is touching the nodes that have passed, then stop. else, just start expand over from the top.
@@ -2137,10 +2394,8 @@ function query(path,qParams, cb, opts){
                 //can be any type, could be relation
                 let {b,r} = parseSoul(nodeID)
                 //for expand, there is only one userVar
-                let rType = makeSoul({b,r})
                 if(qParams.elements[userVar].activeExpandNodes.has(nodeID) && r){
-                    let [statePval] = hasPropType(gb,rType,'state')
-                    if(pvalSet.has(statePval)){
+                    if(pvalSet.has('STATE')){
                         reExpand = true
                         startQuery()
                         break
@@ -2152,10 +2407,7 @@ function query(path,qParams, cb, opts){
             let find = findSrcTrgt.length * 2
             for (const lookup of findSrcTrgt) {
                 if(reExpand)break
-                let {b,r} = parseSoul(nodeID)
                 //for expand, there is only one userVar
-                let rType = makeSoul({b,r})
-                let [src,trgt] = [hasPropType(gb,rType,'source')[0],hasPropType(gb,rType,'target')[0]]
                 const checkForID = (id) =>{
                     find--
                     if(qParams.elements[userVar].activeExpandNodes.has(id)){
@@ -2164,8 +2416,8 @@ function query(path,qParams, cb, opts){
                     }
                     if(!find)startQuery()
                 }
-                getCell(lookup,src,checkForID,true)
-                getCell(lookup,trgt,checkForID,true)
+                getCell(lookup,'SRC',checkForID,true)
+                getCell(lookup,'TRGT',checkForID,true)
             }
 
 
@@ -2182,21 +2434,25 @@ function query(path,qParams, cb, opts){
                     if(types.includes(t) || types.includes(r)){//add it to the highest scoring match.
                         //check to see if it is on passing/failing
                         let passSet = qParams.elements[userVar].passing[nodeID]
+                        let filterSet = qParams.elements[userVar].filtered[nodeID]
                         let failSet = qParams.elements[userVar].failing[nodeID]
                         if(passSet){//was passing on last query
                             if(intersect(passSet,pvalSet).size){//overlap between things being filtered and things that changed
-                                qParams.elements[userVar].toCheck.add(nodeID)
+                                requery = true
                             }
-                        }else if(failSet){//was failing on last query
-                            if(intersect(failSet,pvalSet).size){//really only the last one is relevant, but hard to check exactly that
+                        }else if(failSet || filterSet){//was failing or was filtered on last query
+                            if(intersect(failSet,pvalSet).size || intersect(filterSet,pvalSet).size){//really only the last one is relevant, but hard to check exactly that
                                 qParams.elements[userVar].toCheck.add(nodeID)
+                                bufferTrigger = true
                             }
-                        }else{//was not evaluated last time
+                        }else{//was not evaluated last time (should be only nodes from 'newBuffer')
                             qParams.elements[userVar].toCheck.add(nodeID)
+                            bufferTrigger = true
                         }
                         break
                     }
                 }
+                delete qParams.checkNodes[nodeID]
             }
             startQuery()
         }
@@ -2310,15 +2566,21 @@ function query(path,qParams, cb, opts){
                         toGet--
                         if(!toGet)evaluateNodes()
                     },{from,to})
-                }else{
-                    getTypes()//if isNode and _CREATED, not indexed
+                }else{//isNode, _CREATED
+                    let idx = makeSoul({b,[sym]:id})
+                    qIndex(idx,function(nodes){
+                        toGet--
+                        for (const id of nodes) {
+                            qParams.elements[startVar].toCheck.add(id)
+                        }
+                        if(!toGet)evaluateNodes()
+                    },Infinity,from,to)
                 }
             }
         }
     }
     function expandNodes(){
         console.log('Beginning query by expansion')
-
         let varsToCheck = qParams.shortestToCheck
         if(!varsToCheck){
             queryDone(!bufferTrigger)
@@ -2567,6 +2829,9 @@ function query(path,qParams, cb, opts){
         }
     }
     function evaluateNodes(){
+        let indexTime = Date.now()
+        time.push(indexTime)
+        console.log('Found starting nodeIDs in',indexTime-startTime,'ms')
 
         //this is only for match pattern w/ normal return
 
@@ -2575,7 +2840,7 @@ function query(path,qParams, cb, opts){
         //either way, our runner needs to be able to start anywhere in the match statement
         //will need to make a little query object to pass around 
         let varsToCheck = qParams.elementRank
-        console.log(varsToCheck)
+        //console.log(varsToCheck)
 
         if(!varsToCheck){
             queryDone(!bufferTrigger)
@@ -2583,15 +2848,22 @@ function query(path,qParams, cb, opts){
         }//nothing matched the query, return the result
         metaOut.approach = []
         let openPaths = 0
+        let started = false
         for (const startVar of varsToCheck) {
             metaOut.approach.push('Started with '+startVar)
             let thing = qParams.elements[startVar];
             const {toCheck} = thing
+            if(!toCheck.size){
+                continue
+            }
+            started = true
             for (const nodeID of toCheck) {
                 openPaths++
-                checkAndTraverse(false,false,startVar,nodeID)
+                setTimeout(checkAndTraverse,1,false,false,startVar,nodeID)
+                //checkAndTraverse(false,false,startVar,nodeID)
             }
         }
+        if(!started)queryDone(true)
         function checkAndTraverse(curPath,pathParams,startVar,startID){
             curPath = curPath || []
             let dir,otherDir,branch
@@ -2653,24 +2925,27 @@ function query(path,qParams, cb, opts){
             }
             function checkState(){
                 //see if node is current
-                let [statePval] = hasPropType(gb,thingType,'state')
-                pvals.add(statePval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
-                getCell(startID,statePval,function(state){
-                    if(state !=='active'){
-                        localDone(false)
-                    }else{
-                        if(isNode)checkLabels()
-                        else checkRange()
-                    }
-                },true)
+                pvals.add('STATE')//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
+                if(thing.bestIndex !== 'types' || !isNode){// if was 'types' and isNode, we already checked state (indirectly)
+                    getCell(startID,'STATE',function(state){
+                        if(state !=='active'){
+                            localDone(false)
+                        }else{
+                            if(isNode)checkLabels()
+                            else checkRange()
+                        }
+                    },true,sVal)                
+                }else{
+                    if(isNode)checkLabels()
+                    else checkRange()
+                }
             }
             function checkLabels(){
-                let [labelsPval] = hasPropType(gb,thingType,'labels')
-                pvals.add(labelsPval)//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
                 if(!thing.labels.length && !thing.not.length){//skip retrieval if nothing to check
                     checkRange()
                     return
                 }
+                pvals.add('LABELS')//had to add this so if it is 'removed' from the object we can update subscriptions to reflect that
                 getCell(startID,labelsPval,function(curLabelsArr){
                     for (const andLabel of thing.labels) {//ALL labels it must have
                         if(!curLabelsArr.includes(andLabel)){
@@ -2685,7 +2960,7 @@ function query(path,qParams, cb, opts){
                         }
                     }
                     checkRange()
-                },true)
+                },true,sVal)
             }
             function checkRange(){
                 let propRanges = thing.ranges.filter(x=>x.alias !== '_CREATED')
@@ -2705,7 +2980,7 @@ function query(path,qParams, cb, opts){
                         values.push([from,value,to])
                         toGet--
                         if(!toGet){verifyRanges();return}
-                    },true)
+                    },true,sVal)
                 }
                 function verifyRanges(){
                     let fail = values.filter(a=>{
@@ -2732,7 +3007,7 @@ function query(path,qParams, cb, opts){
                         values[alias] = value
                         toGet--
                         if(!toGet){verifyFilter();return}
-                    },true)
+                    },true,sVal)
                 }
                 function verifyFilter(){
                     let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
@@ -2747,8 +3022,10 @@ function query(path,qParams, cb, opts){
 
             function localDone(passed){
                 if(!passed){
-                    console.log(startID, 'did not pass')
+                    //console.log(startID, 'did not pass')
                     delete qParams.elements[startVar].passing[startID]
+                    delete qParams.elements[startVar].filtered[startID]
+
                     qParams.elements[startVar].failing[startID] = pvals
                     //TODO!! check prevPaths to see if it was used in anything
                     let wasIn = qParams.allNodes[startID] //undefined || Set{pathStrings}
@@ -2760,9 +3037,11 @@ function query(path,qParams, cb, opts){
                     openPaths--
                     return
                 }
-                console.log(startID, 'passed')
-
-                qParams.elements[startVar].passing[startID] = pvals
+                //console.log(startID, 'passed')
+                if(thing.bestIndex === 'types' && isNode && sVal){
+                    setupSub(startID,'STATE')
+                }
+                qParams.elements[startVar].filtered[startID] = pvals
                 delete qParams.elements[startVar].failing[startID]
 
                 let op = (dir === 'right') ? 'push' : 'unshift'
@@ -2853,6 +3132,9 @@ function query(path,qParams, cb, opts){
         }
     }
     function assmebleOutput(){
+        let evalTime = Date.now()
+        time.push(evalTime)
+        console.log('Evaluated nodeIDs in',evalTime-time[time.length-2],'ms')
         //need to build all paths that are valid
         //if there is a sort, need to sort all the paths by the sortVal
         //if there is a limit/skip, we need to only grab the sub-list
@@ -2867,6 +3149,10 @@ function query(path,qParams, cb, opts){
             buildPreReturn() //gets sortvalues and does sorting, then applySkipLimit to sorted arr of pathStrings then buildPaths, then buildResults
         }
         function applySkipLimit(someArr){
+            if(sortBy){
+                console.log('Sorted in:',Date.now()-time[time.length-1])
+                time.push(Date.now())
+            }
             if(limit > someArr.length)limit=someArr.length
             if(skip === 0 && limit === someArr.length){//no skip or limit, avoid the copy
                 preReturn = someArr
@@ -2896,10 +3182,13 @@ function query(path,qParams, cb, opts){
             }
             if(qParams.idOnly)queryDone(true)
             else buildResults()
-            
+
+            console.log('Paths built in:',Date.now()-time[time.length-1])
             //whatever paths is, we need to sort to match the return order user specified and add to paths
         }
         function buildPreReturn(){
+            time.push(Date.now())
+            console.log('Building preReturn')
             let beforeSkipLimit = []
             let sortArr = [] //[[pathsIdx, [value1,value2,...valueN]], [pathsIdx2, [value1,value2,...valueN]]]
             let [sortUserVar,...sortArgs] = sortBy
@@ -2916,19 +3205,22 @@ function query(path,qParams, cb, opts){
                 for (const alias of sortProps) {
                     let p = qParams.aliasToID.id(nodeID,alias)
                     if(p!==undefined){
-                        getCell(nodeID,p,addVal,true)
+                        getCell(nodeID,p,addVal(i,j),true,sVal)
                     }else{
                         //what to do? put in a 0 so it is alway top or bottom?
                         console.warn('Cannot find '+alias+' for '+nodeID+' ---  sorting as value: -1  ---')
                         addVal(-1)
                     }
-                    function addVal(val){
-                        sortArr[i][1][j]=val
-                        propsToGet--
-                        if(!propsToGet){
-                            toGet--
-                            if(!toGet)sortReturn()
+                    function addVal(i,j){
+                        return function(val){
+                            sortArr[i][1][j]=val
+                            propsToGet--
+                            if(!propsToGet){
+                                toGet--
+                                if(!toGet)sortReturn()
+                            }
                         }
+                        
                     }
                     j++
                 }
@@ -2976,10 +3268,11 @@ function query(path,qParams, cb, opts){
         function buildResults(){
             //getNodes
             //then put in result
+            time.push(Date.now())
             let nodesToGet = Object.keys(nodesNeeded).length
             for (const nodeID in nodesNeeded) {
                 let {userVar} = nodesNeeded[nodeID]
-                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLabels} = qParams.elements[userVar]
+                let {props,returnAsArray,propsByID,noID,noAddress,raw:allRaw,rawLabels,passing} = qParams.elements[userVar]
                 // if(!props || (Array.isArray(props) && !props.length)){
                 //     props = getAllActiveProps(gb,nodeID)
                 // }
@@ -2994,12 +3287,13 @@ function query(path,qParams, cb, opts){
                     let p = qParams.aliasToID.id(nodeID,alias)
                     if(p!==undefined){
                         //getCell(nodeID,p,addVal(nodeID,p,j,alias,propAs,propsByID,nodeObj,pending),raw)
-                        getCell(nodeID,p,addValue(j),raw)
-                        qParams.elements[userVar].passing[nodeID].add(p)
+                        getCell(nodeID,p,addValue(j),raw,sVal)
+                        if(!passing[nodeID])passing[nodeID] = new Set()
+                        passing[nodeID].add(p)
                     }else{
                         //what to do? neo returns `null`
                         console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
-                        addValue(undefined)
+                        addValue(j)(undefined)
                     }
                     j++
                     function addValue(j){
@@ -3009,7 +3303,6 @@ function query(path,qParams, cb, opts){
                                 property = j
                             }
                             nodeObj[property] = val
-                            console.log(nodeID,property,val)
                             let fullPath = toAddress(nodeID,p)
                             if(!noAddress){
                                 nodeObj.address[property] = fullPath
@@ -3048,6 +3341,9 @@ function query(path,qParams, cb, opts){
 
             function makeResult(){
                 //go through preReturn, for the ID grab the node arr/obj and put in result. If returning.length ===1 don't double up the array
+                console.log('All data retrived in:',Date.now()-time[time.length-1])
+                time.push(Date.now())
+
                 let i = 0
                 for (const strPath of preReturn) {
                     let row = JSON.parse(strPath)
@@ -3067,18 +3363,18 @@ function query(path,qParams, cb, opts){
     }
     function queryDone(returnResult){
         //setup up subscription, fire user cb
-        if(isSub){
+        if(sVal){
             console.log('setting up or updating sub: '+ sVal)
             //if(!gsubs[b])gsubs[b] = {}
+            qParams.calcTriggers()
             let basePath = makeSoul({b})
-            setValue([basePath,sVal],{qParams,cb},gsubs)
-            console.log(gsubs)
-            pendingQueries.delete(sVal)
+            setValue([basePath,sVal],qParams,gsubs)
         }
+        qParams.state = ''
+        if(qParams.pending)beginRequery(qParams)
         metaOut.time = Date.now()-startTime
-        if(returnResult)cb(result)
-
-
+        if(returnResult)userCB(result)
+        console.log('Result Array built in:',Date.now()-time[time.length-1])
     }
 }
 

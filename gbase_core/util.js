@@ -932,7 +932,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     function initialCheck(){//verifies everything user has entered to ensure it is valid, also finds id's for any alias' used in the obj
         let coercedPutObj = {}
         noRelations = noRelations || []
-        console.log(putObj)
+        //console.log(putObj)
         //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
         for (const palias in putObj) {
             let pval = findID(props, palias) 
@@ -983,8 +983,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             
         }
         if(!setState && isNew){
-            let [stateP] = hasPropType(gb,nodeID,'state')
-            coercedPutObj[stateP] = 'active'
+            coercedPutObj.STATE = 'active'
         }
         let found = []
         for (const relation of noRelations) {
@@ -1114,7 +1113,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
     function done(){
         if(err)return
-        console.log(toPut)
+        //console.log(toPut)
         //return      
          
         for (const soul in toPut) {
@@ -1124,7 +1123,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         }
         for (const index in timeIndices) {
             const {value,unix} = timeIndices[index];
-            let d = new Date(unix*1)
             timeIndex(index,value,new Date(unix*1))
         }
         for (const soul in relationsIndices) {
@@ -1136,7 +1134,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             const logObj = logs[nodeIDtoLog];
             timeLog(nodeIDtoLog,logObj)
         }
-        console.log('ms to put Data:',Date.now()-startTime)
+        console.log(Date.now()-startTime+'ms to process put request')
         cb.call(this, undefined, nodeID)
     }
     function throwError(errmsg){
@@ -1273,19 +1271,19 @@ const checkUniques = (gb,path, cObj)=>{//for config vals that must be unique amo
                     sorts = (sorts < cVal) ? cVal : sorts
                 }
                 let compare = cObj[prop]
-                if(cVal !== undefined && compare !== undefined && (String(cVal) === String(compare) || String(id) === String(compare))){
-                    err[prop] = true
+                if(cVal !== undefined && compare !== undefined && (cVal == compare || id == compare)){
+                    err[prop] = cVal
                 }
             
             }
         }
-        if(err.sortval){
+        if(err.sortval !== undefined){
             cObj.sortval = sorts+10
             delete err.sortval
         }
         let keys = Object.keys(err)
         if(keys.length){
-            throw new Error('Non-unique value found on key(s): '+keys.join(', '))
+            throw new Error('Non-unique value found on key(s): '+keys.join(', '),Object.values(err).join(', '))
         }
         return true
     }else{
@@ -1318,6 +1316,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     if(USER_ENQ.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
         return makeEnq(value)
     }
+    if(typeof value === 'string' &&  /^\$\{(.+)\}/.test(value))return value//if this is an imported user enq, leave as is.
     delimiter = delimiter || ', '
 
     if(toType === 'string'){
@@ -1714,6 +1713,7 @@ function parseSoul(soul){
     return out
 }
 function toAddress(node,p){
+    if(ALL_ADDRESSES.test(node))return node
     return makeSoul(Object.assign(parseSoul(node),{p}))
 }
 function intersect(setA, setB) {
@@ -1724,6 +1724,13 @@ function intersect(setA, setB) {
         }
     }
     return _intersection
+}
+function union(setA, setB) {
+    var _union = new Set(setA);
+    for (var elem of setB) {
+        _union.add(elem);
+    }
+    return _union;
 }
 
 const soulSchema = {
@@ -1886,5 +1893,6 @@ module.exports = {
     getAllActiveRelations,
     collectPropIDs,
     intersect,
+    union,
     findConfigFromID
 }

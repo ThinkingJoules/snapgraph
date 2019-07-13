@@ -16,7 +16,8 @@ const {convertValueToType,
     PROPERTY_PATTERN,
     sortPutObj,
     IS_CONFIG_SOUL,
-    putData
+    putData,
+    newID
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -454,7 +455,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog, timeIndex)
     }
     //start logic
 
-    console.log(JSON.stringify(run))
+    //console.log(JSON.stringify(run))
     runNext()
 
     
@@ -503,7 +504,7 @@ const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog, timeIndex)
         let enforceUnique = (configObj.enforceUnique !== undefined) ? configObj.enforceUnique : thisConfig.enforceUnique
         let autoIncrement = (configObj.autoIncrement !== undefined) ? configObj.autoIncrement : thisConfig.autoIncrement
         let requiredType = requiredTypes()
-        console.log(pType, dType, requiredType)
+        //console.log(pType, dType, requiredType)
         if(!requiredType.includes(dType)){
             dType = requiredType[0]//take first (or only) one
             if(configObj.dataType && configObj.dataType !== dType){
@@ -938,29 +939,28 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
 
 //IMPORT STUFF
 
-const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, append)=>{
+const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
     // create configs
-    let path = makeSoul({b, t})
-    let gbpath = configPathFromChainPath(path)
-    let {props:cols} = getValue(gbpath, gb) || {}
+    let {b,t,r} = parseSoul(path)
+    let {props:cols} = (t || r) && getValue(configPathFromChainPath(path), altgb) || {}
+    let {externalID,labels,source,target,append} = opts || {}
+    let newConfigs = []
     let aliasLookup = {}
-    let newPconfigs = {}
-    let externalIDidx
-    if(eID){
-        let i = colHeaders.indexOf(eID)
-        externalIDidx = (i === -1) ? false : i
-    }
+    let externalIDidx = externalID && colHeaders.indexOf(externalID)
+    let labelIDidx = labels && colHeaders.indexOf(labels)
+    let sourceIDidx = source && colHeaders.indexOf(source)
+    let targetIDidx = target && colHeaders.indexOf(target)
+
     for (let i = 0; i < colHeaders.length; i++) {
         let col = colHeaders[i]
-        let p = findID(cols, col),sortval
-        if(cols === undefined || (p === undefined && append)){//need to create a new property
-            p = newID(gb,makeSoul({b,t,p:true})) 
-            sortval = nextSortval(gb,path,p)
+        let p = cols && findID(cols, col)
+        let propType, dataType
+        if((cols === undefined || p === undefined) && append){//need to create a new property
+            p = newID(altgb,makeSoul({b,t,r,p:true})) 
             const palias = String(col);
-            if(variant && palias === 'PROTOTYPE')continue//importing a table with variants, this column is metadata
             let enforceUnique = (externalIDidx === i) ? true : false
             let val = (datarow[i] === undefined) ? '' : datarow[i]//default to string
-            let dataType = typeof val//if from tsv parse, can only be string or number, if user passed in an array, could be anything
+            dataType = typeof val//if from tsv parse, can only be string or number, if user passed in an array, could be anything
             if(dataType === 'string'){
                 try {//if anything is JSON, attempt to get the real data value
                     val = JSON.parse(val)
@@ -972,16 +972,27 @@ const handleImportColCreation = (gb, b, t, colHeaders, datarow, variant, eID, ap
             else if(Array.isArray(val))dataType = 'array'
             else if(typeof val === 'boolean')dataType = 'boolean'
             else if(typeof val === 'object')dataType = 'string'//will stringify the object
-            let propType = 'data'
+            propType = 'data'
+            //overrides vvvv
+            if(labelIDidx === i){
+                propType = 'labels'
+                dataType = 'unorderedSet'
+            }else if(sourceIDidx === i){
+                propType = 'source'
+                dataType = 'string'
+            }else if(targetIDidx === i){
+                propType = 'target'
+                dataType = 'string'
+            }
 
-            let pconfig = newNodePropConfig({alias: palias, propType, dataType,enforceUnique, sortval})
-            checkConfig(newNodePropConfig(), pconfig,'node')
-            
-            newPconfigs[p] = pconfig
+            let pconfig = newNodePropConfig({alias: palias, propType, dataType,enforceUnique})
+            pconfig.id = p
+            setMergeValue(configPathFromChainPath(makeSoul({b,t,r,p})),pconfig,altgb)
+            newConfigs.push(pconfig)
         }
         aliasLookup[col] = p
     }
-    return {newPconfigs,aliasLookup}
+    return [newConfigs,aliasLookup]
 }
 const handleTableImportPuts = (gun, resultObj, cb)=>{
     cb = (cb instanceof Function && cb) || function(){}
