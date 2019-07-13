@@ -20,20 +20,21 @@ if(typeof window === "undefined"){//if this is running on a server
     radata = Radisk({store: RFS})
 }
 let gun
-let gbase = {}
-let gb = {}
-let gsubs = {}
-let pendingQueries = new Set()
-let gunSubs = {}
-let subBuffer = {}
-let bufferState = false
+const gbase = {}
+const gb = {}
+const gsubs = {}
+const gunSubs = {}
 let reactConfigCB
 let gbChainState = true
+
+
 
 //cache
 const cache = {}
 const upDeps = {}
 const downDeps = {}
+const addrSubs = {} //{[addr]:{sVal:cb}} //if sVal is a NodeID+','+sVal then the cb is internal to fire that nodeID's cb (which is basically just get everything and return)
+const nodeSubs = {} //{[nodeID]:{props: [], sVal: cb}}//this could be a user cb or it might be for a query?
 
 
 const {
@@ -77,7 +78,10 @@ const {
     getAllActiveRelations,
     collectPropIDs,
     intersect,
-    union
+    union,
+    gunGet,
+    gunPut,
+    IS_STATE_INDEX
 } = require('./util.js')
 
 
@@ -143,6 +147,52 @@ let qIndex,tIndex,tLog
 
 
 
+//query and nodes state buffer stream, so any subscriptions can find newNodes (either created, or just heard about)
+const querySubs = {}
+let nodeStatesBuffer = {}
+let stateBuffer = true
+function dumpStateChanges(){
+    let buffer = Object.assign({}, nodeStatesBuffer)
+    nodeStatesBuffer = {}
+    stateBuffer = !stateBuffer
+    sendToSubs(buffer)
+}
+function sendToSubs(buffer){
+    for (const baseid in querySubs) {
+        if(!buffer[baseID])continue
+        const subO = querySubs[baseid];
+        for (const sVal in subO) {
+            const qParams = subO[sVal];
+            qParams.newStates(buffer[baseID])
+                
+        }
+    }
+    if(stateBuffer){
+        stateBuffer = !stateBuffer
+        setTimeout(dumpStateChanges,50)
+    }
+}
+function incomingPutMsg(msg){//wire listener
+    if(msg && msg.put){
+        let soul = Object.keys(msg.put)
+        if(IS_STATE_INDEX.test(soul)){
+            let putObj = msg.put[soul]
+            for (const nodeID in putObj) {
+                let {b} = parseSoul(nodeID)
+                const state = putObj[nodeID];
+                setValue([b,nodeID],state,nodeStatesBuffer)
+            }
+        }
+        
+
+    }
+}
+
+
+
+
+
+
 const gunToGbase = (gunInstance,baseID) =>{
     gun = gunInstance
     startGunConfigSubs(baseID)
@@ -195,6 +245,7 @@ const gunToGbase = (gunInstance,baseID) =>{
     gbase.tl = tLog
     gbase.qi = qIndex
     
+    gun._.on('put',incomingPutMsg)
 
     gbase = Object.assign(gbase,gbaseChainOpt())
     //random test command to fire after start
@@ -1038,24 +1089,24 @@ function cascade(rowID, pval, inc){//will only cascade if pval has a 'usedIn'
 
 //EVENT HANDLING AND BUFFER
 let attempts = 0
-function flushSubBuffer(){
-    if(pendingQueries.size && attempts<5){
-        console.log('waiting to flush buffer, pending queries:', pendingQueries.size, 'remaining attempts:',attempts)
-        setTimeout(flushSubBuffer,250)
-        attempts ++
-        return
-    }
-    attempts = 0
-    for (const base in gsubs) {
-        let baseSubs = gsubs[base]
-        for (const subID in baseSubs) {
-            const qParams = baseSubs[subID];
-            if(qParams.state && qParams.state === 'pending'){
-                query(qParams)
-            }
-        }
-    }
-}
+// function flushSubBuffer(){
+//     if(pendingQueries.size && attempts<5){
+//         console.log('waiting to flush buffer, pending queries:', pendingQueries.size, 'remaining attempts:',attempts)
+//         setTimeout(flushSubBuffer,250)
+//         attempts ++
+//         return
+//     }
+//     attempts = 0
+//     for (const base in gsubs) {
+//         let baseSubs = gsubs[base]
+//         for (const subID in baseSubs) {
+//             const qParams = baseSubs[subID];
+//             if(qParams.state && qParams.state === 'pending'){
+//                 query(qParams)
+//             }
+//         }
+//     }
+// }
 function handleNewPropData(nodeID,pval){
     for (const base in gsubs) {
         let baseSubs = gsubs[base]
@@ -1078,8 +1129,7 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
     let qParameters = new QueryParse(path,queryArr,cb,sVal)
     if(isSub){
         let {b} = parseSoul(path)
-        let bpath = makeSoul({b})
-        let qParams = getValue([bpath,sVal],gsubs)
+        let qParams = getValue([b,sVal],querySubs)
         if(qParams && qParams.originalQueryArr && qParams.originalQueryArr === JSON.stringify(queryArr)){
             qParameters = qParams
         }
@@ -1117,12 +1167,26 @@ function QueryParse(path,qArr,userCB,sVal){
     this.expand = false
     this.allNodes = {} //{nodeID: Set{pathString}} this is a reverse lookup for nodes that are passing, pathStrings are they contained in.
     this.originalQueryArr = JSON.stringify(qArr)
+
     this.runs = 0
     this.checkNodes = {}
     this.state = ''
     this.hasPending = false
     this.requeryTriggers = {}
     this.pendingNodes = {}
+
+    this.prevResult = []
+    this.addrMap = {} //address: {i's:{j's:k's}} should be able to get value using these coordinates in the prevResultArr i is Path, j is return thing in path, k is prop in thing
+
+    this.states = {} //{nodeID: 'active' || 'archived' || null}
+
+    this.sortArr = [] // [[nodeID,[val1,val2]] this is technically ijk for sortMap... j is always 1
+    this.sortMap = {} // address: {i's,{j:Number()}}
+    this.sorted = new Set() //address in sortMap that was retrieved during sort
+
+    this.filterArr = [] // [[nodeID,[val1,val2]] this is technically ijk for sortMap... j is always 1
+    this.filterMap = {} // address: {i's,{j:Number()}}
+    this.filtered = new Set() //address in addrMap that was retrieved for filtering
 
     Object.defineProperty(this.aliasToID,'aliasTypes',{
         value: function(alias,isNode){
@@ -1245,6 +1309,15 @@ function QueryParse(path,qArr,userCB,sVal){
                     setTimeout(beginRequery,250,self)
                 }
             }
+            //for ALL elements, merge souls in to one obj for failing and filtered objects 
+            //for elements returned, get passing
+        }
+    })
+    Object.defineProperty(this,'newStates',{
+        value: function(stateBuffer){
+
+
+            
             //for ALL elements, merge souls in to one obj for failing and filtered objects 
             //for elements returned, get passing
         }
@@ -2357,8 +2430,7 @@ function QueryParse(path,qArr,userCB,sVal){
 
 
         });
-    }
-    
+    }  
 }
 function query(qParams){
     let startTime = Date.now()
@@ -2380,6 +2452,7 @@ function query(qParams){
     let {expand,checkNodes,sVal,userCB} = qParams
     let bufferTrigger = false
     let requery = !!pathStrings.size
+    const get = gunGet(gun)
     console.log(qParams)
     if(checkNodes){//checkNodes can only come from the buffer
         if(qParams.expand){
@@ -2498,7 +2571,7 @@ function query(qParams){
                 // need existence soul for each type
                 if(isNode){
                     let s = makeSoul({b,t:id,i:true})//created/existence soul
-                    gun.get(s).once(function(node){
+                    get(s,false,function(node){
                         for (const nodeID in node) {
                             const isActive = node[nodeID];//true = 'active', false = 'archived', null = 'deleted
                             if (DATA_INSTANCE_NODE.test(nodeID) && isActive) {
@@ -2508,6 +2581,16 @@ function query(qParams){
                         toGet--
                         if(!toGet)evaluateNodes()
                     })
+                    // gun.get(s).once(function(node){
+                    //     for (const nodeID in node) {
+                    //         const isActive = node[nodeID];//true = 'active', false = 'archived', null = 'deleted
+                    //         if (DATA_INSTANCE_NODE.test(nodeID) && isActive) {
+                    //             qParams.elements[startVar].toCheck.add(nodeID)
+                    //         }
+                    //     }
+                    //     toGet--
+                    //     if(!toGet)evaluateNodes()
+                    // })
                 }else{
                     let s = makeSoul({b,r:id})//type identifier
                     //if we have a "_CREATED" time range for these nodes, we can narrow further
@@ -3364,11 +3447,8 @@ function query(qParams){
     function queryDone(returnResult){
         //setup up subscription, fire user cb
         if(sVal){
-            console.log('setting up or updating sub: '+ sVal)
-            //if(!gsubs[b])gsubs[b] = {}
-            qParams.calcTriggers()
-            let basePath = makeSoul({b})
-            setValue([basePath,sVal],qParams,gsubs)
+            console.log('setting up or updating Query sub: '+ sVal)
+            setValue([b,sVal],qParams,querySubs)
         }
         qParams.state = ''
         if(qParams.pending)beginRequery(qParams)

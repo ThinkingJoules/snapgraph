@@ -1,5 +1,5 @@
 'use strict'
-const {getValue, setValue, makeSoul, parseSoul, hasPropType,DATA_INSTANCE_NODE,configPathFromChainPath} = require('../gbase_core/util.js')
+const {getValue, setValue, makeSoul, parseSoul, hasPropType,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut} = require('../gbase_core/util.js')
 function getBlockTime(unix){
   let date = new Date(unix)
   //console.log(date.toString())
@@ -34,7 +34,8 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
   let soulObj = {b,r,'>':srcTypeID,'<':trgtTypeID}
   let idIdx = makeSoul(Object.assign({},soulObj,{':':true}))
   let blockIdxSoul = makeSoul(soulObj)
-
+  const get = gunGet(gun)
+  const put = gunPut(gun)
   let idxData = relationSoul
   idxDate = idxDate || Date.now() //index as 'now' such for creation
   if (!(idxDate instanceof Date) || isNaN(idxDate*1)){ // TODO: Do magic
@@ -44,30 +45,30 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
   let correctBlock = getBlockTime(idxDate)
   const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
   //console.log(correctBlock,correctSoul)
-
-
-  root.get(idIdx).get(relationSoul).get(function(msg, ev) {
-    let prevIdx = msg.put
-    ev.off()
+  get(idIdx,relationSoul,function(prevIdx) {
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
-      root.get(oldSoul).put({[idxData]: false})
+      put(oldSoul,{[idxData]: false})
+      //root.get(oldSoul).put({[idxData]: false})
     }
     if(archive || deleteThis)return
     //at this point we are editing.
-    root.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul]!== undefined){//add to existing block
-          root.get(correctSoul).put({[idxData]:idxDate})
+          //root.get(correctSoul).put({[idxData]:idxDate})
+          put(correctSoul,{[idxData]:idxDate})
         }else{//make new block 
           newBlock(allBlocks)
         }
-        root.get(idIdx).put({[idxData]:idxDate})//'last' index
+        //root.get(idIdx).put({[idxData]:idxDate})//'last' index
+        put(idIdx,{[idxData]:idxDate})//'last' index
       }else{//newSoul, with new src/trgt combo
         newBranch()
       }
     })
   })
+
   function newBlock(blockList){
     let {head, tail} = blockList
     let list = JSON.parse(JSON.stringify(blockList))
@@ -86,22 +87,29 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
       }
     }
     let newBlock = {prev:prevSoul ,next: nextSoul, [idxData]:idxDate}
-    root.get(correctSoul).put(newBlock)//put data and prev in new block
+    put(correctSoul,newBlock)
+    //root.get(correctSoul).put(newBlock)//put data and prev in new block
     if(prevSoul !== null){
-      gun.get(prevSoul).put({next:correctSoul})
+      //gun.get(prevSoul).put({next:correctSoul})
+      put(prevSoul,{next:correctSoul})
     }
     if(prevSoul === null){
       let firstBlock = makeSoul(Object.assign({},soulObj,{':':head}))
-      gun.get(firstBlock).put({prev:correctSoul})
-      root.get(blockIdxSoul).put({head:correctBlock})
+      put(firstBlock, {prev:correctSoul})
+      put(blockIdxSoul, {head:correctBlock})
+      //gun.get(firstBlock).put({prev:correctSoul})
+      //root.get(blockIdxSoul).put({head:correctBlock})
     }
     if(nextSoul !== null){
-      gun.get(nextSoul).put({prev:correctSoul})
+      //gun.get(nextSoul).put({prev:correctSoul})
+      put(nextSoul,{prev:correctSoul})
     }
     if(nextSoul === null){
       let lastBlock = makeSoul(Object.assign({},soulObj,{':':tail}))
-      gun.get(lastBlock).put({next:correctSoul})
-      root.get(blockIdxSoul).put({tail:correctBlock})
+      put(lastBlock,{next:correctSoul})
+      put(blockIdxSoul,{tail:correctBlock})
+      //gun.get(lastBlock).put({next:correctSoul})
+      //root.get(blockIdxSoul).put({tail:correctBlock})
     }
   }
   function newBranch(){
@@ -109,10 +117,15 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
     let base = {b,r,'>':srcTypeID}
     let srcSoul = makeSoul(base)
     let firstBlock = {prev:null,next:null,[idxData]:idxDate}
-    root.get(idxSoul).put({[srcTypeID]:{'#':srcSoul}})
-    root.get(srcSoul).put({[trgtTypeID]:{'#':blockIdxSoul}})
-    root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
-    root.get(correctSoul).put(firstBlock)
+    put(idxSoul,{[srcTypeID]:{'#':srcSoul}})
+    put(srcSoul,{[trgtTypeID]:{'#':blockIdxSoul}})
+    put(blockIdxSoul,{[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    put(correctSoul,firstBlock)
+
+    // root.get(idxSoul).put({[srcTypeID]:{'#':srcSoul}})
+    // root.get(srcSoul).put({[trgtTypeID]:{'#':blockIdxSoul}})
+    // root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    // root.get(correctSoul).put(firstBlock)
   }
 }
 const getRelationNodes = (gun,relationType,srcTypeArr,trgtTypeArr,cb,opts) =>{
@@ -131,12 +144,13 @@ const getRelationNodes = (gun,relationType,srcTypeArr,trgtTypeArr,cb,opts) =>{
   if(!trgtTypeArr || !Array.isArray(trgtTypeArr) || (Array.isArray(trgtTypeArr) && !trgtTypeArr.length))throw new Error('Must specify at least one target type')
   let toGet = srcTypeArr.length*trgtTypeID.length
   let blocks = []
+  const get = gunGet(gun)
   for (let i = 0; i < srcTypeArr.length; i++) {
     const srcNodeTypeID = srcTypeArr[i]; //this will be JUST the id, no parsing needed
     for (let j = 0; j < trgtTypeID.length; j++) {
       const trgtNodeTypeID = trgtTypeID[j];
       let s = makeSoul({b,r,'>':srcNodeTypeID,'<':trgtNodeTypeID})
-      root.get(s).once(function(blockIdx){
+      get(s,false,function(blockIdx){
         //will have head, tail, and the rest is keys of block souls and values of unix times
         toGet--
         if(blockIdx !== undefined){
@@ -151,15 +165,14 @@ const getRelationNodes = (gun,relationType,srcTypeArr,trgtTypeArr,cb,opts) =>{
         }
         if(!toGet)getIDs()
         
-      })
-      
+      })     
     }
   }
   function getIDs(){
     let allIDs = []
     let toGet = blocks.length
     for (const blockSoul of blocks) {
-      root.get(blockSoul).once(function(data){
+      get(blockSoul,function(data){
         toGet--
         if(data !== undefined){
           for (const soul in data) {
@@ -172,8 +185,7 @@ const getRelationNodes = (gun,relationType,srcTypeArr,trgtTypeArr,cb,opts) =>{
         if(!toGet){
           cb(allIDs)
         }
-      })
-      
+      })      
     }
   }
 }
@@ -197,25 +209,25 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   let correctBlock = getBlockTime(idxDate)
   const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
   //console.log(correctBlock,correctSoul)
-
-
-  root.get(idIdx).get(idxData).get(function(msg, ev) {
-    let prevIdx = msg.put
-    ev.off()
+  const get = gunGet(gun)
+  const put = gunPut(gun)
+  get(idIdx,idxData,function(msg){
+    let prevIdx = msg.put && msg.put[soul] && msg.put[soul][pval]
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
       root.get(oldSoul).put({[idxData]: false})
     }
     if(archive || deleteThis)return
     //at this point we are editing.
-    root.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul]!== undefined){//add to existing block
           root.get(correctSoul).put({[idxData]:idxDate})
         }else{//make new block 
           newBlock(allBlocks)
         }
-        root.get(idIdx).put({[idxData]:idxDate})//'last' index
+        put(idIdx,{[idxData]:idxDate})
+        //root.get(idIdx).put({[idxData]:idxDate})//'last' index
       }else{//newSoul, with new src/trgt combo
         newIndex()
       }
@@ -239,29 +251,39 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
       }
     }
     let newBlock = {prev:prevSoul ,next: nextSoul, [idxData]:idxDate}
-    root.get(correctSoul).put(newBlock)//put data and prev in new block
+    put(correctSoul,newBlock)
+    //root.get(correctSoul).put(newBlock)//put data and prev in new block
     if(prevSoul !== null){
-      gun.get(prevSoul).put({next:correctSoul})
+      put(prevSoul,{next:correctSoul})
+      //gun.get(prevSoul).put({next:correctSoul})
     }
     if(prevSoul === null){
       let firstBlock = makeSoul(Object.assign({},soulObj,{':':head}))
-      gun.get(firstBlock).put({prev:correctSoul})
-      root.get(blockIdxSoul).put({head:correctBlock})
+      put(firstBlock,{prev:correctSoul})
+      put(blockIdxSoul,{head:correctBlock})
+      //gun.get(firstBlock).put({prev:correctSoul})
+      //root.get(blockIdxSoul).put({head:correctBlock})
     }
     if(nextSoul !== null){
-      gun.get(nextSoul).put({prev:correctSoul})
+      put(nextSoul,{prev:correctSoul})
+      //gun.get(nextSoul).put({prev:correctSoul})
     }
     if(nextSoul === null){
       let lastBlock = makeSoul(Object.assign({},soulObj,{':':tail}))
-      gun.get(lastBlock).put({next:correctSoul})
-      root.get(blockIdxSoul).put({tail:correctBlock})
+      put(lastBlock,{next:correctSoul})
+      put(blockIdxSoul,{tail:correctBlock})
+      //gun.get(lastBlock).put({next:correctSoul})
+      //root.get(blockIdxSoul).put({tail:correctBlock})
     }
   }
   function newIndex(){
     let firstBlock = {prev:null,next:null,[idxData]:idxDate}
-    root.get(idIdx).put({[idxData]:idxDate})
-    root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
-    root.get(correctSoul).put(firstBlock)
+    put(idIdx,{[idxData]:idxDate})
+    put(blockIdxSoul,{[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    put(correctSoul,firstBlock)
+    //root.get(idIdx).put({[idxData]:idxDate})
+    //root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    //root.get(correctSoul).put(firstBlock)
   }
 }
 
@@ -274,6 +296,8 @@ const timeLog = (gun) => (idxID, changeObj) =>{
   let user = root.user()
   let pub = user && user.is && user.is.pub || false
   let idxDate = new Date().getTime()
+  const get = gunGet(gun)
+  const put = gunPut(gun)
   for (const pval in changeObj) {
     const value = changeObj[pval];
     logPval(pval,value)
@@ -286,10 +310,11 @@ const timeLog = (gun) => (idxID, changeObj) =>{
     let blockIdxSoul = makeSoul(Object.assign({},soulObj,{';':'BLKIDX'}))
     let correctBlock = getBlockTime(idxDate)
     const correctSoul = makeSoul(Object.assign({},soulObj,{';':correctBlock}))
-    root.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul] !== undefined){//add to existing block
-          root.get(correctSoul).put({[idxDate]:log})
+          //root.get(correctSoul).put({[idxDate]:log})
+          put(correctSoul,{[idxDate]:log})
         }else{//make new block 
           newBlock(allBlocks)
         }
@@ -314,48 +339,57 @@ const timeLog = (gun) => (idxID, changeObj) =>{
           }
         }
         let block = {prev:prevSoul ,next: nextSoul, [idxDate]:log}
-        root.get(correctSoul).put(block)//put data and prev in new block
+        put(correctSoul,block)
+        //root.get(correctSoul).put(block)//put data and prev in new block
         if(prevSoul){
-          gun.get(prevSoul).put({next:correctSoul})
+          put(prevSoul,{next:correctSoul})
+          //gun.get(prevSoul).put({next:correctSoul})
         }
         if(prevSoul === null){
           let firstBlock = makeSoul(Object.assign({},soulObj,{';':head}))
-          gun.get(firstBlock).put({prev:correctSoul})
-          root.get(blockIdxSoul).put({head:correctBlock})
+          put(firstBlock,{prev:correctSoul})
+          put(blockIdxSoul,{head:correctBlock})
+          //gun.get(firstBlock).put({prev:correctSoul})
+          //root.get(blockIdxSoul).put({head:correctBlock})
         }
         if(nextSoul){
-          gun.get(nextSoul).put({prev:correctSoul})
+          //gun.get(nextSoul).put({prev:correctSoul})
+          put(nextSoul,{prev:correctSoul})
         }
         if(nextSoul === null){
           let lastBlock = makeSoul(Object.assign({},soulObj,{';':tail}))
-          gun.get(lastBlock).put({next:correctSoul})
-          root.get(blockIdxSoul).put({tail:correctBlock})
+          put(lastBlock,{next:correctSoul})
+          put(blockIdxSoul,{tail:correctBlock})
+          //gun.get(lastBlock).put({next:correctSoul})
+          //root.get(blockIdxSoul).put({tail:correctBlock})
         }
       }
       function newIndex(){
         let firstBlock = {prev:null,next:null,[idxDate]:log}
-        root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
-        root.get(correctSoul).put(firstBlock)
+        put(blockIdxSoul,{[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+        put(correctSoul,firstBlock)
+        //root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+        //root.get(correctSoul).put(firstBlock)
       }
     })
+    
   }
 }
 
 const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
-  let root = gun.back(-1)
-  let {b,t} = parseSoul(nodeType)
+  let {b,t,r} = parseSoul(nodeType)
+  if(r)throw new Error('Relationships do not have labels')
   if(!(cb instanceof Function))throw new Error('Must provide a callback')
   if(!labelArr || !Array.isArray(labelArr) || (Array.isArray(labelArr) && !labelArr.length))throw new Error('Must specify at least one label')
-  let p = hasPropType(gb,nodeType,'labels')[0] || []
-  if(!p)throw new Error('Cannot find the "labels" property')
   let out = []
   //labels should already be IDs, nodeType should be !#
 
   //if we have a length property on each label, we could find the shortest list first, then get that list, then get the set from those props
   //for now, we will not.
   let idx = makeSoul({b,t,l:labelArr[0]})
-  
-  gun.get(idx).once(function(nodes){
+  const get = gunGet(gun)
+
+  get(idx,false,function(nodes){
     let nodesToTry = []
     for (const nodeID in nodes) {
       const boolean = nodes[nodeID];
@@ -365,7 +399,7 @@ const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
     }
     let toGet = nodesToTry.length
     for (const node of nodesToTry) {
-      gun.get(node).get(p).once(function(set){
+      get(node,'LABELS',function(set){
         toGet--
         let pass = true
         for (const label of labelArr) {
@@ -376,7 +410,6 @@ const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
       })
     }
   })
-
 }
 
 

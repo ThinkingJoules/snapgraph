@@ -1,5 +1,5 @@
 //GBASE UTIL FUNCTIONS
-
+const IS_STATE_INDEX = /^![a-z0-9]+(#|-)[a-z0-9]+^![a-z0-9]+(#|-|\^|&)[a-z0-9]+\$$/i
 const IS_CONFIG_SOUL = /^![a-z0-9]+(((#|-)[a-z0-9]+)|((#|-)[a-z0-9]+.[a-z0-9]+))%/i
 const INSTANCE_OR_ADDRESS = /^![a-z0-9]+(#|-)[a-z0-9]+((.[a-z0-9]+\$[a-z0-9_]+)|\$[a-z0-9_]+)/i
 const ALL_ADDRESSES = /^![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
@@ -1115,11 +1115,13 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         if(err)return
         //console.log(toPut)
         //return      
-         
+        
+        let gput = gunPut(gun)
+
         for (const soul in toPut) {
             const putObj = toPut[soul];
             if(!Object.keys(putObj).length)continue
-            gun.get(soul).put(putObj)
+            gput(soul,putObj)
         }
         for (const index in timeIndices) {
             const {value,unix} = timeIndices[index];
@@ -1501,14 +1503,6 @@ function tsvJSONgb(tsv){
     return result; //JavaScript object
     //return JSON.stringify(result); //JSON
 }
-function removeFromArr(item,arr){
-    let position = arr.indexOf(item);
-
-    if(~position){
-        arr.splice(position, 1);
-    }
-    return arr
-}
 function hasPropType(gb, tPathOrPpath, type){
     let {b,t,r} = parseSoul(tPathOrPpath)
     let tPath = makeSoul({b,t,r})
@@ -1732,6 +1726,46 @@ function union(setA, setB) {
     }
     return _union;
 }
+function removeFromArr(arr,index){//mutates array to remove value, 7x faster than splice
+    var stop = arr.length - 1;
+    while (index < stop) {
+        arr[index] = arr[++index];
+    }
+
+    arr.pop();
+}
+
+
+const gunGet = (gun) => (soul,prop,cb)=>{
+    //console.log('getting soul:',soul, 'prop:',prop)
+    let get = (prop !== undefined && prop !== false) ? {'#':soul,'.':prop} : {'#':soul}
+    gun._.on('out', {
+        get,
+        '#': gun._.ask(function(msg){
+            let val = (prop !== undefined && prop !== false) ? msg.put && msg.put[soul] && msg.put[soul][prop] : msg.put && msg.put[soul]
+            if(prop !== undefined && typeof val === 'object' && val['#']){
+                //console.log('getting lookup val')
+                gunGet(gun)(val['#'],false,cb)
+            }else{
+                cb(val)
+
+            }
+        })
+    })
+}
+const gunPut = (gun) => (soul,putO)=>{
+    let ham = {}
+    let n = Date.now()
+    for (const key in putO) {
+        ham[key] = n
+    }
+    putO['_'] = {'#':soul,'>':ham}
+        
+    gun._.on('out', {
+        put: {[soul]:putO}
+    })
+}
+
 
 const soulSchema = {
     /* legend
@@ -1837,6 +1871,8 @@ Object.defineProperty(Cache.prototype, "watch", {
 const cache = {}
 
 module.exports = {
+    gunGet,
+    gunPut,
     cachePathFromChainPath,
     configPathFromSoul,
     configPathFromChainPath,
@@ -1894,5 +1930,6 @@ module.exports = {
     collectPropIDs,
     intersect,
     union,
-    findConfigFromID
+    findConfigFromID,
+    IS_STATE_INDEX
 }
