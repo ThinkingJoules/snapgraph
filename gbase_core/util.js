@@ -476,7 +476,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             throw new Error('Invalid NodeID specified for linking new node to its parent')
         }
     }
-
+    const get = gunGet(gun)
+    const put = gunPut(gun)
     initialCheck()
     //findIDs and convert userValues to correct value type
     let timeIndices = {},  relationsIndices = {}, logs = {}, run = [], toPut = {}, err
@@ -798,6 +799,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let {b,t,r} = parseSoul(nodeID)
             let putVal
             let listID = makeSoul({b,t,r,p:pval})
+            let thisAddr = makeSoul({b,t,r,p:pval,i})
             try {
                 putVal = (inc) ? putObj[pval] : convertValueToType(putObj[pval],dataType)
             } catch (error) {
@@ -806,18 +808,20 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             getList(listID,function(list){
                 list = list || {}
                 let incVals = {}
-                for (const idOnList in list) {
-                    if(['_'].includes(idOnList))continue//anything to skip, add to this array
-                    const value = list[idOnList];
+                console.log(list)
+                for (const addrOnList in list) {
+                    if(['_'].includes(addrOnList))continue//anything to skip, add to this array
+                    const value = list[addrOnList];
                     if(inc){//this is an incrementing value, this method should also make it unique.
                         incVals[value] = true
                     }
+                    if(addrOnList == thisAddr)console.log('THIS THING',value,putVal)
                     if(enforceUnique 
                         && putVal !== undefined
                         && putVal !== null
                         && putVal !== ""//will allow multiple 'null' fields
-                        && String(value) === String(putVal) 
-                        && idOnList !== nodeID){//other value found on a different soul
+                        && value == putVal 
+                        && addrOnList != thisAddr){//other value found on a different soul
                         err = new Error('Non-unique value on property: '+ alias)
                         throwError(err)
                         break
@@ -842,7 +846,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let stateSoul = makeSoul({b,t,r,i:true})
                 let toObj = {}
                 let soulList = []
-                gun.get(stateSoul).once(function(data){
+                get(stateSoul,false,function(data){
                     if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
                     for (const soul in data) {
                         if(!ALL_INSTANCE_NODES.test(soul))continue
@@ -1710,6 +1714,12 @@ function toAddress(node,p){
     if(ALL_ADDRESSES.test(node))return node
     return makeSoul(Object.assign(parseSoul(node),{p}))
 }
+function removeP(address){//address > nodeID
+    let idObj = parseSoul(address)
+    delete idObj.p
+    delete idObj['.']
+    return makeSoul(idObj)
+}
 function intersect(setA, setB) {
     var _intersection = new Set();
     for (var elem of setB) {
@@ -1734,6 +1744,22 @@ function removeFromArr(arr,index){//mutates array to remove value, 7x faster tha
 
     arr.pop();
 }
+function naturalCompare(a, b) {
+    let ax = [], bx = [];
+    a = String(a).trim().toUpperCase()  //trim and uppercase good idea?
+    b = String(b).trim().toUpperCase()
+    a.replace(/(\d+)|(\D+)/g, function(_, $1, $2) { ax.push([$1 || Infinity, $2 || ""]) });
+    b.replace(/(\d+)|(\D+)/g, function(_, $1, $2) { bx.push([$1 || Infinity, $2 || ""]) });
+    
+    while(ax.length && bx.length) {
+        let an = ax.shift();
+        let bn = bx.shift();
+        let nn = (an[0] - bn[0]) || an[1].localeCompare(bn[1]);
+        if(nn) return nn;
+    }
+
+    return ax.length - bx.length;
+}
 
 
 const gunGet = (gun) => (soul,prop,cb)=>{
@@ -1743,7 +1769,7 @@ const gunGet = (gun) => (soul,prop,cb)=>{
         get,
         '#': gun._.ask(function(msg){
             let val = (prop !== undefined && prop !== false) ? msg.put && msg.put[soul] && msg.put[soul][prop] : msg.put && msg.put[soul]
-            if(prop !== undefined && typeof val === 'object' && val['#']){
+            if(prop !== undefined && prop !== false && typeof val === 'object' && val['#'] !== undefined){
                 //console.log('getting lookup val')
                 gunGet(gun)(val['#'],false,cb)
             }else{
@@ -1931,5 +1957,8 @@ module.exports = {
     intersect,
     union,
     findConfigFromID,
-    IS_STATE_INDEX
+    IS_STATE_INDEX,
+    removeP,
+    ALL_TYPE_PATHS,
+    naturalCompare
 }
