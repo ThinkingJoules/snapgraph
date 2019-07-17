@@ -808,7 +808,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             getList(listID,function(list){
                 list = list || {}
                 let incVals = {}
-                console.log(list)
                 for (const addrOnList in list) {
                     if(['_'].includes(addrOnList))continue//anything to skip, add to this array
                     const value = list[addrOnList];

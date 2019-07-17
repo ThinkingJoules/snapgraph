@@ -809,8 +809,8 @@ const makeshowgb = (gb) => () =>{
 const makeshowcache = (cache) => () =>{
     console.log(cache)
 }
-const makeshowgsub = (gsubs) => () =>{
-    return gsubs
+const makeshowgsub = (querySub,addrSubs,nodeSubs) => () =>{
+    return [querySub,addrSubs,nodeSubs]
 }
 const makeshowgunsub = (gunSubs)=> () =>{
     return gunSubs

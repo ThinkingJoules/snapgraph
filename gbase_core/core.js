@@ -138,7 +138,6 @@ let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 let typeGet, nodeGet, addressGet
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
-const showgsub = makeshowgsub(gsubs)
 const showgunsub = makeshowgunsub(gunSubs)
 
 const {makesolve,
@@ -171,6 +170,8 @@ function dumpStateChanges(){
     stateBuffer = !stateBuffer
     sendToSubs(buffer)
 }
+const showgsub = makeshowgsub(querySubs,addrSubs,nodeSubs)
+
 function sendToSubs(buffer){
     for (const baseid in querySubs) {
         if(!buffer[baseID])continue
@@ -184,7 +185,7 @@ function sendToSubs(buffer){
 }
 function incomingPutMsg(msg){//wire listener
     if(msg && msg.put){
-        let soul = Object.keys(msg.put)
+        let soul = Object.keys(msg.put)[0]
         let putObj = msg.put[soul]
         if(IS_STATE_INDEX.test(soul)){
             for (const nodeID in putObj) {
@@ -198,11 +199,13 @@ function incomingPutMsg(msg){//wire listener
             }
         }else if(ALL_INSTANCE_NODES.test(soul)){
             for (const p in putObj) {
+                if(p === '_')continue
                 let addr = toAddress(soul,p)
                 let cVal = cache[addr]
                 if(cVal === undefined)continue //nothing is subscribing to this value yet, ignore
                 const v = putObj[p];
                 if(cVal === v)continue //value is unchanged, do nothing
+
                 sendToCache(soul,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
                 let subs = addrSubs[addr]
                 if(subs === undefined)continue //no current subscription for this addr
@@ -223,10 +226,11 @@ function processValue(addr,subs){
             handleSub(subs[sym],val)
         }
         function handleSub(subO,val){
+            //console.log('firing sub for',addr)
             const {cb,raw} = subO
             if(!raw){
                 let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
-                val = formatData(format,propType,dataType,v)
+                val = formatData(format,propType,dataType,val)
             }
             cb.call(cb,val)
 
@@ -1210,26 +1214,12 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
             if(qParameters.originalQueryArr !== JSON.stringify(queryArr)){
                 qParameters.queryChange = true
                 qParameters.parseQuery(queryArr)
+                qParameters.resultState = false //through a requery at this point, can only effect the result shape
             }
             if(qParameters.userCB !== cb)qParameters.userCB = cb //if different cb, but same sID, update value
         }
     }
     qParameters.query()
-}
-function beginRequery(qParams){
-    qParams.state = 'running'
-    qParams.checkNodes = {}
-
-    for (const id in qParams.pendingNodes) {
-        const set = qParams.pendingNodes[id];
-        qParams.checkNodes[id] = new Set(set)
-        delete qParams.pendingNodes[id]
-    }
-    qParams.hasPending = false
-    console.log('attempting requery', qParams)
-    query(qParams)
-    //for ALL elements, merge souls in to one obj for failing and filtered objects 
-    //for elements returned, get passing
 }
 function Query(path,qArr,userCB,sID){
     let {b} = parseSoul(path)
@@ -1277,8 +1267,6 @@ function Query(path,qArr,userCB,sID){
 
     this.paths = []
     this.pathStrings = {}
-
-    this.sortArr = [] // [[pathStr,[val1,val2]] this is technically ijk for sortMap... j is always 1
 
     
     //subscription mgmt
@@ -2522,16 +2510,16 @@ function Query(path,qArr,userCB,sID){
 
 
     this.query = function(){//determine whether to run startQuery or reQuery
-        console.log('starting query:',this)
-        let startTime = this.startTime = Date.now()
-        this.time = [startTime]
-        this.state = 'running'
-        this.lastStart = startTime
-        this.runs++
-        let qParams = this
+        console.log('starting query:',self)
+        let startTime = self.startTime = Date.now()
+        self.time = [startTime]
+        self.state = 'running'
+        self.lastStart = startTime
+        self.runs++
+        let qParams = self
         let {observedStates,expand,checkNodes} = qParams
-        this.requery = (this.runs > 1) ? true : false
-        this.bufferTrigger = false
+        self.requery = (self.runs > 1) ? true : false
+        self.bufferTrigger = false
         if(checkNodes){//checkNodes can only come from the stateBuffer
             if(expand){
                 //if a new relation comes in, then we need to get it's src & trgt to see if either of them are in the 'active' list
@@ -2548,7 +2536,7 @@ function Query(path,qArr,userCB,sID){
                     if(qParams.elements[userVar].activeExpandNodes.has(nodeID) && r){
                         if(pvalSet.has('STATE')){
                             reExpand = true
-                            this.startQuery()
+                            self.startQuery()
                             break
                         }
                     }else if(!qParams.elements[userVar].activeExpandNodes.has(nodeID) && r){
@@ -2563,9 +2551,9 @@ function Query(path,qArr,userCB,sID){
                         find--
                         if(qParams.elements[userVar].activeExpandNodes.has(id)){
                             reExpand = true
-                            this.startQuery()
+                            self.startQuery()
                         }
-                        if(!find)this.startQuery()
+                        if(!find)self.startQuery()
                     }
                     getCell(lookup,'SRC',checkForID,true)
                     getCell(lookup,'TRGT',checkForID,true)
@@ -2586,7 +2574,7 @@ function Query(path,qArr,userCB,sID){
                         if(observedStates[nodeID] === undefined && (types.includes(t) || types.includes(r))){//add it to the highest scoring match.
                             if(validStates.includes(state)){//check to see if it has the correct state
                                 qParams.elements[userVar].toCheck.add(nodeID)
-                                this.bufferTrigger = true
+                                self.bufferTrigger = true
                                 //if it does, then we need to see if this can be added to the query
                                 //the hope is that most will get filtered about before traversal
                             }
@@ -2595,33 +2583,37 @@ function Query(path,qArr,userCB,sID){
                     }
                     delete qParams.checkNodes[nodeID]
                 }
-                this.startQuery()
+                self.startQuery()
             }
         }else{
-            this.startQuery()
+            self.startQuery()
         }
 
     }
     this.startQuery = function(){
-        if(this.expand)this.expandNodes()//expand starts over regardless of if it has been run before
-        else if(this.bufferTrigger){console.log('Evaluating incoming nodes with state changes');this.evaluateNodes()}
-        else if(this.requery){
-            if(!this.filterState){
-                this.evaluateNodes()
-            }else if(!this.sortState){
-                this.sortPaths()
-            }else if(!this.resultState){
-                this.buildResults()
+        if(self.expand)self.expandNodes()//expand starts over regardless of if it has been run before
+        else if(self.bufferTrigger){console.log('Evaluating incoming nodes with state changes');self.evaluateNodes()}
+        else if(self.requery){
+            if(!self.filterState){
+                console.log('Requery, checking changed nodes to see if they pass')
+                self.evaluateNodes()
+            }else if(!self.sortState){
+                console.log('Requery, sort has changed')
+                self.sortPaths()
+            }else if(!self.resultState){
+                console.log('Requery, rebuilding output')
+                self.buildResults()
             }else{
-                this.queryDone(true)
+                console.log('Requery, just firing cb')
+                self.queryDone(true)
             }
             console.log('Requery, rebuilding output')
         }
-        else this.getIndex()//firstCall not expand
+        else self.getIndex()//firstCall not expand
     }
 
     this.getIndex = function(){
-        let qParams = this
+        let qParams = self
         let startVar = qParams.elementRank[0]
         let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes,states} = qParams.elements[startVar]
         console.log('Beginning query by',bestIndex)
@@ -2632,7 +2624,7 @@ function Query(path,qArr,userCB,sID){
                 for (const id of ID) {
                     qParams.elements[startVar].toCheck.add(id)
                 }
-                this.evaluateNodes()
+                self.evaluateNodes()
                 break;
             case 'types':
                 getTypes()
@@ -2746,9 +2738,9 @@ function Query(path,qArr,userCB,sID){
         }
     }
     this.evaluateNodes = function (){
-        let qParams = this
+        let qParams = self
         let indexTime = Date.now()
-        this.time.push(indexTime)
+        self.time.push(indexTime)
         console.log('Found starting nodeIDs in',indexTime-this.startTime,'ms')
 
         //this is only for match pattern w/ normal return
@@ -2761,10 +2753,10 @@ function Query(path,qArr,userCB,sID){
         //console.log(varsToCheck)
 
         if(!varsToCheck.length){
-            this.queryDone(!bufferTrigger)
+            self.queryDone(!bufferTrigger)
             return
         }//nothing matched the query, return the result
-        this.openPaths = 0
+        self.openPaths = 0
         let started = false
         for (const startVar of varsToCheck) {
             let thing = qParams.elements[startVar];
@@ -2775,13 +2767,13 @@ function Query(path,qArr,userCB,sID){
             started = true
             console.log(toCheck.size)
             for (const nodeID of toCheck) {
-                this.openPaths++
+                self.openPaths++
                 setTimeout(self.checkPath,1,false,false,startVar,nodeID)
                 //checkAndTraverse(false,false,startVar,nodeID)
             }
         }
         if(!started){
-            this.queryDone(true)
+            self.queryDone(true)
             console.log('No nodes to evaluate')
         }
     }
@@ -2935,7 +2927,7 @@ function Query(path,qArr,userCB,sID){
         }
     }
     this.checkLocal = function(el,nodeID,cb){
-        let qParams = this
+        let qParams = self
         let {observedStates, sID} = qParams
         let thing = qParams.elements[el]
         let {t,r,i} = parseSoul(nodeID)
@@ -2982,7 +2974,7 @@ function Query(path,qArr,userCB,sID){
                 evalState(state)
             }else{//have not seen it, go get it.
                 getCell(nodeID,'STATE',function(state){
-                    this.observedStates[nodeID] = state
+                    self.observedStates[nodeID] = state
                     evalState(state)
                 },true,sID)
             }
@@ -3165,43 +3157,47 @@ function Query(path,qArr,userCB,sID){
 
 
     this.checkPathState = function(){
-        if(Object.keys(this.pathsToRemove).length){
-            this.resultState = false
-            for (const pathStr in this.pathsToRemove) {
-                let pathIdx = this.pathsToRemove[pathStr]
-                removeFromArr(this.paths,pathIdx)
-                delete this.pathsToRemove[pathStr]
+        if(Object.keys(self.pathsToRemove).length){
+            self.resultState = false
+            for (const pathStr in self.pathsToRemove) {
+                let pathIdx = self.pathsToRemove[pathStr]
+                removeFromArr(self.paths,pathIdx)
+                delete self.pathsToRemove[pathStr]
             }
-            this.setPathIndices()
+            self.setPathIndices()
         }
-        if(!this.sortState){
-            this.sortPaths()
-        }else if(!this.resultState){
-            this.buildResults()
+        self.filterState = true
+        if(!self.sortState){
+            self.sortPaths()
+        }else if(!self.resultState){
+            self.buildResults()
         }else{
-            this.queryDone(true)
+            console.log('requery has not changed sort or result structure, returning results')
+            self.queryDone(true)
         }
     }
     this.setPathIndices = function(){
-        this.pathStrings = {}
-        let l = this.paths.length
+        self.pathStrings = {}
+        let l = self.paths.length
         for (let i = 0; i < l; i++) {//get new indices
-            this.pathStrings[this.paths[i][0]] = i    
+            self.pathStrings[self.paths[i][0]] = i    
         }
     }
 
 
     this.sortPaths = function(){
-        let qParams = this
+        let qParams = self
         let evalTime = Date.now()
-        this.time.push(evalTime)
-        console.log('Evaluated nodeIDs in',evalTime-this.time[this.time.length-2],'ms')
+        self.time.push(evalTime)
+        console.log('Evaluated nodeIDs in',evalTime-self.time[self.time.length-2],'ms')
         let {sortBy,paths,sID} = qParams
         if((!sortBy || self.sortState) && !self.resultState){//no sort needed, but result is incorrect
-            this.buildResults()
+            console.log('Either no sort value, or the sort is accurate, but needing to build the result')
+            self.buildResults()
             return
         }else if((!sortBy || self.sortState) && self.resultState){//resultState is fine, some value updated that didn't effect the output structure.
-            this.queryDone(true)
+            console.log('query does not need sorting or building, skipping to return')
+            self.queryDone(true)
             return
         }      
 
@@ -3211,6 +3207,7 @@ function Query(path,qArr,userCB,sID){
         let sortProps = sortArgs.map(x=>x.alias)
         let pathIdx = qParams.pathOrderIdxMap.indexOf(sortUserVar)
         let toGet = paths.length
+        let hasPending = false
         for (let i = 0, l = paths.length; i < l; i++) {
             const {sortValues,pathArr} = paths[i]
             let nodeID = pathArr[pathIdx]
@@ -3219,11 +3216,12 @@ function Query(path,qArr,userCB,sID){
             for (let j = 0, lj = sortProps.length; j < lj; j++) {
                 let alias = sortProps[j]
                 if(sortValues[j] !== undefined)continue
+                hasPending = true
                 let p = qParams.aliasToID.id(nodeID,alias)
                 if(p!==undefined){
                     getCell(nodeID,p,addVal(sortValues,j),true,sID)
                     if(sID){
-                        let addr = toAddress(nodeID,'STATE')
+                        let addr = toAddress(nodeID,p)
                         if(!getValue(['addrSubs',addr,'sort'],self)){
                             let subID = subThing(addr,sortSub(sortValues,j),false,{raw:true})
                             setValue(['addrSubs',addr,'sort'],subID,self)
@@ -3247,7 +3245,7 @@ function Query(path,qArr,userCB,sID){
                 
             }
         }
-        
+        if(!hasPending)sortAllPaths()//we didn't need to get any values
         function sortAllPaths(){
             paths.sort(compareSubArr(sortArgs.map(x=>x.dir)))
             self.sortState = true
@@ -3277,36 +3275,40 @@ function Query(path,qArr,userCB,sID){
     }
 
     this.buildResults = function(){
-        let qParams = this
+        let qParams = self
         let {sortBy,limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams
         if(sortBy){
-            console.log('Sorted in:',Date.now()-this.time[this.time.length-1])
-            this.time.push(Date.now())
+            console.log('Sorted in:',Date.now()-self.time[self.time.length-1])
+            self.time.push(Date.now())
         }else{
             let evalTime = Date.now()
-            console.log('Found all paths in',evalTime-this.time[this.time.length-1],'ms')
-            this.time.push(evalTime)
+            console.log('Found all paths in',evalTime-self.time[self.time.length-1],'ms')
+            self.time.push(evalTime)
         }
         
         //need to build all paths that are within the skip and limit
         //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
 
-        if(skip+limit > this.paths.length)limit=this.paths.length - skip
-        if(skip !== prevSkip || limit !== prevLimit)this.resultState = false
-        this.prevSkip = skip
-        this.prevLimit = limit
+        if(skip+limit > self.paths.length)limit=self.paths.length - skip
+        if(skip !== prevSkip || limit !== prevLimit)self.resultState = false
+        self.prevSkip = skip
+        self.prevLimit = limit
         
 
         
-        if(this.resultState){//skip and limit is the same and nothing structural changed
-            this.queryDone(true)
+        if(self.resultState){//skip and limit is the same and nothing structural changed
+            console.log('resultState is true, skipping build')
+            self.queryDone(true)
             return
-        } 
+        }else{
+            console.log('building result for output')
+        }
 
-        const result = this.result = this.paths.slice(skip,skip+limit)
-        Object.defineProperty(this.result,'out',{value:{}}) //remake our outer result arr
-        this.result.out.query = cleanQuery.slice() //what user can pass back in/save as a 'saved' query
+        const result = self.result = self.paths.slice(skip,skip+limit)
+        Object.defineProperty(self.result,'out',{value:{}}) //remake our outer result arr
+        self.result.out.query = cleanQuery.slice() //what user can pass back in/save as a 'saved' query
         let countO = {count:0}
+        let thingsToBuild = []
         for (let i = 0,l = result.length; i < l; i++) {
             let pathArr = result[i].pathArr
             let pathO = result[i] //this is the pathInfoO [pathStr].resultRow
@@ -3314,18 +3316,27 @@ function Query(path,qArr,userCB,sID){
                 result[i] = pathArr
             }else{
                 result[i] = result[i].resultRow
-                if(result[i].length !== 0) continue
-                getPathData(pathO,countO)
+                if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
+                thingsToBuild.push(getPathData(pathO,countO))//get args
             }
         }
-        this.resultState = true
+        for (let i = 0,l = thingsToBuild.length; i < l; i++) {//have to collect everything, otherwise we don't know the total pending cb's
+            let nodeArr = thingsToBuild[i]
+            for (let j = 0, lj=nodeArr.length; j < lj; j++) {
+                const args = nodeArr[j];
+                getCell(...args)//for all ids, find all prop data
+            }
+        }
+        if(!thingsToBuild.length)self.queryDone(true)//did not need to get any data, so we must call done manually
+        self.resultState = true
         function getPathData(pathO,counter){
             let {resultRow,pathArr} = pathO
             for (let i = 0,l = pathArr.length; i < l; i++) {
                 let indexInPathArr = pathOrderIdxMap.indexOf(returning[i])
                 let nodeID = pathArr[indexInPathArr]
                 resultRow[i] = newThing(returning[i],nodeID) //will return [] || {} w/metadata according to params
-                getNode(resultRow[i],nodeID,returning[i],pathO[0],counter)
+                //return [resultRow[i],nodeID,returning[i],pathO[0],counter]
+                return findAllPropsNeeded(resultRow[i],nodeID,returning[i],pathO[0],counter)
             }
         }
         function newThing(el,id){
@@ -3341,30 +3352,32 @@ function Query(path,qArr,userCB,sID){
             if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
             return nodeObj
         }
-        function getNode(nodeObj,nodeID,userVar,pathStr,counter){
-            let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels,passing} = elements[userVar]
+
+        function findAllPropsNeeded(nodeObj,nodeID,userVar,pathStr,counter){
+            let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[userVar]
+            let allPropsToGet = []
             for (let i = 0, l = getProps.length; i < l; i++) {
                 const {alias,as:propAs,raw:rawProp} = getProps[i];
                 let raw = !!allRaw || !!rawProp
                 let p = qParams.aliasToID.id(nodeID,alias)
                 if(p!==undefined){
                     let propKey = returnKeyAs(i,p,alias,propAs)
+                    allPropsToGet.push([nodeID,p,addValue(propKey,p,counter),raw,sID])//getCell arguments
                     counter.count += 1
-                    getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
+                    //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
                     let addr = toAddress(nodeID,p)
                     if(sID && !getValue(['addrSubs',addr,'paths',pathStr],self)){
                         let subID = subThing(addr,resultSub(nodeObj,propKey,rawLabels,p),false,{raw})
                         setValue(['addrSubs',addr,'paths',pathStr],subID,self)
                     }
-                    if(!passing[nodeID])passing[nodeID] = new Set()
-                    passing[nodeID].add(p)
                 }else{
                     //what to do? neo returns `null`
                     console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
                     addValue(propKey,p)(undefined)
                 }
-                
             }
+            return allPropsToGet
+             
             function returnKeyAs(i,p,alias,propAs){
                 let property = propAs || (propsByID) ? p : alias
                 if(returnAsArray){
@@ -3384,17 +3397,12 @@ function Query(path,qArr,userCB,sID){
                     }
                     counter.count -=1
                     if(!counter.count){
+                        console.log('all data retrieved',counter.count)
                         self.queryDone(true)
                     }
                 }
                 
             }
-            
-            // function propIsDone(){
-            //     nodesToGet--
-            //     if(!nodesToGet)makeResult()
-            // }
-            
         }
     }
 
@@ -3443,17 +3451,17 @@ function Query(path,qArr,userCB,sID){
 
     this.queryDone = function(returnResult){
         //setup up subscription, fire user cb
-        let qParams = this
+        let qParams = self
         let {sID,userCB} = qParams
-        if(sID !== undefined && this.runs === 1){
+        if(sID !== undefined && self.runs === 1){
             console.log('Setting up query: '+ sID)
-            console.log('Be sure to remove unused queries. Use `gbase.base('+this.base+').kill('+sID+')')
+            console.log('Be sure to remove unused queries. Use `gbase.base('+self.base+').kill('+sID+')')
             setValue([b,sID],qParams,querySubs)
         }
         qParams.state = ''
-        setValue(['result','out','time'],Date.now()-this.startTime,this)
+        setValue(['result','out','time'],Date.now()-self.startTime,self)
         if(returnResult)userCB(qParams.result)
-        console.log('Result Built in:',Date.now()-this.time[this.time.length-1])
+        console.log('Result Built in:',Date.now()-self.time[self.time.length-1])
     }
 
 }
