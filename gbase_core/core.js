@@ -3144,6 +3144,7 @@ function Query(path,qArr,userCB,sID){
                     let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
                     let nodeID = pathArr[indexInPathArr]
                     let nodeThing = [nodeID]
+                    Object.defineProperty(nodeThing,'id',{value: nodeID})
                     Object.defineProperty(nodeThing,'address',{value: []})
                     result[i][j] = nodeThing
                     let {props:getProps} = elements[returning[j]]
