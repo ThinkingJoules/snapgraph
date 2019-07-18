@@ -1124,6 +1124,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         for (const soul in toPut) {
             const putObj = toPut[soul];
             if(!Object.keys(putObj).length)continue
+            console.log(soul,putObj)
             gput(soul,putObj)
         }
         for (const index in timeIndices) {
@@ -1140,7 +1141,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             timeLog(nodeIDtoLog,logObj)
         }
         console.log(Date.now()-startTime+'ms to process put request')
-        cb.call(this, undefined, nodeID)
+        cb.call(cb, undefined, nodeID)
     }
     function throwError(errmsg){
         let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)

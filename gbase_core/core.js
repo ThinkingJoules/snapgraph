@@ -197,7 +197,7 @@ function incomingPutMsg(msg){//wire listener
                 stateBuffer = !stateBuffer
                 setTimeout(dumpStateChanges,50)
             }
-        }else if(ALL_INSTANCE_NODES.test(soul)){
+        }else if(ALL_INSTANCE_NODES.test(soul) && !msg['@']){
             for (const p in putObj) {
                 if(p === '_')continue
                 let addr = toAddress(soul,p)
@@ -205,7 +205,6 @@ function incomingPutMsg(msg){//wire listener
                 if(cVal === undefined)continue //nothing is subscribing to this value yet, ignore
                 const v = putObj[p];
                 if(cVal === v)continue //value is unchanged, do nothing
-
                 sendToCache(soul,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
                 let subs = addrSubs[addr]
                 if(subs === undefined)continue //no current subscription for this addr
@@ -1102,6 +1101,12 @@ function Query(path,qArr,userCB,sID){
     //subscription mgmt
     this.addrSubs = {} //{[addr]:{sort:sID,element:{[userVar]:{state:sID,labels:sID,range: sID,filter:sID}},paths:{[pathStr]:{[jval]:sID}}}}
 
+
+    //metrics
+    this.noMetrics = false //need like meta options for the query
+    this.counter1 = 0
+    this.counter2 = 0
+    this.metrics = {}
 
     Object.defineProperty(this.aliasToID,'aliasTypes',{
         value: function(alias,isNode){
@@ -2340,11 +2345,10 @@ function Query(path,qArr,userCB,sID){
 
 
     this.query = function(){//determine whether to run startQuery or reQuery
+        self.metrics = new Metrics()
         console.log('starting query:',self)
-        let startTime = self.startTime = Date.now()
-        self.time = [startTime]
         self.state = 'running'
-        self.lastStart = startTime
+        self.lastStart = Date.now()
         self.runs++
         let qParams = self
         let {observedStates,expand,checkNodes} = qParams
@@ -2569,9 +2573,7 @@ function Query(path,qArr,userCB,sID){
     }
     this.evaluateNodes = function (){
         let qParams = self
-        let indexTime = Date.now()
-        self.time.push(indexTime)
-        console.log('Found starting nodeIDs in',indexTime-this.startTime,'ms')
+        self.metrics.addTimeSplit('getIndex')
 
         //this is only for match pattern w/ normal return
 
@@ -2602,6 +2604,7 @@ function Query(path,qArr,userCB,sID){
                 //checkAndTraverse(false,false,startVar,nodeID)
             }
         }
+
         if(!started){
             self.queryDone(true)
             console.log('No nodes to evaluate')
@@ -2673,6 +2676,7 @@ function Query(path,qArr,userCB,sID){
                 for (const rid of rTypes) {
                     let linkSoul = makeSoul({b,t,r:rid,i})
                     get(linkSoul,false,function(linkNode){
+                        self.counter1++
                         toGet--
                         if(linkNode !== undefined){
                             for (const linkAndDir in linkNode) {
@@ -2692,6 +2696,7 @@ function Query(path,qArr,userCB,sID){
                 //technically if this is undirected, I think we should branch our path again, and navigate this dir with both src and trgt ids...
                 //not doing that now, just going to have bidirectional paths show as a single path in results
                 getCell(startID,p,function(nodeid){
+                    self.counter1++
                     toTraverse.push(nodeid)
                     attemptTraversal()
                 },true)
@@ -2798,6 +2803,7 @@ function Query(path,qArr,userCB,sID){
                 evalState(state)
             }else{//have not seen it, go get it.
                 getCell(nodeID,'STATE',function(state){
+                    self.counter1++
                     self.observedStates[nodeID] = state
                     evalState(state)
                 },true,sID)
@@ -2825,6 +2831,7 @@ function Query(path,qArr,userCB,sID){
                 return
             }
             getCell(nodeID,'LABELS',function(curLabelsArr){
+                self.counter1++
                 let addr = toAddress(nodeID,'LABELS')
                 if(sID && !getValue(['addrSubs',addr,'element',el,'labels'],self)){
                     let subID = subThing(addr,checkLocalSub(el,'labels',nodeID),false,{raw:true})
@@ -2868,6 +2875,7 @@ function Query(path,qArr,userCB,sID){
                     return
                 }//?? undefined is basically out of range? node does not have this property? User passed invalid alias?
                 getCell(nodeID,p,function(value){
+                    self.counter1++
                     let addr = toAddress(nodeID,p)
                     if(sID && !getValue(['addrSubs',addr,'element',el,'range'],self)){
                         let subID = subThing(addr,checkLocalSub(el,'range',nodeID),false,{raw:true})
@@ -2906,6 +2914,7 @@ function Query(path,qArr,userCB,sID){
                 }//?? undefined is basically a fail? node does not have this property?
                 
                 getCell(nodeID,p,function(value){//this should only run on first call, so we will make sub here
+                    self.counter1++
                     let addr = toAddress(nodeID,p)
                     if(sID && !getValue(['addrSubs',addr,'element',el,'filter'],self)){
                         let subID = subThing(addr,checkLocalSub(el,'filter',nodeID),false,{raw:true})
@@ -2928,7 +2937,6 @@ function Query(path,qArr,userCB,sID){
         } 
         function localDone(passed){
             //console.log(nodeID, (passed)?'passed':'did not pass')
-
             if(!passed){
                 //console.log(startID, 'did not pass')
                 let wasPassing = getValue([nodeID,'passing'],nodes)
@@ -2981,6 +2989,9 @@ function Query(path,qArr,userCB,sID){
 
 
     this.checkPathState = function(){
+        self.metrics.addThingCount('Build Paths',self.counter1)
+        self.metrics.addTimeSplit('Paths Built')
+        self.counter1 = 0
         if(Object.keys(self.pathsToRemove).length){
             self.resultState = false
             for (const pathStr in self.pathsToRemove) {
@@ -3011,9 +3022,6 @@ function Query(path,qArr,userCB,sID){
 
     this.sortPaths = function(){
         let qParams = self
-        let evalTime = Date.now()
-        self.time.push(evalTime)
-        console.log('Evaluated nodeIDs in',evalTime-self.time[self.time.length-2],'ms')
         let {sortBy,paths,sID} = qParams
         if((!sortBy || self.sortState) && !self.resultState){//no sort needed, but result is incorrect
             console.log('Either no sort value, or the sort is accurate, but needing to build the result')
@@ -3023,9 +3031,7 @@ function Query(path,qArr,userCB,sID){
             console.log('query does not need sorting or building, skipping to return')
             self.queryDone(true)
             return
-        }      
-
-        self.time.push(Date.now())
+        }
         console.log('Getting sort values')
         let [sortUserVar,...sortArgs] = sortBy
         let sortProps = sortArgs.map(x=>x.alias)
@@ -3043,6 +3049,7 @@ function Query(path,qArr,userCB,sID){
                 hasPending = true
                 let p = qParams.aliasToID.id(nodeID,alias)
                 if(p!==undefined){
+                    self.counter1++
                     getCell(nodeID,p,addVal(sortValues,j),true,sID)
                     if(sID){
                         let addr = toAddress(nodeID,p)
@@ -3075,6 +3082,9 @@ function Query(path,qArr,userCB,sID){
             self.sortState = true
             self.resultState = false // we always sort, and always assume the sort has changed the order of the paths in the result
             self.setPathIndices()
+            self.metrics.addTimeSplit('Sorted all paths')
+            self.metrics.addThingCount('getData for sorting',self.counter1)
+            self.counter1 = 0
             self.buildResults()
             function compareSubArr(sortQueries){
                 return function(a,b){
@@ -3100,16 +3110,7 @@ function Query(path,qArr,userCB,sID){
 
     this.buildResults = function(){
         let qParams = self
-        let {sortBy,limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams
-        if(sortBy){
-            console.log('Sorted in:',Date.now()-self.time[self.time.length-1])
-            self.time.push(Date.now())
-        }else{
-            let evalTime = Date.now()
-            console.log('Found all paths in',evalTime-self.time[self.time.length-1],'ms')
-            self.time.push(evalTime)
-        }
-        
+        let {sortBy,limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams       
         //need to build all paths that are within the skip and limit
         //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
 
@@ -3136,11 +3137,23 @@ function Query(path,qArr,userCB,sID){
         for (let i = 0,l = result.length; i < l; i++) {
             let pathArr = result[i].pathArr
             let pathO = result[i] //this is the pathInfoO [pathStr].resultRow
+            result[i] = result[i].resultRow
+            if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
             if(idOnly){
-                result[i] = pathArr
+                for (let j = 0,l = pathArr.length; j < l; j++) {
+                    let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
+                    let nodeID = pathArr[indexInPathArr]
+                    let nodeThing = [nodeID]
+                    Object.defineProperty(nodeThing,'address',{value: []})
+                    result[i][j] = nodeThing
+                    let {props:getProps} = elements[returning[j]]
+                    for (let k = 0; k < getProps.length; k++) {
+                        let {alias} = getProps[k]
+                        let p = qParams.aliasToID.id(nodeID,alias)
+                        nodeThing.address[k] = toAddress(nodeID,p)
+                    }
+                }
             }else{
-                result[i] = result[i].resultRow
-                if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
                 thingsToBuild.push(getPathData(pathO,countO))//get args
             }
         }
@@ -3148,6 +3161,7 @@ function Query(path,qArr,userCB,sID){
             let nodeArr = thingsToBuild[i]
             for (let j = 0, lj=nodeArr.length; j < lj; j++) {
                 const args = nodeArr[j];
+                self.counter1++
                 getCell(...args)//for all ids, find all prop data
             }
         }
@@ -3278,14 +3292,16 @@ function Query(path,qArr,userCB,sID){
         let {sID,userCB} = qParams
         if(['string','number','symbol'].includes(typeof self.sID) && self.sID && self.runs === 1){//is valid type, truthy
             console.log('Setting up query: '+ sID)
-            console.log('Be sure to remove unused queries. Use `gbase.base('+self.base+').kill('+sID+')')
+            console.log('Be sure to remove unused queries. Use `let sub = gbase.base('+self.base+').subscribeQuery(); sub.kill()')
             setValue([self.base,self.sID],qParams,querySubs)
         }
         qParams.state = ''
-        setValue(['result','out','time'],Date.now()-self.startTime,self)
+        self.metrics.addTimeSplit('buildResults/getData')
+        self.metrics.addThingCount('buildResults/getData',self.counter1)
+        self.counter1=0
+        setValue(['result','out','time'],self.metrics.last-self.metrics.start,self)
+        if(!self.noMetrics)self.metrics.log()
         if(returnResult)userCB(qParams.result)
-        console.log('Data Retrieved and Result Built in:',Date.now()-self.time[self.time.length-1])
-        console.log('Total query time:',self.result.out.time)
     }
 
     this.kill = function(){
@@ -3308,6 +3324,45 @@ function Query(path,qArr,userCB,sID){
         }
         console.log(self.base,self.sID,querySubs)
         delete querySubs[self.base][self.sID]
+    }
+
+    function Metrics(){
+        let start = Date.now()
+
+        this.timeTable = {}
+        
+        this.start = start
+        this.last = start
+        this.cumulativeTime = 0
+        let self = this
+        this.addTimeSplit = function(actionCompleted){
+            let now = Date.now()
+            let dif = now-self.last
+            self.cumulativeTime = now - self.start
+            self.last = now
+            let data = {'Split in ms': dif,'Total Time Elapsed':self.cumulativeTime}
+            self.timeTable[actionCompleted]=data
+        }
+        this.thingTable = {}
+        this.totalReq = 0
+        this.addThingCount = function(stepAddingThings,amountOfThings){
+            self.totalReq +=amountOfThings
+            let data = {'Data Points Requested':amountOfThings,'Total Requests':self.totalReq}
+            self.thingTable[stepAddingThings] = data
+        }
+
+        this.log = function(){
+            let tot = self.last-self.start
+            let summaryTab = {'Summary':{'Total Requests':self.totalReq,'Total Time(ms)':tot,'ms/Request':Math.round((tot/self.totalReq)*100)/100}}
+            for (const event in self.timeTable) {
+                const tObj = self.timeTable[event];
+                tObj.percent = (Math.round((tObj['Split in ms']/tot)*10000)/100)+'%'
+            }
+            console.table(self.timeTable)
+            console.table(self.thingTable)
+            console.table(summaryTab)
+        }
+
     }
 }
 
