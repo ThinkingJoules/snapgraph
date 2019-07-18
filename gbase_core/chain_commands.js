@@ -34,7 +34,8 @@ const{getValue,
     IS_CONFIG_SOUL,
     makeEnq,
     toAddress,
-    setMergeValue
+    setMergeValue,
+    removeP
 } = require('./util')
 
 const {relationIndex} = require('../chronicle/chronicle')
@@ -459,9 +460,8 @@ const makenodeGet = (gb,getCell,subThing) => (path,isSub) => (cb,opts)=>{
 }
 const makeaddressGet = (getCell,subThing) => (path,isSub) => (cb,opts)=>{
     try{
-        let {raw} = opts || {}
+        let {raw,subID} = opts || {}
         if(isSub && !subID)subID = Symbol()
-
         let nodeID = removeP(path)
         let {p} = parseSoul(path)
         getCell(nodeID,p,cb,raw,true)
