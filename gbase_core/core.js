@@ -30,11 +30,11 @@ let gbChainState = true
 
 
 //cache
-const cache = {}
+const cache = new Map()
 const upDeps = {}
 const downDeps = {}
 const addrSubs = {} //{[addr]:{sID:{cb,raw}}} //when new data is received gbase will for loop (+Symbol() loop) over object and fire each cb with the new value
-const nodeSubs = {} //{[nodeID]:{sID: {cb, propSubs: [], props: [],raw,partial}}}//this could be a user cb or it might be for a query?
+const nodeSubs = {} //{[nodeID]:{sID: {cb, addrSubs,props,raw,partial}}}//this could be a user cb or it might be for a query?
 /*
 Subscriptions:
     sID = could be anything that is a valid key, including Symbol() (Symbol is used by internal subscription cb, ie; nodeSubs, query)
@@ -42,7 +42,7 @@ Subscriptions:
     raw = boolean, to apply the formatting specified in config, or just return as is.
 
     nodeSubs
-    propSubs = array of Symbol() id's so when this nodeSub is killed, we can remove all of it's propSubs
+    addrSubs = array of killObjects we can remove all of it's propSubs
     props = array of pvals, needed so we can build the address from the nodeID to find and remove all propSubs
     partial = boolean, on change => true = fire callback with only the {[key]:value} that changed; false = fire callback with all specified props each time
 */
@@ -201,7 +201,7 @@ function incomingPutMsg(msg){//wire listener
             for (const p in putObj) {
                 if(p === '_')continue
                 let addr = toAddress(soul,p)
-                let cVal = cache[addr]
+                let cVal = cache.get(addr)
                 if(cVal === undefined)continue //nothing is subscribing to this value yet, ignore
                 const v = putObj[p];
                 if(cVal === v)continue //value is unchanged, do nothing
@@ -278,8 +278,8 @@ const gunToGbase = (gunInstance,baseID) =>{
     config = makeconfig(handleConfigChange)
     performQuery = makeperformQuery(setupQuery)
     typeGet = maketypeGet(gb,setupQuery)
-    nodeGet = makenodeGet(gb,setupQuery)
-    addressGet = makeaddressGet(setupQuery)
+    nodeGet = makenodeGet(gb,getCell,subThing)
+    addressGet = makeaddressGet(getCell,subThing)
 
 
 
@@ -632,7 +632,7 @@ function relationChainOpt(_path){
 }
 
 function propChainOpt(_path, propType, dataType){
-    let out = {_path, config: config(_path)}
+    let out = {_path, config: config(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false)}
     // if(['string','number'].includes(dataType) && propType === 'data'){
     //     out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
     // }
@@ -662,58 +662,26 @@ function subThing (path,cb,sID,opts){
     let isNode = ALL_INSTANCE_NODES.test(path)
     sID = sID || Symbol() //user can pass a truthy sID or we will create an always unique ID
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
-    let sObj
-    if(isNode){
-        let {raw,props,partial} = opts
-        if(!props || props && !Array.isArray(props) || props && Array.isArray(props) && !prop.length)props = getAllActiveProps(gb,path)
-        partial = !!partial
-        sObj.props = props
-        sObj.partial = partial
-        sObj = {cb,raw,props,partial,propSubs:{}}
-        for (const p of props) {
-            let a = toAddress(path,p)
-            let aSub = newSub(a,nodeSubCB(sObj,path,p),false,{raw})
-            sObj.propSubs[p] = aSub
-        }
-        setValue([path,sID],sObj,nodeSubs)
-
-    }else{//address
-        let {raw} = opts
-        sObj = {cb,raw}
-        setValue([path,sID],sObj,addrSubs)
-    }
-    return sID
-    function nodeSubCB(sObj,nodeID,pval){
-        let {cb,raw,props,partial} = sObj
-        return function(v){
-            let o = {[pval]:v}
-            if(partial)cb.call(cb,o)
-            else {
-                let toGet = props.length - 1
-                for (const p of props) {
-                    if(p === pval)continue
-                    getCell(nodeID,p,function(val){
-                        o[p] = val
-                        if(!toGet)cb.call(cb,o)
-                    },raw,true)
-                }
-            }
-        }
-    }
+    let {raw} = opts
+    let sObj = {cb,raw}
+    setValue([path,sID],sObj,addrSubs)
+    return {kill:killSub(path,sID)}     
 }
 function killSub (path,sID){
-    //path must be a nodeID or and address, nothing else
-    let isNode = ALL_INSTANCE_NODES.test(path)
-    if(isNode){
-        let {propSubs} = getValue([path,sID],nodeSubs) || {}
-        for (const addr in propSubs) {
-            const sID = propSubs[addr];
-            killSub(addr,sID)
+    return function(){
+        //path must be a nodeID or and address, nothing else
+        let isNode = ALL_INSTANCE_NODES.test(path)
+        if(isNode){
+            let {addrSubs} = getValue([path,sID],nodeSubs) || {}
+            for (const sub of addrSubs) {
+                sub.kill()
+            }
+            delete nodeSubs[path][sID]
+        }else{//address
+            delete addrSubs[path][sID]
         }
-        delete nodeSubs[path][sID]
-    }else{//address
-        delete addrSubs[path][sID]
     }
+    
 }
 
 
@@ -763,55 +731,19 @@ function handleCacheDep(nodeID, p, val){
         if(oldDep) delete downDeps[address]
     }
 }
-function setupSub(soul, p){ //deprecated, have wire listener and new sub mgmt
-    let sname = soul+'+'+p
-    if(gunSubs[sname])return
-    let {b,t,r} = parseSoul(soul)
-    let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
-
-    gun.get(soul).get(p).on(function(value){
-        let toCache = value
-        if(dataType === 'unorderedSet'){//this will be a full object
-            let data = JSON.parse(JSON.stringify(value))
-            let links = []
-            for (const key in data) {
-                if(key === '_')continue
-                const boolean = data[key];
-                if (boolean) {//if current link
-                    links.push(key) 
-                }
-            }
-            toCache = links
-        }else if(dataType = 'array'){
-            try {
-                toCache = JSON.parse(value)
-                for (let i = 0; i < toCache.length; i++) {
-                    const el = toCache[i];
-                    if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
-                        toCache[i] = new Date(el)
-                    }
-                }
-            } catch (error) {
-                // leave as is...?
-            }
-        }
-        if(toCache === undefined)toCache = null
-        sendToCache(soul,p,toCache)//needs to handle object assigning/creation and prop deleting
-    }) 
-    gunSubs[sname] = true
-}
 function sendToCache(nodeID, p, value){
     let newEnq = handleCacheDep(nodeID,p,value)//will get deps correct so we can return proper data to buffer
     let address = toAddress(nodeID,p)
-    let v = cache[address]//if it is inherited we want the value to go out to buffer
+    let v = cache.get(address)//if it is inherited we want the value to go out to buffer
     let from = address
     while (isEnq(v)) {
         let lookup = isEnq(v)
-        v = cache[lookup]  
+        v = cache.get(lookup)
         from = lookup
     }
+
     if(newEnq || (from === address && value !== v)){//this is some sort of new/changed value
-        cache[address] = value//should fire the watch cb
+        cache.set(address,value)//should fire the watch cb
         handlePropDataChange()
         return
     }
@@ -834,270 +766,167 @@ function sendToCache(nodeID, p, value){
         
     }
 }
-function FULLgetCell(nodeID,p,cb,raw,addSub){
-    let start = Date.now()
-    //will return the inheritted value if not found on own node
-    raw = !!raw //if it is true, we skip the formatting
-    cb = (cb instanceof Function && cb) || function(){}
-    let {b,t,r} = parseSoul(nodeID)
-    let propPath = makeSoul({b,t,r,p})
-    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
+let getBuffer = {}
+let getBufferState = true
+function getCell(nodeID,p,cb,raw,addSub){
+    //need to store all the params in the 
+    // buffer should be //Map{nodeID: Map{p:[]}}
     let address = toAddress(nodeID,p)
-    let cVal = cache[address]
+    let cVal = cache.get(address)
     let from = address
     if(cVal !== undefined){
         while (isEnq(cVal)) {
             let lookup = isEnq(cVal)
-            cVal = cache[lookup]  
+            cVal = cache.get(lookup)
             from = lookup
         }
-        if(!raw)cVal = formatData(format,propType,dataType,cVal)
-        cb.call(this,cVal, from)
-        console.log('getCell,cache in:',Date.now()-start)
+        if(cVal !== undefined){
+            let fromN = removeP(from)
+            let {p} = parseSoul(from)
+            returnGetValue(fromN,p,cVal,cb,raw,addSub)
+            //console.log('getCell,cache in:',Date.now()-start)
+            return cVal //for using getCell without cb, assuming data is in cache
+        }
+    }
+
+    //only runs the following when needing network request
+    if(getBufferState){
+        getBufferState = false
+        setTimeout(routeGetBuffer,1)
+    }
+    let args = [cb,raw,addSub]
+    if(!getBuffer[nodeID]){
+        getBuffer[nodeID] = new Map([[p,[args]]])
         return
     }
-    getData(nodeID,p)
-    function getData(soul,pval,cb,raw,addSub){
-        let {b,t,r} = parseSoul(soul)
-        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
-        if(dataType === 'unorderedSet'){
-            let addr = toAddress(soul,pval)
-            gun.get(addr).once(function(val){//check for existence only
-                //eve.off()
-                //let val = msg.put
-                if(addSub)setupSub(soul,pval)
-                if([null,undefined].includes(val)){
-                    if(addSub)sendToCache(soul,pval,null)
-                    cb.call(this,null,soul)
-                    console.log('getCell,NULL in:',Date.now()-start)
-    
-                    return
-                }
-                //so we have data on this soul and this should be returned to the cb
-                if(dataType === 'unorderedSet'){//this will be a full object
-                    let data = JSON.parse(JSON.stringify(val))
-                    let setVals = []
-                    for (const key in data) {
-                        if(key === '_')continue
-                        const boolean = data[key];
-                        if (boolean) {//if currently part of the set
-                            setVals.push(key) 
-                        }
-                    }
-                    if(propType === 'labels')setVals.unshift(t)
-                    val = setVals
-                }
-                if(addSub)sendToCache(soul,pval,val)
-                if(!raw)val = formatData(format,propType,dataType,val)
-                cb.call(this,val, soul)
-                console.log('getCell,DATA in:',Date.now()-start)
-    
-            })
+    let argArr = getBuffer[nodeID].get(p)
+    if(!argArr)getBuffer[nodeID].set(p,[args])
+    else argArr.push(args)
+}
+function routeGetBuffer(){
+    let b = Object.assign({},getBuffer)
+    getBuffer = {}
+    getBufferState = true
+    for (const nodeID in b) {
+        if(b[nodeID].size > 10){
+            console.log('FULL')
+            retrieveNode(nodeID,b[nodeID])
         }else{
-            gun.get(soul).once(function(node){//check for existence only
-                //eve.off()
-                //let val = msg.put
-                let val = node[pval]
-                if(addSub)setupSub(soul,pval)
-                if([null,undefined].includes(val)){
-                    if(addSub)sendToCache(soul,pval,null)
-                    cb.call(this,null,soul)
-                    console.log('getCell,NULL in:',Date.now()-start)
-    
-                    return
-                }else if(isEnq(val)){//will keep getting inherited props until we get to data.
-                    let fromSoul = parseSoul(val.slice(1))
-                    let fromP = fromSoul.p
-                    delete fromSoul.p
-                    delete fromSoul['.']
-                    //sendToCache(soul,pval,val)//put the lookup in cache
-                    getData(makeSoul(fromSoul),fromP)
-                    return
-                }
-                //so we have data on this soul and this should be returned to the cb
-                if(dataType = 'array'){
-                    try {
-                        val = JSON.parse(val)
-                        for (let i = 0; i < val.length; i++) {
-                            const el = val[i];
-                            if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
-                                val[i] = new Date(el)
-                            }
-                        }
-                    } catch (error) {
-                        // leave as is..
-                    }
-                }
-                if(addSub)sendToCache(soul,pval,val)
-                if(!raw)val = formatData(format,propType,dataType,val)
-                cb.call(this,val, soul)
-                console.log('getCell,DATA in:',Date.now()-start)
-    
-            })
+            console.log('PROP')
+            for (const [p,argsArr] of b[nodeID].entries()) {
+                retrieveCell(nodeID,p,argsArr)
+            }
         }
-        
     }
 }
-function getCell(nodeID,p,cb,raw,addSub){
+function retrieveCell(nodeID,p,argsArr,cb){
     //let start = Date.now()
     //will return the inheritted value if not found on own node
-    raw = !!raw //if it is true, we skip the formatting
-    cb = (cb instanceof Function && cb) || function(){}
-    let {b,t,r} = parseSoul(nodeID)
-    let propPath = makeSoul({b,t,r,p})
-    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
-    let address = toAddress(nodeID,p)
-    let cVal = cache[address]
-    let from = address
-    if(cVal !== undefined){
-        while (isEnq(cVal)) {
-            let lookup = isEnq(cVal)
-            cVal = cache[lookup]  
-            from = lookup
-        }
-        if(!raw)cVal = formatData(format,propType,dataType,cVal)
-        cb.call(this,cVal, from)
-        //console.log('getCell,cache in:',Date.now()-start)
-        return cVal //for using getCell without cb, assuming data is in cache
-    }
-    getData(nodeID,p)
-    function getData(soul,pval){
-        let {b,t,r} = parseSoul(soul)
-        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
-        gun._.on('out', {
-            get: {'#':soul,'.':pval},
-            '#': gun._.ask(function(msg){
-                let val = msg.put && msg.put[soul] && msg.put[soul][pval]
-                if([null,undefined].includes(val)){
-                    if(addSub)sendToCache(soul,pval,null)
-                    cb.call(this,null,soul)
-                    //console.log('getCell,NULL in:',Date.now()-start)
-    
-                    return
-                }else if(isEnq(val)){//will keep getting inherited props until we get to data.
-                    if(addSub)sendToCache(soul,pval,val)
-                    let fromSoul = parseSoul(val.slice(1))
-                    let fromP = fromSoul.p
-                    delete fromSoul.p
-                    delete fromSoul['.']
-                    //sendToCache(soul,pval,val)//put the lookup in cache
-                    getData(makeSoul(fromSoul),fromP)
-                    return
-                }
-                //so we have data on this soul and this should be returned to the cb
-                if(dataType === 'unorderedSet'){//this will be a full object
-                    let data = JSON.parse(JSON.stringify(val))
-                    let setVals = []
-                    for (const key in data) {
-                        if(key === '_')continue
-                        const boolean = data[key];
-                        if (boolean) {//if currently part of the set
-                            setVals.push(key) 
-                        }
-                    }
-                    if(propType === 'labels')setVals.unshift(t)
-                    val = setVals
-                }else if(dataType = 'array'){
-                    try {
-                        val = JSON.parse(val)
-                        for (let i = 0; i < val.length; i++) {
-                            const el = val[i];
-                            if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
-                                val[i] = new Date(el)
-                            }
-                        }
-                    } catch (error) {
-                        // leave as is..
-                    }
-                }
-                if(addSub)sendToCache(soul,pval,val)
-                if(!raw)val = formatData(format,propType,dataType,val)
-                cb.call(this,val, soul)
-                //console.log('getCell,DATA in:',Date.now()-start)
-    
-            })
-        })
-
-    }
-}
-function ORIGgetCell(nodeID,p,cb,raw,addSub){
-    let start = Date.now()
-    //will return the inheritted value if not found on own node
-    raw = !!raw //if it is true, we skip the formatting
-    cb = (cb instanceof Function && cb) || function(){}
-    let {b,t,r} = parseSoul(nodeID)
-    let propPath = makeSoul({b,t,r,p})
-    let {propType, dataType, format} = getValue(configPathFromChainPath(propPath),gb)
-    let address = toAddress(nodeID,p)
-    let cVal = cache[address]
-    let from = address
-    if(cVal !== undefined){
-        while (isEnq(cVal)) {
-            let lookup = isEnq(cVal)
-            cVal = cache[lookup]  
-            from = lookup
-        }
-        if(!raw)cVal = formatData(format,propType,dataType,cVal)
-        cb.call(this,cVal, from)
-        console.log('getCell,cache in:',Date.now()-start)
-        return
-    }
-    getData(nodeID,p)
-    function getData(soul,pval){
-        let {b,t,r} = parseSoul(soul)
-        let {propType,dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:pval})),gb)
-        gun.get(soul).get(pval, function(msg,eve){//check for existence only
-            eve.off()
-            let val = msg.put
-            if(addSub)setupSub(soul,pval)
-            if([null,undefined].includes(val)){
-                if(addSub)sendToCache(soul,pval,null)
-                cb.call(this,null,soul)
-                console.log('getCell,NULL in:',Date.now()-start)
-
-                return
-            }else if(isEnq(val)){//will keep getting inherited props until we get to data.
+    gun._.on('out', {
+        get: {'#':nodeID,'.':p},
+        '#': gun._.ask(function(msg){
+            let val = msg.put && msg.put[nodeID] && msg.put[nodeID][p]
+            if(isEnq(val)){//will keep getting inherited props until we get to data.
+                sendToCache(nodeID,p,val)
                 let fromSoul = parseSoul(val.slice(1))
                 let fromP = fromSoul.p
                 delete fromSoul.p
                 delete fromSoul['.']
                 //sendToCache(soul,pval,val)//put the lookup in cache
-                getData(makeSoul(fromSoul),fromP)
-                return
-            }
-            //so we have data on this soul and this should be returned to the cb
-            if(dataType === 'unorderedSet'){//this will be a full object
-                let data = JSON.parse(JSON.stringify(val))
-                let setVals = []
-                for (const key in data) {
-                    if(key === '_')continue
-                    const boolean = data[key];
-                    if (boolean) {//if currently part of the set
-                        setVals.push(key) 
-                    }
+                retrieveCell(makeSoul(fromSoul),fromP,argsArr,cb)
+            }else{
+                if(cb){
+                    cb(val)
+                }else{
+                    handleGetValue(nodeID,p,val,argsArr)
                 }
-                if(propType === 'labels')setVals.unshift(t)
-                val = setVals
-            }else if(dataType = 'array'){
-                try {
-                    val = JSON.parse(val)
-                    for (let i = 0; i < val.length; i++) {
-                        const el = val[i];
-                        if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
-                            val[i] = new Date(el)
-                        }
-                    }
-                } catch (error) {
-                    // leave as is..
-                }
-            }
-            if(addSub)sendToCache(soul,pval,val)
-            if(!raw)val = formatData(format,propType,dataType,val)
-            cb.call(this,val, soul)
-            console.log('getCell,DATA in:',Date.now()-start)
 
+            }
         })
+    })
+}
+function retrieveNode(nodeID,pMap){
+    let expectedProps = getAllActiveProps(gb,nodeID,{hidden:true,archived:true,deleted:true}).length
+    let collector = new Map()
+    let timeout = setTimeout(nodeReceived,5000)//wait 5 seconds?
+    gun._.on('out', {
+        get: {'#':nodeID},
+        '#': gun._.ask(function(msg){
+            let o = msg.put && msg.put[nodeID]
+            for (const key in o) {
+                if (key === '_')continue
+                const val = o[key];
+                collector.set(key,val)
+            }
+            if(collector.size > expectedProps*0.8)nodeReceived() //wait for 80% of the props?? in case our expected count isn't perfect?
+        })
+    })
+    function nodeReceived(){
+        clearTimeout(timeout)
+        for (const [p,argsArr] of pMap.entries()) {
+            let val = collector.get(p)
+            if(isEnq(val)){//will keep getting inherited props until we get to data.
+                sendToCache(nodeID,p,val)
+                let fromSoul = parseSoul(val.slice(1))
+                let fromP = fromSoul.p
+                delete fromSoul.p
+                delete fromSoul['.']
+                //sendToCache(soul,pval,val)//put the lookup in cache
+                retrieveCell(makeSoul(fromSoul),fromP,false,function(val){
+                    handleGetValue(nodeID,p,val,argsArr)
+                })
+            }else{
+                handleGetValue(nodeID,p,val,argsArr)
+            }   
+        } 
     }
+}
+function handleGetValue(nodeID,p,val,argsArr){
+    for (let i = 0,l = argsArr.length; i < l; i++) {
+        const args = argsArr[i];
+        returnGetValue(nodeID,p,val,...args)   
+    }
+}
+function returnGetValue(fromSoul,fromP,val,cb,raw,addSub){
+    let {b,t,r} = parseSoul(fromSoul)
+    let {propType,dataType,format} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:fromP})),gb)
+    if([null,undefined].includes(val)){
+        if(addSub)sendToCache(fromSoul,fromP,null)
+        cb.call(cb,null,fromSoul)
+        //console.log('getCell,NULL in:',Date.now()-start)
+        return
+    }
+    //so we have data on this soul and this should be returned to the cb
+    if(dataType === 'unorderedSet'){//this will be a full object
+        let data = JSON.parse(JSON.stringify(val))
+        let setVals = []
+        for (const key in data) {
+            if(key === '_')continue
+            const boolean = data[key];
+            if (boolean) {//if currently part of the set
+                setVals.push(key) 
+            }
+        }
+        if(propType === 'labels')setVals.unshift(t)
+        val = setVals
+    }else if(dataType = 'array'){
+        try {
+            val = JSON.parse(val)
+            for (let i = 0; i < val.length; i++) {
+                const el = val[i];
+                if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                    val[i] = new Date(el)
+                }
+            }
+        } catch (error) {
+            // leave as is..
+        }
+    }
+    if(addSub)sendToCache(fromSoul,fromP,val)
+    if(!raw)val = formatData(format,propType,dataType,val)
+    cb.call(cb,val, fromSoul)
+    //console.log('getCell,DATA in:',Date.now()-start)
+
 }
 
 
@@ -1199,7 +1028,7 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
     if(!Array.isArray(queryArr) || !queryArr.length)throw new Error('Must provide arguments in the query Array')
     if(!queryArr.filter(x => x.CYPHER)[0])throw new Error('Must specify a single CYPHER pattern to complete the query!')
     if(!queryArr.filter(x => x.RETURN)[0] && !queryArr.filter(x => x.EXPAND)[0])throw new Error('Must specify a single RETURN or EXPAND statement in your query!')
-    if(isSub && !sVal)throw new Error('Must give this subscriptions an ID so you can reference it again to cancel it')
+    if(isSub && !['string','number','symbol'].includes(typeof sVal) && !sVal)throw new Error('Must give a valid subID. Must be a truthy value that is either a string, number, or symbol')
     let qParameters = new Query(path,queryArr,cb,sVal)
     if(isSub){
         let {b} = parseSoul(path)
@@ -1220,6 +1049,7 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
         }
     }
     qParameters.query()
+    return {kill:qParameters.kill}
 }
 function Query(path,qArr,userCB,sID){
     let {b} = parseSoul(path)
@@ -1665,7 +1495,7 @@ function Query(path,qArr,userCB,sID){
                     props: [],//can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
                     propsByID:false,//only for returnAs {}, false={'Prop Alias': propValue}, true={pval: propValue} >> also applies for include
                     noID: false,//on returnAs object> object.ID = NodeID
-                    noAdress: false,//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
+                    noAddress: false,//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
                     raw: false,//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
                     rawLinks:false//for linked columns, it will attempt to replace with the HumanID
                     idOnly: false //for list building.
@@ -2963,12 +2793,6 @@ function Query(path,qArr,userCB,sID){
                 else checkRange()
                 return
             }
-            
-            let addr = toAddress(nodeID,'STATE')
-            if(sID && !getValue(['addrSubs',addr,el,'state'],self)){
-                let subID = subThing(addr,checkLocalSub(el,'state',nodeID),false,{raw:true})
-                setValue(['addrSubs',addr,el,'state'],subID,self)
-            }
             if(observedStates[nodeID]){
                 let state = observedStates[nodeID]
                 evalState(state)
@@ -3002,9 +2826,9 @@ function Query(path,qArr,userCB,sID){
             }
             getCell(nodeID,'LABELS',function(curLabelsArr){
                 let addr = toAddress(nodeID,'LABELS')
-                if(sID && !getValue(['addrSubs',addr,el,'labels'],self)){
+                if(sID && !getValue(['addrSubs',addr,'element',el,'labels'],self)){
                     let subID = subThing(addr,checkLocalSub(el,'labels',nodeID),false,{raw:true})
-                    setValue(['addrSubs',addr,el,'labels'],subID,self)
+                    setValue(['addrSubs',addr,'element',el,'labels'],subID,self)
                 }
                 for (const andLabel of thing.labels) {//ALL labels it must have
                     if(!curLabelsArr.includes(andLabel)){
@@ -3045,9 +2869,9 @@ function Query(path,qArr,userCB,sID){
                 }//?? undefined is basically out of range? node does not have this property? User passed invalid alias?
                 getCell(nodeID,p,function(value){
                     let addr = toAddress(nodeID,p)
-                    if(sID && !getValue(['addrSubs',addr,el,'range'],self)){
+                    if(sID && !getValue(['addrSubs',addr,'element',el,'range'],self)){
                         let subID = subThing(addr,checkLocalSub(el,'range',nodeID),false,{raw:true})
-                        setValue(['addrSubs',addr,el,'range'],subID,self)
+                        setValue(['addrSubs',addr,'element',el,'range'],subID,self)
                     }
                     values.push([from,value,to])
                     toGet--
@@ -3083,9 +2907,9 @@ function Query(path,qArr,userCB,sID){
                 
                 getCell(nodeID,p,function(value){//this should only run on first call, so we will make sub here
                     let addr = toAddress(nodeID,p)
-                    if(sID && !getValue(['addrSubs',addr,el,'filter'],self)){
+                    if(sID && !getValue(['addrSubs',addr,'element',el,'filter'],self)){
                         let subID = subThing(addr,checkLocalSub(el,'filter',nodeID),false,{raw:true})
-                        setValue(['addrSubs',addr,el,'filter'],subID,self)
+                        setValue(['addrSubs',addr,'element',el,'filter'],subID,self)
                     }
                     values[alias] = value
                     toGet--
@@ -3336,7 +3160,7 @@ function Query(path,qArr,userCB,sID){
                 let nodeID = pathArr[indexInPathArr]
                 resultRow[i] = newThing(returning[i],nodeID) //will return [] || {} w/metadata according to params
                 //return [resultRow[i],nodeID,returning[i],pathO[0],counter]
-                return findAllPropsNeeded(resultRow[i],nodeID,returning[i],pathO[0],counter)
+                return findAllPropsNeeded(i,resultRow[i],nodeID,returning[i],pathO[0],counter)
             }
         }
         function newThing(el,id){
@@ -3353,7 +3177,7 @@ function Query(path,qArr,userCB,sID){
             return nodeObj
         }
 
-        function findAllPropsNeeded(nodeObj,nodeID,userVar,pathStr,counter){
+        function findAllPropsNeeded(pathIdx,nodeObj,nodeID,userVar,pathStr,counter){
             let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[userVar]
             let allPropsToGet = []
             for (let i = 0, l = getProps.length; i < l; i++) {
@@ -3366,9 +3190,9 @@ function Query(path,qArr,userCB,sID){
                     counter.count += 1
                     //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
                     let addr = toAddress(nodeID,p)
-                    if(sID && !getValue(['addrSubs',addr,'paths',pathStr],self)){
+                    if(sID && !getValue(['addrSubs',addr,'paths',pathStr,pathIdx],self)){
                         let subID = subThing(addr,resultSub(nodeObj,propKey,rawLabels,p),false,{raw})
-                        setValue(['addrSubs',addr,'paths',pathStr],subID,self)
+                        setValue(['addrSubs',addr,'paths',pathStr,pathIdx],subID,self)
                     }
                 }else{
                     //what to do? neo returns `null`
@@ -3397,7 +3221,6 @@ function Query(path,qArr,userCB,sID){
                     }
                     counter.count -=1
                     if(!counter.count){
-                        console.log('all data retrieved',counter.count)
                         self.queryDone(true)
                     }
                 }
@@ -3453,17 +3276,39 @@ function Query(path,qArr,userCB,sID){
         //setup up subscription, fire user cb
         let qParams = self
         let {sID,userCB} = qParams
-        if(sID !== undefined && self.runs === 1){
+        if(['string','number','symbol'].includes(typeof self.sID) && self.sID && self.runs === 1){//is valid type, truthy
             console.log('Setting up query: '+ sID)
             console.log('Be sure to remove unused queries. Use `gbase.base('+self.base+').kill('+sID+')')
-            setValue([b,sID],qParams,querySubs)
+            setValue([self.base,self.sID],qParams,querySubs)
         }
         qParams.state = ''
         setValue(['result','out','time'],Date.now()-self.startTime,self)
         if(returnResult)userCB(qParams.result)
-        console.log('Result Built in:',Date.now()-self.time[self.time.length-1])
+        console.log('Data Retrieved and Result Built in:',Date.now()-self.time[self.time.length-1])
+        console.log('Total query time:',self.result.out.time)
     }
 
+    this.kill = function(){
+        //{[addr]:{sort:sID,element:{[userVar]:{state:sID,labels:sID,range: sID,filter:sID}},paths:{[pathStr]:{[jval]:sID}}}}
+        for (const addr in self.addrSubs) {
+            if (self.addrSubs.hasOwnProperty(addr)) {
+                const {sort,element,paths} = self.addrSubs[addr];
+                if(sort)sort.kill()
+                for (const userVar in element) {
+                    for (const type in element[userVar]) {
+                        element[userVar][type].kill()
+                    }
+                }
+                for (const path in paths) {
+                    for (const j in paths[path]) {
+                        paths[path][j].kill()
+                    }
+                }
+            }
+        }
+        console.log(self.base,self.sID,querySubs)
+        delete querySubs[self.base][self.sID]
+    }
 }
 
 //PERMISSIONS

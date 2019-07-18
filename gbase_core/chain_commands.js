@@ -352,24 +352,24 @@ const makeperformQuery = (setupQuery) => (path,isSub) => (cb, queryArr,subID) =>
     try{
         if(isSub && !subID)throw new Error('Must specify a subscription ID!')
         queryArr = queryArr || []
-        setupQuery(path,queryArr,cb,true,subID)
+        let sub = setupQuery(path,queryArr,cb,true,subID)
+        return sub
     }catch(e){
         console.warn(e)
         return e
     }
 }
-const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
+const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,opts)=>{
     try{
-        let {b,t,r} = parseSoul(path)
+        let {b,t,r,p} = parseSoul(path)
         let type = t || r
-        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAdress,raw,subID} = opts || {}
+        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props} = opts || {}
 
         if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-
         //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
         skip = skip || 0
         limit = limit || Infinity
-        props = props || getAllActiveProps(gb,path)
+        props = (p) ? [p] : props || getAllActiveProps(gb,path)
         sortBy = sortBy || []
         let ret = {RETURN:[]}
         let retArg = ret.RETURN
@@ -377,7 +377,7 @@ const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
         let match = {CYPHER:[matchStr]}
 
         let retFirstArg = {limit,skip,idOnly}
-        let retSecArg = {x:{returnAsArray,propsByID,noID,noAdress,raw}}
+        let retSecArg = {x:{returnAsArray,propsByID,noID,noAddress,raw}}
 
         if(sortBy.length){
             retFirstArg.sortBy = ['x']
@@ -403,84 +403,70 @@ const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
 
         let queryArr = [match,ret]
         console.log(propArr)
-        setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
+        let sub = setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
+        return sub
     }catch(e){
         console.warn(e)
         return e
     }
 }
-const makenodeGet = (gb,setupQuery) => (path,isSub) => (cb,props,opts)=>{
+const makenodeGet = (gb,getCell,subThing) => (path,isSub) => (cb,opts)=>{
     try{
-        let {b,t,r,i} = parseSoul(path)
-        let type = t || r
-        let {returnAsArray,propsByID,noID,noAdress,raw,subID} = opts || {}
-
-        if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-        
+        let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
+        if(isSub && !subID)subID = Symbol()
         props = props || getAllActiveProps(gb,path)
-        let ret = {RETURN:[]}
-        let retArg = ret.RETURN
-
-        //Match
-        let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
-        let match = {CYPHER:[matchStr]}
-
-        //return
-        let retFirstArg = {}
-        let retSecArg = {x:{returnAsArray,propsByID,noID,noAdress,raw}}
-        retArg.push(retFirstArg)
-        let propArr = []
-        let withP = makeSoul({b,t,r,p:true})
-        for (const prop of props) {
-            let propID = findID(gb,prop,withP)
-            propArr.push(propID)
+        let nodeObj
+        if(returnAsArray){
+            nodeObj = []
+            nodeObj.length = props.length
+        }else{
+            nodeObj = {}
         }
-        retSecArg.x.props = propArr
-        retArg.push(retSecArg)
-
-        //filter
-        let filter = {FILTER:['x','ID('+path+')']}
-
-        let queryArr = [match,ret,filter]
-        setupQuery(path,queryArr,cb,!!isSub,subID)
+        if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
+        if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+        let allSubs = []
+        let toGet = props.length
+        for (let i = 0,l=props.length; i < l; i++) {
+            const p = props[i];
+            let property
+            if(returnAsArray){
+                property = i
+            }else{
+                property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
+            }
+            let addr = toAddress(path,p)
+            getCell(path,p,function(val){
+                nodeObj[property] = val
+                if(!noAddress)nodeObj.address[property] = addr
+                toGet--
+                if(!toGet)cb.call(cb,nodeObj)
+            },raw,true)
+            let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
+            allSubs.push(addrsub)
+        }
+        return {kill:function(){allSubs.map(x => x.kill())}}
     }catch(e){
         console.warn(e)
         return e
     }
+    function nodeSubCB(obj,keyAs,cb,partial){
+        return function(v){
+            obj[keyAs] = v
+            if(partial && !returnAsArray)cb.call(cb,{[keyAs]:v})
+            else cb.call(cb,obj)
+        }
+    }
 }
-const makeaddressGet = (setupQuery) => (path,isSub) => (cb,opts)=>{
+const makeaddressGet = (getCell,subThing) => (path,isSub) => (cb,opts)=>{
     try{
-        let soulObj = parseSoul(path)
-        let {b,t,r,i,p} = soulObj
-        let type = t || r
-        let {returnAsArray,propsByID,noID,noAdress,raw,subID} = opts || {}
+        let {raw} = opts || {}
+        if(isSub && !subID)subID = Symbol()
 
-        if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-        
-        let props = [p]
-        let ret = {RETURN:[]}
-        let retArg = ret.RETURN
-
-        //Match
-        let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
-        let match = {CYPHER:[matchStr]}
-
-        //return
-        let retFirstArg = {}
-        let retSecArg = {x:{returnAsArray,propsByID,noID,noAdress,raw}}
-        retArg.push(retFirstArg)
-        
-        retSecArg.x.props = props
-        retArg.push(retSecArg)
-
-        //filter
-        delete soulObj.p
-        delete soulObj['.']
-        let nodePath = makeSoul(soulObj)
-        let filter = {FILTER:['x','ID('+nodePath+')']}
-
-        let queryArr = [match,ret,filter]
-        setupQuery(path,queryArr,cb,!!isSub,subID)
+        let nodeID = removeP(path)
+        let {p} = parseSoul(path)
+        getCell(nodeID,p,cb,raw,true)
+        let addrsub = subThing(path,cb,false,{raw})
+        return addrsub
     }catch(e){
         console.warn(e)
         return e

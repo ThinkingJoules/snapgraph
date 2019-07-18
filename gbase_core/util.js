@@ -1526,13 +1526,14 @@ function hasPropType(gb, tPathOrPpath, type){
 function getAllActiveProps(gb, tpath,opts){
     let {b,t,r} = parseSoul(tpath)
     let {props} = getValue(configPathFromChainPath(makeSoul({b,t,r})), gb)
-    let {hidden,archived} = opts || {}
+    let {hidden,archived,deleted} = opts || {}
     hidden = !!hidden
     archived = !!archived
+    deleted = !!deleted
     let out = []
     for (const p in props) {
-        const {hidden:h,archived:a,deleted,sortval} = props[p];
-        if ((h && hidden || !h) && (a && archived || !a) && !deleted) {
+        const {hidden:h,archived:a,deleted:d,sortval} = props[p];
+        if ((h && hidden || !h) && (a && archived || !a) && (d && deleted || !d)) {
             out[sortval] = p
         }
     }
