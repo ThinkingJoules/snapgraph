@@ -95,8 +95,14 @@ const {
     IS_STATE_INDEX,
     removeP,
     removeFromArr,
-    naturalCompare
+    naturalCompare,
+    IS_CONFIG,
+    IS_CONFIG_SOUL,
+    gbGet:rawgbGet,
+    ALL_ADDRESSES
 } = require('./util.js')
+const makegbGet = rawgbGet(gb)
+let gbGet
 
 
 const {makehandleConfigChange,
@@ -130,7 +136,8 @@ const {makenewBase,
     makerelatesTo,
     maketypeGet,
     makenodeGet,
-    makeaddressGet
+    makeaddressGet,
+    makekill
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
@@ -140,6 +147,7 @@ const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgunsub = makeshowgunsub(gunSubs)
 
+
 const {makesolve,
     findTruth,
     parseTruthStr,
@@ -147,7 +155,7 @@ const {makesolve,
     regexVar,
     evaluateAllFN
 } = require('../function_lib/function_utils');
-const solve = makesolve(gb, getCell)
+let solve
 
 
 const {timeIndex,
@@ -164,6 +172,9 @@ let qIndex,tIndex,tLog
 const querySubs = {}
 let nodeStatesBuffer = {}
 let stateBuffer = true
+let gbBases = []
+const kill = makekill(querySubs,killSub)
+
 function dumpStateChanges(){
     let buffer = Object.assign({}, nodeStatesBuffer)
     nodeStatesBuffer = {}
@@ -187,7 +198,7 @@ function incomingPutMsg(msg){//wire listener
     if(msg && msg.put){
         let soul = Object.keys(msg.put)[0]
         let putObj = msg.put[soul]
-        if(IS_STATE_INDEX.test(soul)){
+        if(IS_STATE_INDEX.test(soul)){//watching for a change on an index
             for (const nodeID in putObj) {
                 let {b} = parseSoul(nodeID)
                 const state = putObj[nodeID];
@@ -197,7 +208,7 @@ function incomingPutMsg(msg){//wire listener
                 stateBuffer = !stateBuffer
                 setTimeout(dumpStateChanges,50)
             }
-        }else if(ALL_INSTANCE_NODES.test(soul) && !msg['@']){
+        }else if(ALL_INSTANCE_NODES.test(soul) && !msg['@']){//watching for incoming data
             for (const p in putObj) {
                 if(p === '_')continue
                 let addr = toAddress(soul,p)
@@ -211,6 +222,47 @@ function incomingPutMsg(msg){//wire listener
 
                 if(isEnq(v))getCell(soul,p,processValue(addr,subs),true,true)//has subs, but value isEnq, get referenced value, then process subs
                 else processValue(addr,subs)(v)//value is a value to return, process subs with value available
+            }
+        }else if(IS_CONFIG_SOUL.test(soul) && !msg['@']){//watching for config updates
+            let type = IS_CONFIG(soul)
+            if(!type)return
+            let {b,t,r} = parseSoul(soul)
+            if(!gbBases.includes(b))return//so we don't load other base configs.
+            let data = JSON.parse(JSON.stringify(putObj))
+            delete data['_']
+            if(type === 'baseConfig'){
+                data.props = {}
+                data.groups = {}
+                data.relations = {}
+                data.labels = {}
+                let configpath = configPathFromSoul(soul)
+                setMergeValue(configpath,data,gb)
+                triggerConfigUpdate(soul)
+            }else if(type === 'typeIndex'){
+                for (const tval in data) {//tval '#' + id || '-'+id
+                    const boolean = data[tval];
+                    let {t,r} = parseSoul(tval)
+                    let path = configPathFromChainPath(makeSoul({b,t,r}))
+                    let current = getValue(path,gb)
+                    if(boolean && !current){//valid things, that is not in gb
+                        setValue(path,{},gb)
+                    }else if(!boolean && current){//deleted but was active, null from gb
+                        setValue(path,null,gb)
+                    }
+                }
+            }else if(type === 'propIndex'){
+                for (const p in data) {
+                    const boolean = data[p];
+                    let path = configPathFromChainPath(makeSoul({b,t,r,p}))
+                    let current = getValue(path,gb)
+                    if(boolean && !current){//valid things, that is not in gb
+                        setValue(path,{},gb)
+                    }else if(!boolean && current){//deleted but was active, null from gb
+                        setValue(path,null,gb)
+                    }
+                }
+            }else if(['thingConfig','propConfig','label'].includes(type)){
+                handleGunConfig(soul)(data)
             }
         }
     }
@@ -232,7 +284,6 @@ function processValue(addr,subs){
                 val = formatData(format,propType,dataType,val)
             }
             cb.call(cb,val)
-
         }
     }
     
@@ -243,42 +294,50 @@ function processValue(addr,subs){
 
 
 
-const gunToGbase = (gunInstance,baseID) =>{
+const gunToGbase = (gunInstance,opts,doneCB) =>{
     gun = gunInstance
-    startGunConfigSubs(baseID)
+    let {bases,full} = opts
+    if(bases !== undefined && !Array.isArray(bases))bases = [bases]//assume the passed a single baseID as a string
+    if(Array.isArray(bases)){
+        for (const baseID of bases) {
+            mountBaseToChain(baseID,full,doneCB)
+        }
+    }
+    gbGet = makegbGet(gun)
     //DI after gunInstance is received from outside
     tLog = timeLog(gun)
     tIndex = timeIndex(gun)
     qIndex = queryIndex(gun)
 
+    solve = makesolve(gbGet, getCell)
 
 
 
     newBase = makenewBase(gun,tLog)
-    newNodeType = makenewNodeType(gun,gb,tLog)
-    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)
-    addProp = makeaddProp(gun,gb,tLog)
+    newNodeType = makenewNodeType(gun,gb,tLog)//new should only need id/alias of current gb
+    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)//new should only need id/alias of current gb
+    addProp = makeaddProp(gun,gb,tLog)//new should only need id/alias of current gb
     
     
-    newNode = makenewNode(gun,gb,getCell,cascade,tLog,tIndex)   
-    newFrom = makenewFrom(gun,gb,getCell,cascade,tLog,tIndex) 
-    edit = makeedit(gun,gb,getCell,cascade,tLog,tIndex)
-    relatesTo = makerelatesTo(gun,gb,getCell,tLog,tIndex)  
-    archive = makearchive(gun,gb,getCell,tLog,tIndex)
-    unarchive = makeunarchive(gun,gb,getCell,tLog,tIndex)
-    deleteNode = makedelete(gun,gb,getCell,tLog,tIndex)
+    newNode = makenewNode(gun,gbGet,getCell,cascade,tLog,tIndex)
+    newFrom = makenewFrom(gun,gbGet,getCell,cascade,tLog,tIndex)
+    edit = makeedit(gun,gbGet,getCell,cascade,tLog,tIndex)
+    relatesTo = makerelatesTo(gun,gbGet,getCell,tLog,tIndex)//  
+    archive = makearchive(gun,gbGet,getCell,tLog,tIndex)//
+    unarchive = makeunarchive(gun,gbGet,getCell,tLog,tIndex)//
+    deleteNode = makedelete(gun,gbGet,getCell,tLog,tIndex)//
     nullValue = makenullValue(gun)
 
 
   
 
-    importData = makeimportData(gun, gb)
-    handleConfigChange = makehandleConfigChange(gun,gb,getCell,cascade,solve,tLog,tIndex)
+    importData = makeimportData(gun, gbGet)//
+    handleConfigChange = makehandleConfigChange(gun,gbGet,getCell,cascade,solve,tLog,tIndex)//
     config = makeconfig(handleConfigChange)
-    performQuery = makeperformQuery(setupQuery)
-    typeGet = maketypeGet(gb,setupQuery)
-    nodeGet = makenodeGet(gb,getCell,subThing)
-    addressGet = makeaddressGet(getCell,subThing)
+    performQuery = makeperformQuery(gbGet,setupQuery)
+    typeGet = maketypeGet(gbGet,setupQuery)
+    nodeGet = makenodeGet(gbGet,getCell,subThing,nodeSubs)
+    addressGet = makeaddressGet(gbGet,getCell,subThing)
 
 
 
@@ -337,119 +396,130 @@ const gunToGbase = (gunInstance,baseID) =>{
 ---GUN SOULS---
 see ./util soulSchema
 */
-function startGunConfigSubs(baseID){
-    if(gun){
-        gun.get('GBase').on(function(gundata, id){
-            let data = Gun.obj.copy(gundata)
-            delete data['_']
-            for (const key in data) {
-                if (key === baseID) {
-                    let baseconfig = makeSoul({b:key,'%':true})
-                    gun.get(baseconfig).on(function(gundata, id){
-                        gunSubs[baseconfig] = true
-                        let data = Gun.obj.copy(gundata)
-                        delete data['_']
-                        data.props = {}
-                        data.groups = {}
-                        data.relations = {}
-                        data.labels = {}
-                        let configpath = configPathFromSoul(id)
-                        setMergeValue(configpath,data,gb)
-                        setupTypesSubs(baseID)
-                        //setupPropSubs(key)
-                        triggerConfigUpdate(id)
-                    })
 
-                    let baseGrps = makeSoul({b:key,g:true})
-                    gun.get(baseGrps).on(function(gundata, id){
-                        gunSubs[baseGrps] = true
-                        let data = Gun.obj.copy(gundata)
-                        delete data['_']
-                        let configpath = configPathFromSoul(id)
-                        let flip = {}
-                        for (const id in data) {
-                            const alias = data[id];
-                            flip[alias] = id
-                        }
-                        setMergeValue(configpath,flip,gb)
-                    })
-                    let baseLabels = makeSoul({b:key,l:true})
-                    gun.get(baseLabels).on(function(gundata, id){
-                        gunSubs[baseLabels] = true
-                        let data = Gun.obj.copy(gundata)
-                        delete data['_']
-                        let configpath = configPathFromSoul(id)
-                        let flip = {}
-                        for (const id in data) {
-                            const alias = data[id];
-                            flip[alias] = id
-                        }
-                        setMergeValue(configpath,flip,gb)
+
+function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so there is a cb called when it is fully loaded?
+    //would be nice to figure out how to load minimal amt of config (id:alias) and then as the app needed more info it would get it?
+    //since all keys are on all configObj, we could make a 'propLoader' where you give it some 'query' of the data needed from config and it will return cb w/it.
+    //alias would get the chain to work, then once in the chain command async load all configs, and then the cb would be the actual chain command
+    //would make first calls slower, but would make initial page loads more seamless. Otherwise chain can break and through errors, breaking the page.
+    //propLoader would be a stripped down and simplified version of the data query buildResult part.
+
+    //need to have this function be like `enableBaseID` so everytime it fires, it will try to get all the aliases so gbase chain can navigate mutlitple baseIDs
+    cb = (cb instanceof Function && cb) || function(){}
+    gbBases.push(baseID)
+    const get = gunGet(gun)
+    let baseconfig = makeSoul({b:baseID,'%':true})
+    let gbMerge = {}
+    //if loadAll, run existing, else only get alias
+
+    let toGet = {count:3,got:function(){
+        this.count--
+        if(!toGet.count){
+            Object.assign(gb,gbMerge)
+            //merge with gb
+            //fireCB
+            triggerConfigUpdate()
+            cb(true)
+        }
+        return
+    }}
+    get(baseconfig,false,function(gundata){
+        if(gundata === undefined){
+            toGet.got()
+            return
+        }
+        let data = JSON.parse(JSON.stringify(gundata))
+        delete data['_']
+        data.props = {}
+        data.groups = {}
+        data.relations = {}
+        data.labels = {}
+        Object.assign(gbMerge,{[baseID]:data})
+        toGet.got()
+    })
+    let baseLabels = makeSoul({b:baseID,l:true})
+    get(baseLabels,false,function(gundata){
+        if(gundata === undefined){
+            toGet.got()
+            return
+        }        
+        let data = JSON.parse(JSON.stringify(gundata))
+        delete data['_']
+        let configpath = configPathFromSoul(baseLabels)
+        setValue(configpath,data,gbMerge,true)
+        toGet.got()
+    })
+
+    let tlist = makeSoul({b:baseID})
+    get(tlist,false,function(data){//should have both relations and nodeTypes on this soul
+        if(data === undefined){
+            toGet.got()
+            return
+        }  
+        for (const typeID in data) {//tval '#' + id
+            if(typeID === '_')continue
+            const isLink = data[typeID];
+            if(isLink !== null && typeof isLink === 'object' && isLink['#']){//this is an active thing
+                let tconfig = isLink['#']
+                toGet.count++
+                if(full)get(tconfig,false,handleGunConfig(tconfig))
+                else get(tconfig,'alias',function(alias){
+                    let o = {alias}
+                    handleGunConfig(tconfig)(o)
+                })
+                getPropConfigs(tconfig)
+            }
+        }
+        toGet.got()
+    })
+    function handleGunConfig(subSoul){
+        return function(gundata){
+            //will be type config or prop config 
+            let configpath = configPathFromSoul(subSoul)
+            if(gundata === undefined){
+                setValue(configpath,{},gbMerge)
+            }else{
+                let data = JSON.parse(JSON.stringify(gundata))
+                delete data['_']
+                if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
+                if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
+                setValue(configpath,data,gbMerge,true)
+                triggerConfigUpdate(subSoul)
+            }
+            toGet.got()
+        }
+        
+    }
+    function getPropConfigs(tpath){
+        //tpath should be either !# or !-   
+        toGet.count++
+        let {b,t,r} = parseSoul(tpath)
+        let pIdx = makeSoul({b,t,r})
+        get(pIdx,false,function(data){
+            if(data === undefined){
+                toGet.got()
+                return
+            }  
+            for (const typeID in data) {
+                if(typeID === '_')continue
+                const isLink = data[typeID];
+                if(isLink !== null && typeof isLink === 'object' && isLink['#']){//this is an active thing
+                    let pconfigSoul = isLink['#']
+                    toGet.count++
+                    if(full)get(pconfigSoul,false,handleGunConfig(pconfigSoul))
+                    else get(pconfigSoul,'alias',function(alias){
+                        let o = {alias}
+                        handleGunConfig(pconfigSoul)(o)
                     })
                 }
             }
-        })    }
-    else{
-        setTimeout(startGunConfigSubs, 3000);
+            toGet.got()
+        })
     }
 }
-function setupTypesSubs(baseID){
-    let tlist = makeSoul({b:baseID})
-    gun.get(tlist).on(function(gundata, id){//should have both relations and nodeTypes on this soul
-        let data = Gun.obj.copy(gundata)
-        delete data['_']
-        for (const tval in data) {//tval '#' + id
-            const value = data[tval];
-            if(value){
-                let {t,r} = parseSoul(tval)
-                handleGunSubConfig(makeSoul({b:baseID,t,r,'%':true}))//will sub if not already subed and merge in gb
-                setupPropSubs(makeSoul({b:baseID,t,r}))
-            }
-        }
-    })
 
 
-}
-function setupPropSubs(tpath){
-    //tpath should be either !# or !-   
-    let {b,t,r} = parseSoul(tpath) 
-    gun.get(tpath).on(function(gundata, id){
-        let data = Gun.obj.copy(gundata)
-        delete data['_']
-        for (const pval in data) { // pval = id
-            const value = data[pval];
-            if (value) {
-                handleGunSubConfig(makeSoul({b,t,r,p:pval,'%':true}))//will sub if not already subed
-            }
-        }
-    })
-}
-function handleGunSubConfig(subSoul){
-    //will be type config or prop config 
-    let configpath = configPathFromSoul(subSoul)
-    let configLoaded = getValue(configpath,gb)
-    if(!configLoaded || configLoaded.alias === undefined){//create subscription
-        gun.get(subSoul, function(msg,eve){//check for existence only
-            eve.off()
-            if(msg.put === undefined){
-                setMergeValue(configpath,{},gb)
-            }
-        })
-        gun.get(subSoul).on(function(gundata, id){
-            gunSubs[subSoul] = true
-            let data = Gun.obj.copy(gundata)
-            delete data['_']
-            if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
-            if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
-            setMergeValue(configpath,data,gb)
-            triggerConfigUpdate(id)
-        })
-        
-        
-    }else{//do nothing, gun is already subscribed and cache is updating
-
-    }
-}
 
 function triggerConfigUpdate(path){
     if(gbChainState){
@@ -617,21 +687,21 @@ function gbaseChainOpt(){
     return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
 }
 function baseChainOpt(_path){
-    return {_path, config: config(_path), subscribeQuery: performQuery(_path,true), retrieveQuery: performQuery(_path,false), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path,kill:kill(_path), config: config(_path), subscribeQuery: performQuery(_path,true), retrieveQuery: performQuery(_path,false), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
 }
 function groupChainOpt(base, group){
     return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
 }
 function nodeTypeChainOpt(_path){
-    let out = {_path, config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe:typeGet(_path,true),retrieve:typeGet(_path,false), prop,node}
+    let out = {_path,kill:kill(_path), config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe:typeGet(_path,true),retrieve:typeGet(_path,false), prop,node}
     return out
 }
 function relationChainOpt(_path){
-    return {_path, config: config(_path), addProp: addProp(_path), importData: importData(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false),prop}
+    return {_path,kill:kill(_path), config: config(_path), addProp: addProp(_path), importData: importData(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false),prop}
 }
 
 function propChainOpt(_path, propType, dataType){
-    let out = {_path, config: config(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false)}
+    let out = {_path,kill:kill(_path), config: config(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false)}
     // if(['string','number'].includes(dataType) && propType === 'data'){
     //     out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
     // }
@@ -642,14 +712,14 @@ function relationPropChainOpt(_path){
     return out
 }
 function nodeChainOpt(_path, isData){
-    let out = {_path, edit: edit(_path,false,false), retrieve: nodeGet(_path,false), subscribe: nodeGet(_path,true),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
+    let out = {_path,kill:kill(_path), edit: edit(_path,false,false), retrieve: nodeGet(_path,false), subscribe: nodeGet(_path,true),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
     if(isData){
         Object.assign(out,{relatesTo:relatesTo(_path),newFrom:newFrom(_path)})
     }
     return out
 }
 function nodeValueOpt(_path){
-    let out = {_path, edit: edit(_path,false,false),subscribe: addressGet(_path,true),retrieve:addressGet(_path,false), clearValue:nullValue(_path)}
+    let out = {_path,kill:kill(_path), edit: edit(_path,false,false),subscribe: addressGet(_path,true),retrieve:addressGet(_path,false), clearValue:nullValue(_path)}
     return out
 }
 
@@ -658,7 +728,7 @@ function nodeValueOpt(_path){
 function subThing (path,cb,sID,opts){
     //path must be a nodeID or address, nothing else
     //if sID already exists, this will ovrwrt the prev values
-    let isNode = ALL_INSTANCE_NODES.test(path)
+    if(!ALL_ADDRESSES.test(path))throw new Error('Can only subscribe to an address!')
     sID = sID || Symbol() //user can pass a truthy sID or we will create an always unique ID
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
     let {raw} = opts
@@ -671,10 +741,8 @@ function killSub (path,sID){
         //path must be a nodeID or and address, nothing else
         let isNode = ALL_INSTANCE_NODES.test(path)
         if(isNode){
-            let {addrSubs} = getValue([path,sID],nodeSubs) || {}
-            for (const sub of addrSubs) {
-                sub.kill()
-            }
+            let sub = getValue([path,sID],nodeSubs) || {}//this is setup in the chainCommand...
+            sub.kill()
             delete nodeSubs[path][sID]
         }else{//address
             delete addrSubs[path][sID]
@@ -906,7 +974,7 @@ function returnGetValue(fromSoul,fromP,val,cb,raw,addSub){
                 setVals.push(key) 
             }
         }
-        if(propType === 'labels')setVals.unshift(t)
+        if(fromP === 'LABELS')setVals.unshift(t)
         val = setVals
     }else if(dataType = 'array'){
         try {

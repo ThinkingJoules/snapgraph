@@ -211,8 +211,7 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   //console.log(correctBlock,correctSoul)
   const get = gunGet(gun)
   const put = gunPut(gun)
-  get(idIdx,idxData,function(msg){
-    let prevIdx = msg.put && msg.put[soul] && msg.put[soul][pval]
+  get(idIdx,idxData,function(prevIdx){
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
       root.get(oldSoul).put({[idxData]: false})

@@ -27,7 +27,7 @@ const{getValue,
     setValue,
     NODE_SOUL_PATTERN,
     hash64,
-    PROTO_NODE_SOUL,
+    INSTANCE_OR_ADDRESS,
     DATA_INSTANCE_NODE,
     newDataNodeID,
     configSoulFromChainPath,
@@ -35,7 +35,10 @@ const{getValue,
     makeEnq,
     toAddress,
     setMergeValue,
-    removeP
+    removeP,
+    grabThingPropPaths,
+    NON_INSTANCE_PATH,
+    grabAllIDs
 } = require('./util')
 
 const {relationIndex} = require('../chronicle/chronicle')
@@ -58,6 +61,24 @@ group: 100
 
 */
 
+const DEPS_GET_CELL = ['propType','dataType','format']
+const DEPS_ACTIVE_PROPS = ['hidden','archived','deleted','sortval']
+const DEPS_PUT_DATA = (isNew) =>{
+    let base = [...DEPS_GET_CELL,...DEPS_ACTIVE_PROPS,'enforceUnique','autoIncrement']
+    if(!isNew)return base
+    return [...base,'required','defaultval']
+}
+
+
+const makeDeps = (arrOfArrs) =>{
+    let out = new Set()
+    for (const deps of arrOfArrs) {
+        for (const dep of deps) {
+            out.add(dep)
+        }
+    }
+    return [...out]
+}
 
 //GBASE CHAIN COMMANDS
 const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID,cb) =>{
@@ -126,14 +147,15 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
     let newPath = makeSoul({b,[relationOrNode]:tid})
     let tCsoul = configSoulFromChainPath(newPath)
     //console.log(newPath,tCsoul)
-    const config = makehandleConfigChange(gun,newGB)
-    config(tconfig,newPath,{isNew:true, internalCB:function(obj){
+    
+    makehandleConfigChange(gun,newGB)(tconfig,newPath,{isNew:true, internalCB:function(obj){
         let {configPuts} = obj
         Object.assign(toPut,configPuts)
         let forGB = Object.assign({},configPuts[tCsoul],{props:{}})
         setValue(configPathFromChainPath(newPath),forGB,newGB)
         makeProp()
     }},throwError)
+
     function handlePropCreation(o){
         propConfigArr.shift()
         let {path,configPuts} = o
@@ -255,46 +277,73 @@ const makeaddProp = (gun, gb, timeLog) => (path) => (configObj)=>{
         else Object.assign(toPut[soul],putObj)
     }
 }
-const makenewNode = (gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data, cb)=>{
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        let {b,t} = parseSoul(path)
-        //if p then this is a childNode of the this path
-        //API can be called from:
-        /*
-        gbase.base(b).nodeType(t).newNode() << where t is a root table, as-is api
-        */
-       let rid = newDataNodeID()
-       data = data || {}
-       let opts = {isNew:true}
-       let newID = makeSoul({b,t,i:rid})
-       putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
-    }catch(e){
-        cb.call(this, e)
-        console.log(e)
+const makenewNode = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data, cb)=>{
+    let deps = makeDeps([DEPS_PUT_DATA(true)])
+    let {b,t} = parseSoul(path)
+    let allThings = grabAllIDs(gbGet(),b)
+    let allProps = []
+    for (const typeID in allThings) {
+        allProps.push([typeID,['log','externalID']])
+        const propArr = allThings[typeID];
+        for (const pPath of propArr) {
+            allProps.push([pPath,deps])
+        }
     }
+    gbGet(allProps,newNode)
+    function newNode(gb){
+        try{
+            cb = (cb instanceof Function && cb) || function(){}
+            //API can be called from:
+            /*
+            gbase.base(b).nodeType(t).newNode() 
+            */
+           let rid = newDataNodeID()
+           data = data || {}
+           let opts = {isNew:true}
+           let newID = makeSoul({b,t,i:rid})
+           putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
+        }catch(e){
+            cb.call(this, e)
+            console.log(e)
+        }
+    }
+    
 }
-const makenewFrom = (gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data,cb,opt)=>{//TODO
-    try{
-        //API can be called from:
-        /*
-        gbase.base(b).nodeType(t).node(ID).newFrom() << where t is a root table, as-is api
-        gbase.node(ID).newFrom() <<gbase can handle everything, this is the preferred method.
-        */
-        cb = (cb instanceof Function && cb) || function(){}
-        let {b,t,i} = parseSoul(path)
-        let {own,mirror} = opt || {}
-        //own is basically 'copy', will create an independent node based on the values of referenced node
-        //mirror is copying the SAME refs to the new node (new node looks directly to the from nodes inherited values)
-        //(default is create refs to the from node)
-        let rid = newDataNodeID()       
-        let opts = {isNew:true,ctx:path,own,mirror}
-        let newID = makeSoul({b,t,i:rid})
-        putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
-    }catch(e){
-        cb.call(this, e)
-        console.log(e)
+const makenewFrom = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data,cb,opt)=>{//TODO
+    let deps = makeDeps([DEPS_PUT_DATA(true)])
+    let {b,t,i} = parseSoul(path)
+    let allThings = grabAllIDs(gbGet(),b)
+    let allProps = []
+    for (const typeID in allThings) {
+        allProps.push([typeID,['log','externalID']])
+        const propArr = allThings[typeID];
+        for (const pPath of propArr) {
+            allProps.push([pPath,deps])
+        }
     }
+    gbGet(allProps,newFrom)
+    function newFrom(gb){
+        try{
+            //API can be called from:
+            /*
+            gbase.base(b).nodeType(t).node(ID).newFrom() << where t is a root table, as-is api
+            gbase.node(ID).newFrom() <<gbase can handle everything, this is the preferred method.
+            */
+            cb = (cb instanceof Function && cb) || function(){}
+            let {own,mirror} = opt || {}
+            //own is basically 'copy', will create an independent node based on the values of referenced node
+            //mirror is copying the SAME refs to the new node (new node looks directly to the from nodes inherited values)
+            //(default is create refs to the from node)
+            let rid = newDataNodeID()       
+            let opts = {isNew:true,ctx:path,own,mirror}
+            let newID = makeSoul({b,t,i:rid})
+            putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
+        }catch(e){
+            cb.call(this, e)
+            console.log(e)
+        }
+    }
+    
 }
 
 const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
@@ -309,147 +358,191 @@ const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb)
         return false
     }
 }
-const makeedit = (gun,gb,getCell,cascade,timeLog,timeIndex) => (path) => (editObj, cb, opt)=>{
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
-        let pathObj = parseSoul(path)
-        let {b,t,r,p} = pathObj
-        let {own} = opt || {}
-        let type = makeSoul({b,t,r})
-        let [stateP] = hasPropType(gb,type,'state')
-        if(p){
-            let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-            delete pathObj.p
-            delete pathObj['.']
-            if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
-            else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
-            else if(typeof editObj === 'object' && ['unorderedSet','array'].includes(dataType))throw new Error('Value must not be an object')
-
-            editObj = {[p]:editObj}
-            path = makeSoul(pathObj)
+const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => (editObj, cb, opt)=>{
+    let deps = makeDeps([DEPS_PUT_DATA(false)])
+    let pathObj = parseSoul(path)
+    let {b,t,r,p} = pathObj
+    let allThings = grabAllIDs(gbGet(),b)
+    let allProps = []
+    for (const typeID in allThings) {
+        allProps.push([typeID,['log','externalID']])
+        const propArr = allThings[typeID];
+        for (const pPath of propArr) {
+            allProps.push([pPath,deps])
         }
-        if(typeof editObj !== 'object' || editObj === null)throw new Error('Must pass in an object in order to edit.')
-        const checkForState = (value) =>{
-            let e
-            if(value === null){
-                e = new Error('Node does not exist, must create a new one through ".newNode()" api.')
-            }else if(value === 'deleted'){//check existence
-                e = new Error('Node is deleted. Must create a new one through ".newNode()"')
-            }else if(['active','archived'].includes(value)){
-                putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,path,editObj,{own},cb)
+    }
+    gbGet(allProps,edit)
+    function edit(gb){
+        try{
+            cb = (cb instanceof Function && cb) || function(){}
+            let {own} = opt || {}
+            let stateP = 'STATE'
+            if(p){
+                let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
+                delete pathObj.p
+                delete pathObj['.']
+                if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
+                else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
+                else if(typeof editObj === 'object' && ['unorderedSet','array'].includes(dataType))throw new Error('Value must not be an object')
+    
+                editObj = {[p]:editObj}
+                path = makeSoul(pathObj)
             }
+            if(typeof editObj !== 'object' || editObj === null)throw new Error('Must pass in an object in order to edit.')
+            const checkForState = (value) =>{
+                let e
+                if(value === null){
+                    e = new Error('Node does not exist, must create a new one through ".newNode()" api.')
+                }else if(value === 'deleted'){//check existence
+                    e = new Error('Node is deleted. Must create a new one through ".newNode()"')
+                }else if(['active','archived'].includes(value)){
+                    putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,path,editObj,{own},cb)
+                }
+                console.log(e)
+                cb.call(cb,e) 
+            }
+            getCell(path,stateP,checkForState,true)
+        }catch(e){
             console.log(e)
-            cb.call(cb,e) 
+            cb.call(this, e)
         }
-        getCell(path,stateP,checkForState,true)
-    }catch(e){
-        console.log(e)
-        cb.call(this, e)
     }
+    
 }
 
 
-const makeperformQuery = (setupQuery) => (path,isSub) => (cb, queryArr,subID) =>{
-    try{
-        if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-        queryArr = queryArr || []
-        let sub = setupQuery(path,queryArr,cb,true,subID)
-        return sub
-    }catch(e){
-        console.warn(e)
-        return e
+const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => (cb, queryArr,subID) =>{
+    let {b} = parseSoul(path)
+    let allThings = grabAllIDs(gbGet(),b)
+    let allProps = []
+    let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
+    for (const typeID in allThings) {
+        const propArr = allThings[typeID];
+        for (const pPath of propArr) {
+            allProps.push([pPath,deps])
+        }
     }
+    if(isSub && !subID)subID = Symbol()
+    //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+    gbGet(allProps,performQuery)//preload gb, as Query will need this things to parse
+    return subID
+    function performQuery(gb){
+        try{
+            if(isSub && !subID)throw new Error('Must specify a subscription ID!')
+            queryArr = queryArr || []
+            setupQuery(path,queryArr,cb,true,subID)
+        }catch(e){
+            console.warn(e)
+        }
+    }
+
+
+
+    
 }
-const maketypeGet = (gb,setupQuery) => (path,isSub) => (cb,opts)=>{
-    try{
-        let {b,t,r,p} = parseSoul(path)
-        let type = t || r
-        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props} = opts || {}
+const maketypeGet = (gbGet,setupQuery) => (path,isSub) => (cb,opts)=>{
+    let allProps = grabThingPropPaths(gbGet(),path)
+    let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
+    allProps = allProps.map(x => [x,deps])
+    let {b,t,r,p} = parseSoul(path)
+    let type = t || r
+    let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props} = opts || {}
 
-        if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-        //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
-        skip = skip || 0
-        limit = limit || Infinity
-        props = (p) ? [p] : props || getAllActiveProps(gb,path)
-        sortBy = sortBy || []
-        let ret = {RETURN:[]}
-        let retArg = ret.RETURN
-        let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
-        let match = {CYPHER:[matchStr]}
-
-        let retFirstArg = {limit,skip,idOnly}
-        let retSecArg = {x:{returnAsArray,propsByID,noID,noAddress,raw}}
-
-        if(sortBy.length){
-            retFirstArg.sortBy = ['x']
-            for (let i = 0; i < sortBy.length; i+=2) {
-                const alias = sortBy[i];
-                let dir = sortBy[i+1]
-                if(!['ASC','DESC'].includes(dir)) dir = 'DESC'
-                retFirstArg.sortBy.push(alias)
-                retFirstArg.sortBy.push(dir)
+    if(isSub && !subID)subID = Symbol()
+    //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+    gbGet(allProps,typeGet)
+    return subID
+    function typeGet (gb){
+        try{
+            
+            skip = skip || 0
+            limit = limit || Infinity
+            props = (p) ? [p] : props || getAllActiveProps(gb,path)
+            sortBy = sortBy || []
+            let ret = {RETURN:[]}
+            let retArg = ret.RETURN
+            let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
+            let match = {CYPHER:[matchStr]}
+    
+            let retFirstArg = {limit,skip,idOnly}
+            let retSecArg = {x:{returnAsArray,propsByID,noID,noAddress,raw}}
+    
+            if(sortBy.length){
+                retFirstArg.sortBy = ['x']
+                for (let i = 0; i < sortBy.length; i+=2) {
+                    const alias = sortBy[i];
+                    let dir = sortBy[i+1]
+                    if(!['ASC','DESC'].includes(dir)) dir = 'DESC'
+                    retFirstArg.sortBy.push(alias)
+                    retFirstArg.sortBy.push(dir)
+                }
             }
+            retArg.push(retFirstArg)
+            let propArr = []
+            let withP = makeSoul({b,t,r,p:true})
+            for (const prop of props) {
+                let propID = findID(gb,prop,withP)
+                propArr.push(propID)
+            }
+            retSecArg.x.props = propArr
+            retArg.push(retSecArg)
+    
+            let queryArr = [match,ret]
+            console.log('Number of props to get:',propArr.length)
+            setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
+        }catch(e){
+            console.warn(e)
+            return e
         }
-        console.log(retFirstArg)
-        retArg.push(retFirstArg)
-
-        let propArr = []
-        let withP = makeSoul({b,t,r,p:true})
-        for (const prop of props) {
-            let propID = findID(gb,prop,withP)
-            propArr.push(propID)
-        }
-        retSecArg.x.props = propArr
-        retArg.push(retSecArg)
-
-        let queryArr = [match,ret]
-        console.log(propArr)
-        let sub = setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
-        return sub
-    }catch(e){
-        console.warn(e)
-        return e
     }
+    
 }
-const makenodeGet = (gb,getCell,subThing) => (path,isSub) => (cb,opts)=>{
-    try{
-        let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
-        if(isSub && !subID)subID = Symbol()
-        props = props || getAllActiveProps(gb,path)
-        let nodeObj
-        if(returnAsArray){
-            nodeObj = []
-            nodeObj.length = props.length
-        }else{
-            nodeObj = {}
-        }
-        if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
-        if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
-        let allSubs = []
-        let toGet = props.length
-        for (let i = 0,l=props.length; i < l; i++) {
-            const p = props[i];
-            let property
+const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) => (cb,opts)=>{
+    let allProps = grabThingPropPaths(gbGet(),path)
+    allProps = allProps.map(x => [x,['hidden','archived','deleted','sortval','propType','format']])
+    let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
+    if(isSub && !subID)subID = Symbol()
+    gbGet(allProps,nodeGet)
+    return subID
+    function nodeGet(gb){
+        try{
+            props = props || getAllActiveProps(gb,path)
+            let nodeObj
             if(returnAsArray){
-                property = i
+                nodeObj = []
+                nodeObj.length = props.length
             }else{
-                property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
+                nodeObj = {}
             }
-            let addr = toAddress(path,p)
-            getCell(path,p,function(val){
-                nodeObj[property] = val
-                if(!noAddress)nodeObj.address[property] = addr
-                toGet--
-                if(!toGet)cb.call(cb,nodeObj)
-            },raw,true)
-            let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
-            allSubs.push(addrsub)
+            if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
+            if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+            let allSubs = []
+            let toGet = props.length
+            for (let i = 0,l=props.length; i < l; i++) {
+                const p = props[i];
+                let property
+                if(returnAsArray){
+                    property = i
+                }else{
+                    property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
+                }
+                let addr = toAddress(path,p)
+                getCell(path,p,function(val){
+                    nodeObj[property] = val
+                    if(!noAddress)nodeObj.address[property] = addr
+                    toGet--
+                    if(!toGet)cb.call(cb,nodeObj)
+                },raw,true)
+                let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
+                allSubs.push(addrsub)
+            }
+            setValue([path,subID],{kill:function(){allSubs.map(x => x.kill())}},nodeSubs)
+        }catch(e){
+            console.warn(e)
+            return e
         }
-        return {kill:function(){allSubs.map(x => x.kill())}}
-    }catch(e){
-        console.warn(e)
-        return e
     }
+    
     function nodeSubCB(obj,keyAs,cb,partial){
         return function(v){
             obj[keyAs] = v
@@ -458,18 +551,36 @@ const makenodeGet = (gb,getCell,subThing) => (path,isSub) => (cb,opts)=>{
         }
     }
 }
-const makeaddressGet = (getCell,subThing) => (path,isSub) => (cb,opts)=>{
-    try{
-        let {raw,subID} = opts || {}
-        if(isSub && !subID)subID = Symbol()
-        let nodeID = removeP(path)
-        let {p} = parseSoul(path)
-        getCell(nodeID,p,cb,raw,true)
-        let addrsub = subThing(path,cb,false,{raw})
-        return addrsub
-    }catch(e){
-        console.warn(e)
-        return e
+const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) => (cb,opts)=>{
+    let deps = makeDeps([DEPS_GET_CELL])
+    let {b,t,r,p} = parseSoul(path)//get rid of instance info
+    let need = [makeSoul({b,t,r,p}),deps]
+    let {raw,subID} = opts || {}
+    if(isSub && !subID)subID = Symbol()
+    gbGet(need,addressGet)
+    return subID
+    function addressGet(gb){
+        try{
+            let nodeID = removeP(path)
+            let {p} = parseSoul(path)
+            getCell(nodeID,p,cb,raw,true)
+            subThing(path,cb,false,{raw})
+        }catch(e){
+            console.warn(e)
+        }
+    }
+    
+}
+
+const makekill = (querySubs,killSub) => (path) => (subID)=>{
+    let {b} = parseSoul(path)
+    if(INSTANCE_OR_ADDRESS.test(path)){//address sub
+        killSub(path,subID)()
+    }else if(NON_INSTANCE_PATH.test(path)){//query sub path is either !, !#, !-, !#., !-.
+        if(querySubs && querySubs[b] && querySubs[b][subID]){
+            let qParams = querySubs[b][subID]
+            qParams.kill()
+        }
     }
 }
 
@@ -829,5 +940,6 @@ module.exports = {
     makerelatesTo,
     maketypeGet,
     makenodeGet,
-    makeaddressGet
+    makeaddressGet,
+    makekill
 }

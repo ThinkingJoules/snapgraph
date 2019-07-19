@@ -1,21 +1,70 @@
+const {newBaseConfig,newNodeTypeConfig,newNodePropConfig,newRelationshipConfig,newRelationshipPropConfig} = require('./configs')
 //GBASE UTIL FUNCTIONS
-const IS_STATE_INDEX = /^![a-z0-9]+(#|-)[a-z0-9]+^![a-z0-9]+(#|-|\^|&)[a-z0-9]+\$$/i
-const IS_CONFIG_SOUL = /^![a-z0-9]+(((#|-)[a-z0-9]+)|((#|-)[a-z0-9]+.[a-z0-9]+))%/i
-const INSTANCE_OR_ADDRESS = /^![a-z0-9]+(#|-)[a-z0-9]+((.[a-z0-9]+\$[a-z0-9_]+)|\$[a-z0-9_]+)/i
-const ALL_ADDRESSES = /^![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
-const ALL_TYPE_PATHS = /^![a-z0-9]+(#|-|\^|&)[a-z0-9]+/i
-const ALL_INSTANCE_NODES = /^![a-z0-9]+(#|-)[a-z0-9]+\$[a-z0-9_]+/i
+const regOr = (regArr) =>{
+    let cur = ''
+    for (const r of regArr) {
+        cur += '(?:'+r.toString().slice(1,-2)+')' + '|'
+    }
+    cur = cur.slice(0,-1) //remove trailing '|'
+    cur = '/'+cur+'/i'
+    return eval(cur)
+}
+const TYPE_INDEX = /^![a-z0-9]+$/i
+const BASE_CONFIG =/^![a-z0-9]+%$/i
+const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$$/i
+const RELATION_STATE = /^![a-z0-9]+-[a-z0-9]+\$$/i
+const BASE = /^![a-z0-9]+$/i
+const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+/i
+const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+/i
+const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+/i
+const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+/i
+const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
+const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
+const PROP_CONFIG = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+%$/i
+const TYPE_PROP_INDEX = /^![a-z0-9]+#[a-z0-9]+$/i
+const RELATION_PROP_INDEX = /^![a-z0-9]+-[a-z0-9]+$/i
+const PROP_TYPE = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+$/i
+
 const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
 const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
-const DATA_PROP_SOUL = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
-const RELATION_PROP_SOUL = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
-const PROPERTY_PATTERN = /^![a-z0-9]+(#|-)[a-z0-9]+\.[a-z0-9_]+/i
+const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
+const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
+
+const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
+const INSTANCE_OR_ADDRESS = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE,DATA_ADDRESS,RELATION_ADDRESS])
+const NON_INSTANCE_PATH = regOr([BASE,NODE_TYPE,RELATION_TYPE,PROP_TYPE])
+const ALL_ADDRESSES = regOr([DATA_ADDRESS,RELATION_ADDRESS])
+const ALL_TYPE_PATHS = regOr([NODE_TYPE,RELATION_TYPE,LABEL_TYPE])
+const ALL_INSTANCE_NODES = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE])
+const ALL_CONFIGS = {
+    typeIndex: TYPE_INDEX,
+    baseConfig: BASE_CONFIG,
+    propIndex: regOr([TYPE_PROP_INDEX,RELATION_PROP_INDEX]),
+    thingConfig: regOr([TYPE_CONFIG,RELATION_CONFIG]),
+    propConfig: PROP_CONFIG,
+    label: LABEL_TYPE
+}
+const IS_CONFIG = (soul) =>{
+    let is = false
+    for (const soulType in ALL_CONFIGS) {
+        const r = ALL_CONFIGS[soulType];
+        if(is = r.test(soul))return soulType
+    }
+    return is
+}
+const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX])
+
+
+
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const ENQ_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
 const USER_ENQ = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
 const LABEL_ID = /\d+f[a-z0-9]+/i
 const NULL_HASH = hash64(JSON.stringify(null))
 const ENQ = String.fromCharCode(5) //enquiry NP char. Using for an escape to say the value that follow is the node to find this prop on
+
+
+
 function bufferPathFromSoul(rowID, pval){
     //buffer is the same structure as cache
     let node = parseSoul(rowID)
@@ -84,7 +133,6 @@ function configPathFromSoul(soul){
 }
 function configPathFromChainPath(thisPath){
     //valid paths: !, !#, !-, !^, !&, !#., !-.
-    //group is always reference by alias, never by ID
     let {b,t,r,p,g,l} = parseSoul(thisPath)
     let configpath = [b]
     if(thisPath.includes('#')){//nodeType
@@ -111,6 +159,7 @@ function configPathFromChainPath(thisPath){
 function configSoulFromChainPath(thisPath){
     //should just need to append % to end if they are in right order..
     //should parse, then make soul to be safe
+    //assumes path is a valid config base: !, !#, !-, !#., !-.
     let parse = parseSoul(thisPath)
     Object.assign(parse,{'%':true})
     let soul = makeSoul(parse)
@@ -163,6 +212,33 @@ function findConfigFromID(gb,path,someID){
             }
         }
     }
+}
+function grabAllIDs(gb,baseID){
+    let b = baseID
+    let out = {}
+
+    let {props,relations} = gb[b]
+    for (const t in props) {
+        let typePath = makeSoul({b,t})
+        out[typePath] = grabThingPropPaths(gb,typePath)
+    }
+    for (const r in relations) {
+        let typePath = makeSoul({b,r})
+        out[typePath] = grabThingPropPaths(gb,typePath)
+    }
+    return out
+}
+function grabThingPropPaths(gb,thingPath){
+    let {b,t,r} = parseSoul(thingPath) //could be t||r
+    let thingType = makeSoul({b,t,r})
+    let tPath = configPathFromChainPath(thingType)
+    let {props} = getValue(tPath,gb)
+    let out = []
+
+    for (const p in props) {
+        out.push(makeSoul({b,t,r,p}))
+    }
+    return out
 }
 function collectPropIDs(gb,path,name,isNode){
     //alias could be the actual ID, in which case it will simply just return {[id]:id}
@@ -368,13 +444,20 @@ const linkColPvals = (gb,base,tval)=>{//PROBABLY COULD BE USED AGAIN, NEEDS UPDA
     }
     return result
 }
-function setValue(propertyPath, value, obj){
+function setValue(propertyPath, value, obj,merge){
     if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
     if (propertyPath.length > 1) {
         if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
         return setValue(propertyPath.slice(1), value, obj[propertyPath[0]])
     } else {
-        obj[propertyPath[0]] = value
+        if(merge && typeof value == 'object' && value !== null){
+            if(typeof obj[propertyPath[0]] === 'object')obj[propertyPath[0]] = {}
+            for (const key in value) {
+                obj[propertyPath[0]][key] = value[key];
+            }
+        }else{
+            obj[propertyPath[0]] = value
+        }
         return true // this is the end
     }
 }
@@ -560,9 +643,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let toGet = pvals.length
             for (const p of pvals) {
                 let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
-                gun.get(soul).get(p, function(msg,eve){
-                    eve.off()
-                    val = msg.put
+                get(soul,p,function(val){
                     if(dataType === 'array'){
                         val = JSON.parse(val)
                     }
@@ -600,14 +681,14 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                     if(!toGet){
                         runNext()
                     }
-                },true)
+                },true,true)
             }
         },
         getAddPvalToPutObj: function(pval){
             getCell(nodeID,pval,function(value){
                 putObj[pval] = value
                 runNext()
-            },true)
+            },true,true)
 
         },
         copyCtxRelations: function(){
@@ -646,7 +727,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                         gun.get(relationSoul).once(function(relationNode){
                             let data = JSON.parse(JSON.stringify(relationNode))
                             delete data['_']
-                            let [srcPval] = hasPropType(gb,relationSoul,'source')
+                            let srcPval = 'SRC'
                             data[srcPval] = nodeID //should overwrite the existing 'source' nodeID
                             run.unshift(['setupRelationship',[relationSoul,data]])
                             rToGet--
@@ -863,7 +944,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                                 cb.call(cb,toObj)
                             }
     
-                        },true)
+                        },true,true)
                     }
                 })
             }
@@ -923,7 +1004,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
 
         },
         changeArchive: function(archiving){
-            let [stateP] = hasPropType(gb,thingType,'state')
+            let stateP = 'STATE'
             let state = (archiving && 'archived') || 'active'
             putObj[stateP] = state
             let stateSoul = makeSoul({b,t,r,i:true})
@@ -950,7 +1031,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             if(isEnq(cVal)){
                 refChanges.push(cVal)
             }
-            if(propType === 'labels'){
+            if(pval === 'LABELS'){
                 //cVal should be an obj with {label: t/f}
                 let temp = {}
                 for (const label in cVal) {
@@ -966,7 +1047,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 }else{
                     continue
                 }
-            }else if(propType === 'state'){//need to do what the 'state' says
+            }else if(pval === 'STATE'){//need to do what the 'state' says
                 let validStates = ['active','archived','deleted']
                 if(!validStates.includes(cVal))throw new Error('Invalid state. Must be one of: '+validStates.join(', '))
                 if(cVal === 'archived')archive = true
@@ -1055,7 +1136,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                             throw err
                         }
                     }
-                }else if(propType === 'labels' && v !== null){
+                }else if(pval === 'LABELS' && v !== null){
                     for (const label in v) {
                         let labelIdx = makeSoul({b,t,l:label})
                         const boolean = v[pick];
@@ -1074,7 +1155,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 }
                 logObj[pval] = v
     
-            }else if(propType === 'state'){
+            }else if(pval === 'STATE'){
                 let stateIdx = makeSoul({b,t,r,i:true})
                 let stateValue
                 if(v === 'active')stateValue = true
@@ -1088,8 +1169,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 logObj[pval] = v
            
             }
-            if(propType === 'source')source = v
-            if(propType === 'target')target = v
+            if(pval === 'SRC')source = v
+            if(pval === 'TRGT')target = v
     
         }
 
@@ -1119,13 +1200,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         //console.log(toPut)
         //return      
         
-        let gput = gunPut(gun)
 
         for (const soul in toPut) {
             const putObj = toPut[soul];
             if(!Object.keys(putObj).length)continue
             console.log(soul,putObj)
-            gput(soul,putObj)
+            put(soul,putObj)
         }
         for (const index in timeIndices) {
             const {value,unix} = timeIndices[index];
@@ -1151,12 +1231,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
     function changeEnq(add,parentAddr,childAddr){
         //verify parent and child are of the same nodeType
-        if(!DATA_PROP_SOUL.test(parentAddr) && !isEnq(parentAddr)){
+        if(!DATA_ADDRESS.test(parentAddr) && !isEnq(parentAddr)){
             let err = 'Invalid parent ID referenced for an inheritance'
             throwError(err)
             return
         }
-        if(!DATA_PROP_SOUL.test(childAddr) && !isEnq(childAddr)){
+        if(!DATA_ADDRESS.test(childAddr) && !isEnq(childAddr)){
             let err = 'Invalid child ID referenced for an inheritance'
             throwError(err)
             return
@@ -1532,9 +1612,12 @@ function getAllActiveProps(gb, tpath,opts){
     archived = !!archived
     deleted = !!deleted
     let out = []
+    let i = 0
     for (const p in props) {
-        const {hidden:h,archived:a,deleted:d,sortval} = props[p];
+        let {hidden:h,archived:a,deleted:d,sortval} = props[p];
         if ((h && hidden || !h) && (a && archived || !a) && (d && deleted || !d)) {
+            if(sortval === undefined){sortval = i; i++}
+            else {i = sortval+1}
             out[sortval] = p
         }
     }
@@ -1762,7 +1845,6 @@ function naturalCompare(a, b) {
     return ax.length - bx.length;
 }
 
-
 const gunGet = (gun) => (soul,prop,cb)=>{
     //console.log('getting soul:',soul, 'prop:',prop)
     let get = (prop !== undefined && prop !== false) ? {'#':soul,'.':prop} : {'#':soul}
@@ -1770,7 +1852,7 @@ const gunGet = (gun) => (soul,prop,cb)=>{
         get,
         '#': gun._.ask(function(msg){
             let val = (prop !== undefined && prop !== false) ? msg.put && msg.put[soul] && msg.put[soul][prop] : msg.put && msg.put[soul]
-            if(prop !== undefined && prop !== false && typeof val === 'object' && val['#'] !== undefined){
+            if(prop !== undefined && prop !== false && val !== null && typeof val === 'object' && val['#'] !== undefined){
                 //console.log('getting lookup val')
                 gunGet(gun)(val['#'],false,cb)
             }else{
@@ -1793,6 +1875,56 @@ const gunPut = (gun) => (soul,putO)=>{
     })
 }
 
+const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
+    //pathArgs = {path: [arrOfProps] || falsy(getAll)}
+    if(cb === undefined)return gb//short circuit so we can access gb to grab ids
+    let needed = [] //[[soul,prop],[soul,prop]]
+
+    for (const [path,requestedKeys] of pathArgs) {
+        let cSoul = configSoulFromChainPath(path)
+        if(!IS_CONFIG_SOUL.test(cSoul))continue
+        let type = IS_CONFIG(cSoul)
+        let allKeys
+        if(type === 'baseConfig')allKeys = Object.keys(newBaseConfig())
+        else if(type === 'thingConfig' && path.includes('#'))allKeys = Object.keys(newNodeTypeConfig({alias:path}))
+        else if(type === 'thingConfig' && path.includes('-'))allKeys = Object.keys(newRelationshipConfig({alias:path}))
+        else if(type === 'propConfig' && path.includes('#'))allKeys = Object.keys(newNodePropConfig({alias:path}))
+        else if(type === 'propConfig' && path.includes('-'))allKeys = Object.keys(newRelationshipPropConfig({alias:path}))
+        if(!allKeys)continue//something invalid?
+        let pathArr = configPathFromChainPath(path)
+        let has = getValue(pathArr,gb)
+        for (const key of allKeys) {
+            if(requestedKeys){
+                if(!requestedKeys.includes(key))continue //looking for specific keys, but not this one
+                if(has && has[key] !== undefined)continue
+                let thisPath = pathArr.slice()
+                thisPath.push(key)
+                needed.push([cSoul,key,thisPath])
+            }else{
+                if(has && has[key] !== undefined)continue
+                needed.push([cSoul,key])
+            }
+        }
+    }
+    if(!needed.length)cb(gb)
+    else{
+        const get = gunGet(gun)
+        let toGet = needed.length
+        for (const [soul,prop,pathArr] of needed) {
+            get(soul,prop,function(value){
+                //will be type config or prop config 
+                if(value === undefined){//should never happen?
+                    setMergeValue(pathArr,null,gb)
+                }else{
+                    if(['usedIn','pickOptions'].includes(prop))value = JSON.parse(value)
+                    setMergeValue(pathArr,value,gb)
+                }
+                toGet--
+                if(!toGet)cb(gb)
+            })
+        }
+    }
+}
 
 const soulSchema = {
     /* legend
@@ -1936,9 +2068,8 @@ module.exports = {
     ALL_INSTANCE_NODES,
     DATA_INSTANCE_NODE,
     RELATION_INSTANCE_NODE,
-    DATA_PROP_SOUL,
-    RELATION_PROP_SOUL,
-    PROPERTY_PATTERN,
+    DATA_PROP_SOUL: DATA_ADDRESS,
+    RELATION_PROP_SOUL: RELATION_ADDRESS,
     ISO_DATE_PATTERN,
     NULL_HASH,
     sortPutObj,
@@ -1961,5 +2092,11 @@ module.exports = {
     IS_STATE_INDEX,
     removeP,
     ALL_TYPE_PATHS,
-    naturalCompare
+    naturalCompare,
+    IS_CONFIG,
+    gbGet,
+    grabThingPropPaths,
+    NON_INSTANCE_PATH,
+    ALL_ADDRESSES,
+    grabAllIDs
 }

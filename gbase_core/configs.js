@@ -17,7 +17,7 @@ const {convertValueToType,
     sortPutObj,
     IS_CONFIG_SOUL,
     putData,
-    newID
+    newID,
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')

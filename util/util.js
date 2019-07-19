@@ -1,6 +1,6 @@
-const {parseSoul,makeSoul,configPathFromChainPath,PROPERTY_PATTERN,getValue,findID,findConfigFromID} = require('../gbase_core/util')
+const {parseSoul,makeSoul,configPathFromChainPath,ALL_ADDRESSES,getValue,findID,findConfigFromID} = require('../gbase_core/util')
 const makegetAlias = (gb) => (baseOrAddress,pval)=>{
-    if(PROPERTY_PATTERN.test(baseOrAddress)){
+    if(ALL_ADDRESSES.test(baseOrAddress)){
         let {alias} = getValue(configPathFromChainPath(baseOrAddress), gb) || {}
         return alias
     }else{
@@ -31,13 +31,11 @@ const makegetProps = (gb) => (base,type,opts) => {
         }
     }
     if(!b)throw new Error('Cannot find the base you specified')
-    let typeID, sym
+    let typeID
     let isT = findID(gb,type,makeSoul({b,t:true}))
     let isR = findID(gb,type,makeSoul({b,r:true}))
     typeID = isT || isR
     if(!typeID)throw new Error('Cannot find the type of thing you specified')
-    sym = (isT) ? 't' : 'r'
-
     let {hidden,archived} = opts || {}
     hidden = !!hidden
     archived = !!archived
