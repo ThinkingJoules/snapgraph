@@ -181,8 +181,10 @@ Creation API's
 Data getter/setter APIs
 * [relatesTo](#relatesTo) (not updated)
 * [edit](#edit)
-* [subscribe](#subscribe) (not updated)
-* [retrieve](#retrieve) (not updated)
+* [subscribeQuery](#subscribeQuery)
+* [retrieveQuery](#retrieveQuery)
+* [subscribe](#subscribe)
+* [retrieve](#retrieve)
 
 
 ------
@@ -425,66 +427,177 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
 ```
 [nodeID, address? Read here to understand the terminology used.](#gbase-vocab)
 _________
-### subscribe
-**subscribe(*\*callBack*, *colArr*, *queryArr*, *udSubID*)**  
-callBack is required, others are optional Defaults:  
-`callBack = Function(data, colArr) `  
-`colArr = Default is all columns that are !archived && !deleted, in the order in the config`  
-`queryArr = [{SEARCH: ['abc']},{FILTER: ['{p3} > 3']}]` [More Info on query here](#query)    
-`udSubID = undefined // will create an ID`  
+### subscribeQuery
+**subscribeQuery(*\*callBack*, *queryArr*, *udSubID*)**  
+callBack and queryArr is required, others are optional Defaults:  
+`callBack = Function(resultArr) `  
+`queryArr = [queryArr]` [More info here](#query)    
+`udSubID = Symbol()` If you give it a subID, then be sure it is unique across all of your subscription
 
-Subscribe will fire the callback with the **entire** data set that matches that query on every change.
+Subscribe will fire the callback with the **entire** data set that matches that query on every change.  
+**\*Because gbase caches the data, the node objects themselves will be the same objects, so be sure to not to mutate them!**
 
-* **data** - structured like: `[[rowID, [colArr[0] data, colArr[1] data]]]`   
-`data[0] = [rowID, [propArr]]`  
-`data[0][1] = [value1, value2, value3]`  
-The index of the value in the **propArr** corresponds to the index in **colArr** to what pval that value belongs to.
-* **colArr** - an array of pval's. The order you give is the same order the **data** is returned in. If you do not give a **colArr** the **callBack** will return the columns in the order that matches **data**.
+* **resultArr** - depends on queryArr options, but default is: `[[{}]]`   
+`resultArr[0] = [{},{},{}]` This is the first matching 'path' (based on your match and return statements)
+`resultArr[0][0] = {prop1: value, prop2: value}`
+`resultArr[0][0].prop1 = value`
 
-
-The *`udSubID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This is used in the React API's to allow a single component to setup multiple subscriptions, and 'watch' the correct subscriptions when a different 'table' is loaded. `toState` (see [React API](#react-specific-api's)) is a wrapper on `subscribe()`.
+The *`udSubID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows gbase to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
 
 Data loading and the callBack: Depending on the state of the database and how much data is already loaded the callBack will fire immediately if it has all the data in memory.
 
 Example usage:
 ```
-//assume:
+//assume IDs:
 'ACME Inc.'= "B123"
-'Items' = 't0'
-'Vendor' = 'p1'
-'Weight' = 'p2'
-'8522761755' = 'B123/t0/r123'
+'Items' = '1t2o3'
+'Vendor' = '3p3kd'
 
---Row Subsciption--
-gbase.base('ACME Inc.').table('Items').row('8522761755').subscribe(function(data){
-  //data = ["Anvils 'r Us", 10]
-},['p1','p2'])
+nodeID = '!B123#1t2o3$abcd'
+address = '!B123#1t2o3.3p3kd$abcd'
 
---Table Subscription--
-gbase.base('ACME Inc.').table('Items').subscribe(function(data, colArr){
-  //colArr = ['p0','p1','p2']
-  //data = [['B123/t0/r123': ['8522761755','Anvils 'r Us',10]],...]
-})
+let CYPHER = ['MATCH (x:Items)'] //if anything has symbols or spaces, backtick 'MATCH (x:`Has Space`)'
+let RETURN = [{sortBy:['x',['Vendor','DESC']],limit:10},
+            {x:{props:['Vendor','Part Number']}}]
+let queryArr = [{CYPHER},{RETURN}]
+let sub = gbase.base('ACME Inc.').subscribeQuery(function(data){
+  if(!Array.isArray(data))handleErr(data)
+  else //success
+  //data = [
+    [{Vendor: "Anvils 'r Us", 'Part Number': 'A123'}],
+    [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
+}, queryArr,'forUIView')
+```
+
+When you want to remove this subscription:
+```
+gbase.base('ACME Inc.').kill(sub)
+```
+[Read here to understand the terminology used.](#gbase-vocab)
+_________
+### retrieveQuery
+**subscribeQuery(*\*callBack*, *queryArr*)**  
+callBack and queryArr is required, others are optional Defaults:  
+`callBack = Function(resultArr) `  
+`queryArr = [queryArr]` [More info here](#query)    
+
+Exactly the same as `subscribeQuery` except it only fires the callBack once.
+_________
+### subscribe
+**subscribe(*\*callBack*, *opts*)**  
+callBack is required, others are optional Defaults:  
+`callBack = Function(data, colArr) `  
+`opts = {}` See below for options
+
+**WARNING** subscribe is used in **3** ways and the options very for each.
+* `gbase.base(baseID).nodeType('Items').subscribe()` **[nodeType subscription](#nodeType-subscription)** 
+* `gbase.node(nodeID).subscribe()` **[node subscription](#node-subscription)** 
+* `gbase.node(address).subscribe()` **[address subscription](#address-subscription)** 
+
+#### nodeType subscription  
+**This is just a wrapper around [subscribeQuery](#subscribeQuery)**
+* callback is fired with entire query results on every change.
+* since this will never traverse across another nodeType the arguments have been flattened in to one opts object 
+* returns array with same structure as [subscribeQuery](#subscribeQuery)
+
+| Opts[key] | default | typeof | usage | Notes |
+|---------------|-----------------------------------|----------------|-------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| sortBy | false | array | [('prop Alias'|| propID), ('ASC' || 'DESC')] | You can specify multiple sort columns, will sort from left to right in array to break ties. |
+| skip | 0 | number | skip first 'x' results |  |
+| limit | Infinity | number | limit total results to 'x' |  |
+| idOnly | false | boolean | Don't return properties, but perform full query returning only the id's | You can specify properties, and it will generate addresses for them in the metaData |
+| returnAsArray | false | boolean | {prop1:value1} or [value1] | For building tables easier |
+| propsByID | false | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead |  |
+| noID | false | boolean | On the nodeObj there is a non-enumerable property at 'id' that contains the nodeID. Setting this to true does not add this metadata | This keeps the object clean, but still gives you the ID to work with. |
+| noAddress | false | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
+| raw | false | boolean | Apply formatting per the configs.format |  |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+| props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
+| labels | false | array | subset of nodes that have these tags | will implement not tags as well. |
 
 
---Table Subscription w/colArr & error handling--
-//works the same for a row subscription
-let err = gbase.base('ACME Inc.').table('Items').subscribe(function(data){
-  //data = {'B123/t0/r123': {p1: 'Anvils 'r Us', p2: 10}}
-}, ['p1','p2'])
+#### node subscription
+This is technically a wrapper around the internal gbase address subscription.
+Returns either an array or an object, depending on options (below).
 
-if(err){
-  //handle Error
-}
+**This caches the object, so each return is the SAME object, be careful not to mutate!**
+
+Only the last two opts are different than the [nodeType subscription](#nodeType-subscription)
+
+| Opts[key] | default | typeof | usage | Notes |
+|---------------|-----------------------------------|----------------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| returnAsArray | FALSE | boolean | {prop1:value1} or [value1] | For building tables easier |
+| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead |  |
+| noID | FALSE | boolean | On the nodeObj there is a non-enumerable |  |
+| noAddress | FALSE | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
+| raw | FALSE | boolean | Apply formatting per the configs.format |  |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+| props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
+| propAs | FALSE | object | A temporarily different alias for the prop | Current alias or ID as key, value as value for this subscription. **DIFFERENT FORMAT FROM propAs in subscribeQuery** |
+| partial | FALSE | boolean | If true and returnAsArray = false, will give partial updates | Will always return a single {key:value} per fire of callback |
+
+#### address subscription
+Fires callback with new value on change.
+
+| Opts[key] | default | typeof | usage | Notes |
+|-----------|----------|----------------|------------------------------------------------------------------|-------------------------------|
+| raw | FALSE | boolean | Apply formatting per the configs.format |  |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+
+Example usage:
+```
+//assume IDs:
+'ACME Inc.'= "B123"
+'Items' = '1t2o3'
+'Vendor' = '3p3kd'
+
+nodeID = '!B123#1t2o3$abcd'
+address = '!B123#1t2o3.3p3kd$abcd'
+
+//nodeType subscribe
+let opts = {sortBy: ['Vendor','DESC'], limit: 10, props: ['Vendor','Part Number']}
+let sub = gbase.base('ACME Inc.').nodeType('Items').subscribe(function(data){
+  if(!Array.isArray(data))handleErr(data)
+  else //success
+  //data = [
+    [{Vendor: "Anvils 'r Us", 'Part Number': 'A123'}],
+    [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
+}, opts)
+...
+gbase.base('ACME Inc.').nodeType('Items').kill(sub)
 
 
-Note: The chain function call will return undefined || error if it failed to setup the subscription.
+//node subscribe
+let opts = {props: ['Vendor','Part Number']}
+let sub = gbase.node(nodeID).subscribe(function(data){
+  if(data instanceof Error)handleErr(data)
+  else //success
+  //data = {Vendor: "Anvils 'r Us", 'Part Number': 'A123'}
+}, opts)
+...
+gbase.node(nodeID).kill(sub)
+
+
+//address subscribe
+let opts = {subID: 'watchMe', raw:true}
+let sub = gbase.node(address).subscribe(function(data){
+  if(data instanceof Error)handleErr(data)
+  else //success
+  //data = {Vendor: "Anvils 'r Us", 'Part Number': 'A123'}
+}, opts)
+...
+gbase.node(address).kill(sub)
+```
+
+When you want to remove this subscription:
+```
+gbase.node(address).kill(sub)
 ```
 [Read here to understand the terminology used.](#gbase-vocab)
 
 _________
 ### retrieve
-**retrieve(*\*callBack*, *colArr*, *queryArr*)**  
+**retrieve(*\*callBack*, *opts*)**  
 This is the same as [subscribe()](#subscribe) except that it only fires the callback one time with the data.
 
 

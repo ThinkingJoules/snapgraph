@@ -540,145 +540,170 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
 }
 
 
-const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => (cb, queryArr,subID) =>{
-    let {b} = parseSoul(path)
-    let allThings = grabAllIDs(gbGet(),b)
-    let allProps = []
-    let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
-    for (const typeID in allThings) {
-        const propArr = allThings[typeID];
-        for (const pPath of propArr) {
-            allProps.push([pPath,deps])
+const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
+    
+    const f = (function(cb, queryArr,subID){
+        let {b} = parseSoul(path)
+        let allThings = grabAllIDs(gbGet(),b)
+        let allProps = []
+        let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
+        for (const typeID in allThings) {
+            const propArr = allThings[typeID];
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
+            }
         }
-    }
-    if(isSub && !subID)subID = Symbol()
-    //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
-    gbGet(allProps,performQuery)//preload gb, as Query will need this things to parse
-    return subID
-    function performQuery(gb){
-        try{
-            if(isSub && !subID)throw new Error('Must specify a subscription ID!')
-            queryArr = queryArr || []
-            setupQuery(path,queryArr,cb,true,subID)
-        }catch(e){
-            console.warn(e)
+        if(isSub && !subID)subID = Symbol()
+        //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+        gbGet(allProps,performQuery)//preload gb, as Query will need this things to parse
+        return subID
+        function performQuery(gb){
+            try{
+                if(isSub && !subID)throw new Error('Must specify a subscription ID!')
+                queryArr = queryArr || []
+                setupQuery(path,queryArr,cb,true,subID)
+            }catch(e){
+                console.warn(e)
+            }
         }
-    }
+    })
+    f.help = function(){
+        let fromReadMe = 
+`
 
+`
+        console.log(fromReadMe)
+    }
 
 
     
 }
-const maketypeGet = (gbGet,setupQuery) => (path,isSub) => (cb,opts)=>{
-    let allProps = grabThingPropPaths(gbGet(),path)
-    let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
-    allProps = allProps.map(x => [x,deps])
-    let {b,t,r,p} = parseSoul(path)
-    let type = t || r
-    let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props} = opts || {}
+const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
+    const f = (function(cb,opts){
+        let allProps = grabThingPropPaths(gbGet(),path)
+        let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
+        allProps = allProps.map(x => [x,deps])
+        let {b,t,r,p} = parseSoul(path)
+        let type = t || r
+        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props,labels} = opts || {}
 
-    if(isSub && !subID)subID = Symbol()
-    //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
-    gbGet(allProps,typeGet)
-    return subID
-    function typeGet (gb){
-        try{
-            
-            skip = skip || 0
-            limit = limit || Infinity
-            props = (p) ? [p] : props || getAllActiveProps(gb,path)
-            sortBy = sortBy || []
-            let ret = {RETURN:[]}
-            let retArg = ret.RETURN
-            let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
-            let match = {CYPHER:[matchStr]}
-    
-            let retFirstArg = {limit,skip,idOnly}
-            let retSecArg = {x:{returnAsArray,propsByID,noID,noAddress,raw}}
-    
-            if(sortBy.length){
-                retFirstArg.sortBy = ['x']
-                for (let i = 0; i < sortBy.length; i+=2) {
-                    const alias = sortBy[i];
-                    let dir = sortBy[i+1]
-                    if(!['ASC','DESC'].includes(dir)) dir = 'DESC'
-                    retFirstArg.sortBy.push(alias)
-                    retFirstArg.sortBy.push(dir)
+        if(isSub && !subID)subID = Symbol()
+        //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+        gbGet(allProps,typeGet)
+        return subID
+        function typeGet (gb){
+            try{
+                
+                skip = skip || 0
+                limit = limit || Infinity
+                props = (p) ? [p] : props || getAllActiveProps(gb,path)
+                sortBy = sortBy || []
+                let ret = {RETURN:[]}
+                let retArg = ret.RETURN
+                let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
+                let match = {CYPHER:[matchStr]}
+        
+                let retFirstArg = {limit,skip,idOnly}
+                let retSecArg = {x:{returnAsArray,propsByID,noID,noAddress,raw}}
+        
+                if(sortBy.length){
+                    retFirstArg.sortBy = ['x']
+                    for (let i = 0; i < sortBy.length; i+=2) {
+                        const alias = sortBy[i];
+                        let dir = sortBy[i+1]
+                        if(!['ASC','DESC'].includes(dir)) dir = 'DESC'
+                        retFirstArg.sortBy.push(alias)
+                        retFirstArg.sortBy.push(dir)
+                    }
                 }
+                retArg.push(retFirstArg)
+                let propArr = []
+                let withP = makeSoul({b,t,r,p:true})
+                for (const prop of props) {
+                    let propID = findID(gb,prop,withP)
+                    propArr.push(propID)
+                }
+                retSecArg.x.props = propArr
+                retArg.push(retSecArg)
+        
+                let queryArr = [match,ret]
+                console.log('Number of props to get:',propArr.length)
+                setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
+            }catch(e){
+                console.warn(e)
+                return e
             }
-            retArg.push(retFirstArg)
-            let propArr = []
-            let withP = makeSoul({b,t,r,p:true})
-            for (const prop of props) {
-                let propID = findID(gb,prop,withP)
-                propArr.push(propID)
-            }
-            retSecArg.x.props = propArr
-            retArg.push(retSecArg)
-    
-            let queryArr = [match,ret]
-            console.log('Number of props to get:',propArr.length)
-            setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
-        }catch(e){
-            console.warn(e)
-            return e
         }
+    })
+
+    f.help = function(){
+        console.log('TODO... for now see table in readme: https://github.com/ThinkingJoules/gundb-gbase/')
+
     }
+    return f
     
 }
-const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) => (cb,opts)=>{
-    let allProps = grabThingPropPaths(gbGet(),path)
-    allProps = allProps.map(x => [x,['hidden','archived','deleted','sortval','propType','format']])
-    let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
-    if(isSub && !subID)subID = Symbol()
-    gbGet(allProps,nodeGet)
-    return subID
-    function nodeGet(gb){
-        try{
-            props = props || getAllActiveProps(gb,path)
-            let nodeObj
-            if(returnAsArray){
-                nodeObj = []
-                nodeObj.length = props.length
-            }else{
-                nodeObj = {}
-            }
-            if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
-            if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
-            let allSubs = []
-            let toGet = props.length
-            for (let i = 0,l=props.length; i < l; i++) {
-                const p = props[i];
-                let property
+const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
+    const f = (function(cb,opts){
+        let allProps = grabThingPropPaths(gbGet(),path)
+        allProps = allProps.map(x => [x,['hidden','archived','deleted','sortval','propType','format']])
+        let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
+        if(isSub && !subID)subID = Symbol()
+        gbGet(allProps,nodeGet)
+        return subID
+        function nodeGet(gb){
+            try{
+                props = props || getAllActiveProps(gb,path)
+                let nodeObj
                 if(returnAsArray){
-                    property = i
+                    nodeObj = []
+                    nodeObj.length = props.length
                 }else{
-                    property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
+                    nodeObj = {}
                 }
-                let addr = toAddress(path,p)
-                getCell(path,p,function(val){
-                    nodeObj[property] = val
-                    if(!noAddress)nodeObj.address[property] = addr
-                    toGet--
-                    if(!toGet)cb.call(cb,nodeObj)
-                },raw,true)
-                let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
-                allSubs.push(addrsub)
+                if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
+                if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+                let allSubs = []
+                let toGet = props.length
+                for (let i = 0,l=props.length; i < l; i++) {
+                    const p = props[i];
+                    let property
+                    if(returnAsArray){
+                        property = i
+                    }else{
+                        property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
+                    }
+                    let addr = toAddress(path,p)
+                    getCell(path,p,function(val){
+                        nodeObj[property] = val
+                        if(!noAddress)nodeObj.address[property] = addr
+                        toGet--
+                        if(!toGet)cb.call(cb,nodeObj)
+                    },raw,true)
+                    let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
+                    allSubs.push(addrsub)
+                }
+                setValue([path,subID],{kill:function(){allSubs.map(x => x.kill())}},nodeSubs)
+            }catch(e){
+                console.warn(e)
+                return e
             }
-            setValue([path,subID],{kill:function(){allSubs.map(x => x.kill())}},nodeSubs)
-        }catch(e){
-            console.warn(e)
-            return e
         }
-    }
-    
-    function nodeSubCB(obj,keyAs,cb,partial){
-        return function(v){
-            obj[keyAs] = v
-            if(partial && !returnAsArray)cb.call(cb,{[keyAs]:v})
-            else cb.call(cb,obj)
+        
+        function nodeSubCB(obj,keyAs,cb,partial){
+            return function(v){
+                obj[keyAs] = v
+                if(partial && !returnAsArray)cb.call(cb,{[keyAs]:v})
+                else cb.call(cb,obj)
+            }
         }
+    })
+
+    f.help = function(){
+        console.log('TODO... for now see table in readme: https://github.com/ThinkingJoules/gundb-gbase/')
+
     }
+    return f
 }
 const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
     const f = (function(cb,opts){
