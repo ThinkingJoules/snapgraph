@@ -1,5 +1,6 @@
 const {newBaseConfig,newNodeTypeConfig,newNodePropConfig,newRelationshipConfig,newRelationshipPropConfig} = require('./configs')
-//GBASE UTIL FUNCTIONS
+
+//REGEX STUFF
 const regOr = (regArr) =>{
     let cur = ''
     for (const r of regArr) {
@@ -9,6 +10,7 @@ const regOr = (regArr) =>{
     cur = '/'+cur+'/i'
     return eval(cur)
 }
+//soul regex
 const TYPE_INDEX = /^![a-z0-9]+$/i
 const BASE_CONFIG =/^![a-z0-9]+%$/i
 const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$$/i
@@ -54,8 +56,7 @@ const IS_CONFIG = (soul) =>{
 }
 const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX])
 
-
-
+//other regex
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const ENQ_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
 const USER_ENQ = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
@@ -64,73 +65,8 @@ const NULL_HASH = hash64(JSON.stringify(null))
 const ENQ = String.fromCharCode(5) //enquiry NP char. Using for an escape to say the value that follow is the node to find this prop on
 
 
-
-function bufferPathFromSoul(rowID, pval){
-    //buffer is the same structure as cache
-    let node = parseSoul(rowID)
-    if(pval)Object.assign(node,{'p':pval})
-    let thisPath = makeSoul(node) //get format in to the right order
-    if(thisPath.includes('.') && !thisPath.includes('$'))throw new Error('Must specify a row to get this prop')
-    let pathArgs = parseSoul(thisPath)
-    let order = ['b','t','r','i','p']//put i before p
-    let depth = []
-    for (const arg of order) {
-        let hasID = pathArgs[arg]
-        if(hasID){
-            if(arg === 't'){
-                depth.push('nodeTypes')
-                depth.push(hasID)
-            }else if(arg === 'r'){
-                depth.push('relations')
-                depth.push(hasID)
-            }else{
-                depth.push(hasID)
-            }
-        }
-    }
-    return depth
-}
-function cachePathFromRowID(rowID, pval){//currently not used, flattened cache
-    //rowID should be !#$ or !-$
-    //pval should be just an id
-    let node = parseSoul(rowID)
-    if(pval)Object.assign(node,{'p':pval})
-    let stringPath = makeSoul(node) //get format in to the right order
-    let cpath = cachePathFromChainPath(stringPath)
-    return cpath
-}
-function cachePathFromChainPath(thisPath){//currently not used, flattened cache
-    //valid paths: !, !#, !-, !#.$, !-.$
-    if(thisPath.includes('.') && !thisPath.includes('$'))throw new Error('Must specify a row to get this prop')
-    let pathArgs = parseSoul(thisPath)
-    let order = ['b','t','r','i','p']//put i before p
-    let depth = []
-    for (const arg of order) {
-        let hasID = pathArgs[arg]
-        if(hasID){
-            if(arg === 't'){
-                depth.push('nodeTypes')
-                depth.push(hasID)
-            }else if(arg === 'r'){
-                depth.push('relations')
-                depth.push(hasID)
-            }else if(arg === 'i'){
-                depth.push(thisPath)
-            }else{
-                depth.push(hasID)
-            }
-        }
-    }
-    return depth
-}
-function configPathFromSoul(soul){
-    //redundant now since chain path === soul (in this case)
-    //stubbing this so all code works
-    //TODO: remove
-    let configpath = configPathFromChainPath(soul)
-    return configpath
-
-}
+//gb CONFIG HELPERS
+//object paths
 function configPathFromChainPath(thisPath){
     //valid paths: !, !#, !-, !^, !&, !#., !-.
     let {b,t,r,p,g,l} = parseSoul(thisPath)
@@ -166,6 +102,7 @@ function configSoulFromChainPath(thisPath){
     return soul
 
 }
+//alias-ID finders
 function findConfigFromID(gb,path,someID){
     //look through base, then nodeTypes, then Relations, then Groups, then Labels, if still not found, look through all props
     let {b} = parseSoul(path)
@@ -369,6 +306,51 @@ const allUsedIn = gb =>{//could move this to a getter on the gb object?
     }
     return out
 }
+function getAllActiveProps(gb, tpath,opts){
+    let {b,t,r} = parseSoul(tpath)
+    let {props} = getValue(configPathFromChainPath(makeSoul({b,t,r})), gb)
+    let {hidden,archived,deleted} = opts || {}
+    hidden = !!hidden
+    archived = !!archived
+    deleted = !!deleted
+    let out = []
+    let i = 0
+    for (const p in props) {
+        let {hidden:h,archived:a,deleted:d,sortval} = props[p];
+        if ((h && hidden || !h) && (a && archived || !a) && (d && deleted || !d)) {
+            if(sortval === undefined){sortval = i; i++}
+            else {i = sortval+1}
+            out[sortval] = p
+        }
+    }
+    return out.filter(n => n!==undefined)
+}
+function getAllActiveNodeTypes(gb, bpath){
+    let {b} = parseSoul(bpath)
+    let {props} = getValue(configPathFromChainPath(makeSoul({b})), gb)
+    let out = []
+    for (const t in props) {
+        const {archived,deleted} = props[t];
+        if (!archived && !deleted) {
+            out.push(t)
+        }
+    }
+    return out
+}
+function getAllActiveRelations(gb, bpath){
+    let {b} = parseSoul(bpath)
+    let {relations} = getValue(configPathFromChainPath(makeSoul({b})), gb)
+    let out = []
+    for (const t in relations) {
+        const {archived,deleted} = relations[t];
+        if (!archived && !deleted) {
+            out.push(t)
+        }
+    }
+    return out
+}
+
+
 const gbForUI = (gb) =>{
     let output = {}
     for (const bid in gb) {
@@ -432,18 +414,8 @@ const gbByAlias = (gb) =>{
     }
     return output
 }
-const linkColPvals = (gb,base,tval)=>{//PROBABLY COULD BE USED AGAIN, NEEDS UPDATE
-    let obj = getValue([base,'props',tval,'props'], gb)
-    let result = {}
-    for (const key in obj) {
-        let {linksTo,GBtype,archived,deleted,associatedWith} = obj[key]
-        if ((linksTo || associatedWith) && !archived && !deleted && ['prev','next','association'].includes(GBtype)) {
-            const link = obj[key].linksTo
-            result[key] = link
-        }
-    }
-    return result
-}
+
+//getter and setters
 function setValue(propertyPath, value, obj,merge){
     if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
     if (propertyPath.length > 1) {
@@ -461,43 +433,6 @@ function setValue(propertyPath, value, obj,merge){
         return true // this is the end
     }
 }
-function setMergeValue(propertyPath, value, obj){
-    let properties = Array.isArray(propertyPath) ? propertyPath : propertyPath.split("/")
-    if (properties.length > 1) {// Not yet at the last property so keep digging
-      // The property doesn't exists OR is not an object (and so we overwritte it) so we create it
-      if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "object") obj[properties[0]] = {}
-        // We iterate.
-      return setMergeValue(properties.slice(1), value, obj[properties[0]])
-        // This is the last property - the one where to set the value
-    } else {
-      // We set the value to the last property
-      if(Array.isArray(value)){
-        if (!obj.hasOwnProperty(properties[0]) || !Array.isArray(obj[properties[0]])) obj[properties[0]] = []
-        obj[properties[0]] = obj[properties[0]].concat(value)
-      }else if(typeof value === 'object'){
-        if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "object") obj[properties[0]] = {}
-        obj[properties[0]] = Object.assign(obj[properties[0]], value)
-      }else if(typeof value === 'number'){
-        if (!obj.hasOwnProperty(properties[0]) || typeof obj[properties[0]] !== "number") obj[properties[0]] = 0
-        obj[properties[0]] += value
-      }else{
-        obj[properties[0]] = value
-      }
-      return true // this is the end
-    }
-}
-function setRowPropCacheValue(propertyPath, value, obj){
-    //same as setValue currently
-    //TODO:remove
-    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
-    if (propertyPath.length > 1) {
-        if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
-        return setRowPropCacheValue(propertyPath.slice(1), value, obj[propertyPath[0]])
-    } else {
-        obj[propertyPath[0]] = value
-        return true // this is the end
-    }
-}
 function getValue(propertyPath, obj){
     if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
     if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
@@ -510,20 +445,9 @@ function getValue(propertyPath, obj){
         return obj[propertyPath[0]]
     }
 }
-function getRowPropFromCache(propertyPath, obj){//DUPLICATE, BUT CURRENTLY USED
-    //same as getValue currently
-    //TODO:remove
-    if(typeof obj !== 'object' || Array.isArray(obj) || obj === null)return undefined
-    if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
-    if (propertyPath.length > 1) {// Not yet at the last property so keep digging
-      if (!obj.hasOwnProperty(propertyPath[0])){
-          return undefined
-      }
-      return getRowPropFromCache(propertyPath.slice(1), obj[propertyPath[0]])
-    }else{
-        return obj[propertyPath[0]]
-    }
-}
+
+
+//CHAIN COMMAND THINGS
 function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb){
     let startTime = Date.now()
     console.log('starting Put')
@@ -625,8 +549,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
 
     }else if(!isNode){//editing a relation
         //see if putProps.includes(srcP && trgtP) if not, add them to the putProps? Add them to the putObj?
-        let [srcP] = hasPropType(gb,nodeID,'source')
-        let [trgtP] = hasPropType(gb,nodeID,'target')
+        let srcP = 'SRC'
+        let trgtP = 'TRGT'
         if(!putProps.includes(srcP))run.push(['getAddPvalToPutObj',[srcP]])
         if(!putProps.includes(trgtP))run.push(['getAddPvalToPutObj',[trgtP]])
 
@@ -951,9 +875,9 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         },
         setupRelationship: function(relationTypepath, rtInstancePut){//create a relationship
             let {b,r} = parseSoul(relationTypepath)
-            let [sPval] = hasPropType(gb,relationTypepath,'source')
-            let [tPval] = hasPropType(gb,relationTypepath,'target')
-            let [statePval] = hasPropType(gb,relationTypepath,'state')
+            let sPval = 'SRC'
+            let tPval = 'TRGT'
+            let statePval = 'STATE'
 
             let source = rtInstancePut[sPval]
             let target = rtInstancePut[tPval]
@@ -1093,17 +1017,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
 
 
             decomposePutObj(nodeID,putObj,isNew)
-
-
-            // let sorted
-            // try {
-            //     sorted = sortPutObj(gb,nodeID,putObj)
-            // } catch (error) {
-            //     throwError(error)
-            // }
-            // Object.assign(toPut,sorted.toPut)
-            // timeIndices = sorted.tIdx
-            // logObj = sorted.logObj
             done()
         }
     }
@@ -1256,144 +1169,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
 
 }
-function sortPutObj(gb, nodeID, putObj, opts){
-    opts = opts || {}
-    let pathObj = parseSoul(nodeID)
-    let {fromConfig} = opts
-    let {props} = getValue(configPathFromChainPath(nodeID),gb)
-    let toPut = {}, tIdx = {}, logObj = {}
-    for (const pval in putObj) {
-        let propPath = makeSoul(Object.assign({},pathObj,{p:pval}))
-        let value = putObj[pval]
-        let {propType, dataType, alias, pickOptions} = props[pval]
-        let v = convertValueToType(value,dataType,nodeID)//Will catch Arrays, and stringify, otherwise probably unneccessary
-        let specials =  ['function']//["source", "target", "parent", "child", "lookup", "function"]//propTypes that can't be changed through the edit API
 
-        if(propType === undefined || dataType === undefined){
-            let err = new Error('Cannot find prop types for column: '+ alias +' ['+ pval+'].')
-            throw err
-        }
-        if(propType === 'date'){
-            tIdx[propPath] = value
-            addToPut(nodeID,{[pval]:value})
-            logObj[pval] = value
-        }else if(dataType === 'unorderedSet' && (!specials.includes(propType) || fromConfig)){
-            if(propType === 'pickMultiple' && v !== null){
-                for (const pick in v) {
-                    const boolean = v[pick];
-                    if(boolean && !pickOptions.includes(pick)){//make sure truthy ones are currently valid options
-                        let err = new Error('Invalid Pick Option. Must be one of the following: '+ pickOptions.join(', '))
-                        throw err
-                    }
-                }
-            }
-            if(v === null){
-                addToPut(nodeID,{[pval]: v})
-            }else{
-                addToPut(propPath,v)
-            }
-            logObj[pval] = v
-
-        }else if(!specials.includes(propType) || fromConfig){
-            addToPut(nodeID,{[pval]: v})
-            logObj[pval] = v
-       
-        }
-
-    }
-    return {toPut,tIdx,logObj}
-
-
-    function addToPut(putSoul,obj){
-        if(!toPut[putSoul]) toPut[putSoul] = {}
-        Object.assign(toPut[putSoul],obj)
-    }
-}
-function isEnq(val){
-    if(typeof val === 'string' && ENQ_LOOKUP.test(val)){
-        return val.slice(1)
-    }
-    return false
-}
-function makeEnq(nodeOrAddress,p){
-    let soul = nodeOrAddress
-    if(p && DATA_INSTANCE_NODE.test(nodeOrAddress)){
-        soul = makeSoul(Object.assign({},parseSoul(nodeOrAddress),{p}))
-    }else if(USER_ENQ.test(nodeOrAddress)){
-        soul = nodeOrAddress.match(USER_ENQ)[1]
-    }
-    if(!ALL_ADDRESSES.test(soul))throw new Error('Must specify a full address for a substitute.')
-    return ENQ+soul
-}
-function parseIncrement(incr){
-    let out = {}
-    if (incr !== ""){
-        out.inc = incr.split(',')[0]*1
-        out.start = (incr.split(',')[1]) ? incr.split(',')[1]*1 : 0
-        return out
-    }else{
-        return false
-    }
-}
-const checkUniques = (gb,path, cObj)=>{//for config vals that must be unique among configs
-    let uniques = ['sortval']
-    let configPath = configPathFromChainPath(path)
-    let endPath = configPath.pop()//go up one level
-    let things = getValue(configPath, gb)
-    if(!path.includes('#') && !path.includes('-') && !path.includes('.')){
-        return true //base nothing unique
-    }
-    let isNotUnique = lookupID(gb,cObj.alias,path)
-    let err = {}
-    if(isNotUnique)err[isNotUnique] = true
-    let sorts = 0
-    if(things !== undefined){
-        for (const id in things) {
-            if(id === endPath)continue
-            const thingPropConfig = things[id];
-            for (const prop of uniques) {
-                let cVal = thingPropConfig[prop]
-                if(prop === 'sortval'){
-                    sorts = (sorts < cVal) ? cVal : sorts
-                }
-                let compare = cObj[prop]
-                if(cVal !== undefined && compare !== undefined && (cVal == compare || id == compare)){
-                    err[prop] = cVal
-                }
-            
-            }
-        }
-        if(err.sortval !== undefined){
-            cObj.sortval = sorts+10
-            delete err.sortval
-        }
-        let keys = Object.keys(err)
-        if(keys.length){
-            throw new Error('Non-unique value found on key(s): '+keys.join(', '),Object.values(err).join(', '))
-        }
-        return true
-    }else{
-        let errmsg = 'Cannot find config data at path: ' + configPath
-        throw new Error(errmsg)
-    }
-}
-const nextSortval = (gb,path,pval)=>{
-    //pval is only used if curIDsPath fails
-    let curIDsPath = configPathFromChainPath(path)
-    curIDsPath.push('props')
-    let psort = (pval && pval.split('p')[0]*10) || 10
-    let curIDs = getValue(curIDsPath, gb) || {[pval]:psort}
-    let nextSort = 0
-    for (const key in curIDs) {
-        const sortval = curIDs[key].sortval;
-        //console.log(sortval, nextSort)
-        if(sortval && sortval >= nextSort){
-            nextSort = sortval
-        }
-    }
-    nextSort += 10
-    return nextSort
-}
+//CONVERSION THINGS
 function convertValueToType(value, toType, rowAlias, delimiter){
     let out
     if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
@@ -1546,31 +1323,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     }
     return out
 }
-const isMulti = (gb,colStr)=>{
-    let cpath = configPathFromChainPath(colStr)
-    let {allowMultiple} = getValue(cpath,gb) || {}
-    if(allowMultiple){
-        return true
-    }
-    return false
-}
-const getPropType = (gb,propPath)=>{
-    let cpath = configPathFromChainPath(propPath)
-    let {propType} = getValue(cpath,gb) || {}
-    if(propType !== undefined){
-        return propType
-    }
-    return false
-}
-const getDataType = (gb,propPath)=>{
-    let cpath = configPathFromChainPath(propPath)
-    let {dataType} = getValue(cpath,gb) || {}
-    if(dataType !== undefined){
-        return dataType
-    }
-    return false
-}
-function tsvJSONgb(tsv){
+function tsvJSONgb(tsv){//Need to make better so it can be a csv, tsv, \r || \r\n without any issues
     let lines=tsv.split("\r\n");
     let result = [];
     let headers=lines[0].split("\t");
@@ -1587,66 +1340,82 @@ function tsvJSONgb(tsv){
     return result; //JavaScript object
     //return JSON.stringify(result); //JSON
 }
-function hasPropType(gb, tPathOrPpath, type){
-    let {b,t,r} = parseSoul(tPathOrPpath)
-    let tPath = makeSoul({b,t,r})
-    let {props} = getValue(configPathFromChainPath(tPath), gb) || {}
-    let cols = []
-    for (const pval in props) {
-        const {propType} = props[pval];
-        if(propType === type){
-            cols.push(pval)
-        }
-    }
-    if(cols.length){
-        return cols
+
+//CONFIG STUFF
+function parseIncrement(incr){
+    let out = {}
+    if (incr !== ""){
+        out.inc = incr.split(',')[0]*1
+        out.start = (incr.split(',')[1]) ? incr.split(',')[1]*1 : 0
+        return out
     }else{
         return false
     }
 }
-function getAllActiveProps(gb, tpath,opts){
-    let {b,t,r} = parseSoul(tpath)
-    let {props} = getValue(configPathFromChainPath(makeSoul({b,t,r})), gb)
-    let {hidden,archived,deleted} = opts || {}
-    hidden = !!hidden
-    archived = !!archived
-    deleted = !!deleted
-    let out = []
-    let i = 0
-    for (const p in props) {
-        let {hidden:h,archived:a,deleted:d,sortval} = props[p];
-        if ((h && hidden || !h) && (a && archived || !a) && (d && deleted || !d)) {
-            if(sortval === undefined){sortval = i; i++}
-            else {i = sortval+1}
-            out[sortval] = p
+const checkUniques = (gb,path, cObj)=>{//for config vals that must be unique among configs
+    let uniques = ['sortval']
+    let configPath = configPathFromChainPath(path)
+    let endPath = configPath.pop()//go up one level
+    let things = getValue(configPath, gb)
+    if(!path.includes('#') && !path.includes('-') && !path.includes('.')){
+        return true //base nothing unique
+    }
+    let isNotUnique = lookupID(gb,cObj.alias,path)
+    let err = {}
+    if(isNotUnique)err[isNotUnique] = true
+    let sorts = 0
+    if(things !== undefined){
+        for (const id in things) {
+            if(id === endPath)continue
+            const thingPropConfig = things[id];
+            for (const prop of uniques) {
+                let cVal = thingPropConfig[prop]
+                if(prop === 'sortval'){
+                    sorts = (sorts < cVal) ? cVal : sorts
+                }
+                let compare = cObj[prop]
+                if(cVal !== undefined && compare !== undefined && (cVal == compare || id == compare)){
+                    err[prop] = cVal
+                }
+            
+            }
+        }
+        if(err.sortval !== undefined){
+            cObj.sortval = sorts+10
+            delete err.sortval
+        }
+        let keys = Object.keys(err)
+        if(keys.length){
+            throw new Error('Non-unique value found on key(s): '+keys.join(', '),Object.values(err).join(', '))
+        }
+        return true
+    }else{
+        let errmsg = 'Cannot find config data at path: ' + configPath
+        throw new Error(errmsg)
+    }
+}
+const nextSortval = (gb,path,pval)=>{
+    //pval is only used if curIDsPath fails
+    let curIDsPath = configPathFromChainPath(path)
+    curIDsPath.push('props')
+    let psort = (pval && pval.split('p')[0]*10) || 10
+    let curIDs = getValue(curIDsPath, gb) || {[pval]:psort}
+    let nextSort = 0
+    for (const key in curIDs) {
+        const sortval = curIDs[key].sortval;
+        //console.log(sortval, nextSort)
+        if(sortval && sortval >= nextSort){
+            nextSort = sortval
         }
     }
-    return out.filter(n => n!==undefined)
+    nextSort += 10
+    return nextSort
 }
-function getAllActiveNodeTypes(gb, bpath){
-    let {b} = parseSoul(bpath)
-    let {props} = getValue(configPathFromChainPath(makeSoul({b})), gb)
-    let out = []
-    for (const t in props) {
-        const {archived,deleted} = props[t];
-        if (!archived && !deleted) {
-            out.push(t)
-        }
-    }
-    return out
-}
-function getAllActiveRelations(gb, bpath){
-    let {b} = parseSoul(bpath)
-    let {relations} = getValue(configPathFromChainPath(makeSoul({b})), gb)
-    let out = []
-    for (const t in relations) {
-        const {archived,deleted} = relations[t];
-        if (!archived && !deleted) {
-            out.push(t)
-        }
-    }
-    return out
-}
+
+
+
+
+
 
 function buildPermObj(type, curPubKey, usersObj,checkOnly){
     curPubKey = curPubKey || false
@@ -1677,14 +1446,7 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
     }
     return out
 }
-function newDataNodeID(id,unix_ms){
-    let i = id || rand(3)
-    let t = unix_ms || Date.now()
-    return i+'_'+t
-}
-function newRelationID(src,trgt){
-    return hash64(src+trgt)
-}
+
 
 function rand(len, charSet){
     var s = '';
@@ -1749,6 +1511,8 @@ function hash(key, seed) {
 	return h1 >>> 0;
 }
 
+
+//SOUL STUFF
 const SOUL_ALIAS = {'!':'b','#':'t','-':'r','$':'i','.':'p','^':'g','&':'l'}//makes it easier to type out...
 const SOUL_SYM_ORDER = '!#-><.$&^*|%[;@:/?' // "," is used internally for splitting souls, _ is reserved for simple splits in ids
 function makeSoul(argObj){
@@ -1804,6 +1568,33 @@ function removeP(address){//address > nodeID
     delete idObj['.']
     return makeSoul(idObj)
 }
+function isEnq(val){
+    if(typeof val === 'string' && ENQ_LOOKUP.test(val)){
+        return val.slice(1)
+    }
+    return false
+}
+function makeEnq(nodeOrAddress,p){
+    let soul = nodeOrAddress
+    if(p && DATA_INSTANCE_NODE.test(nodeOrAddress)){
+        soul = makeSoul(Object.assign({},parseSoul(nodeOrAddress),{p}))
+    }else if(USER_ENQ.test(nodeOrAddress)){
+        soul = nodeOrAddress.match(USER_ENQ)[1]
+    }
+    if(!ALL_ADDRESSES.test(soul))throw new Error('Must specify a full address for a substitute.')
+    return ENQ+soul
+}
+function newDataNodeID(id,unix_ms){
+    let i = id || rand(3)
+    let t = unix_ms || Date.now()
+    return i+'_'+t
+}
+function newRelationID(src,trgt){
+    return hash64(src+trgt)
+}
+
+
+//SET STUFF
 function intersect(setA, setB) {
     var _intersection = new Set();
     for (var elem of setB) {
@@ -1845,6 +1636,8 @@ function naturalCompare(a, b) {
     return ax.length - bx.length;
 }
 
+
+//GUN WRAPPERS
 const gunGet = (gun) => (soul,prop,cb)=>{
     //console.log('getting soul:',soul, 'prop:',prop)
     let get = (prop !== undefined && prop !== false) ? {'#':soul,'.':prop} : {'#':soul}
@@ -1874,7 +1667,6 @@ const gunPut = (gun) => (soul,putO)=>{
         put: {[soul]:putO}
     })
 }
-
 const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
     //pathArgs = {path: [arrOfProps] || falsy(getAll)}
     if(cb === undefined)return gb//short circuit so we can access gb to grab ids
@@ -1914,10 +1706,10 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
             get(soul,prop,function(value){
                 //will be type config or prop config 
                 if(value === undefined){//should never happen?
-                    setMergeValue(pathArr,null,gb)
+                    setValue(pathArr,null,gb)
                 }else{
                     if(['usedIn','pickOptions'].includes(prop))value = JSON.parse(value)
-                    setMergeValue(pathArr,value,gb)
+                    setValue(pathArr,value,gb)
                 }
                 toGet--
                 if(!toGet)cb(gb)
@@ -1926,7 +1718,7 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
     }
 }
 
-const soulSchema = {
+const soulSchema = {//OUTDATED!
     /* legend
     !: [b] base id
     #: [t] label/table/nodeType id
@@ -1994,71 +1786,23 @@ const soulSchema = {
     }
 
 
-function Cache(){}
-Object.defineProperty(Cache.prototype, "watch", {
-    enumerable: false
-  , configurable: true
-  , writable: false
-  , value: function (prop, handler) {
-        Object.defineProperty(this, prop, {
-            get: function () {
-                let val = this[prop]
-                let lookup = isEnq(val)
-                console.log(this,prop,val,lookup)
-    
-                if(lookup){
-                    return this[lookup]
-                }else{
-                    return [prop, val]
-                }
-            }
-            , set: function (newval) {
-                this[prop] = newval;
-                console.log(this)
-                //we cannot check to see if it has changed automatically
-                //must do that by other means before setting value
-                //once set, callback will fire
-
-                //let get = this[prop] //if isEnq, will not be the same as newval, getter is different
-                //handler.call(this,prop,newval);
-            }
-            , enumerable: true
-            , configurable: true
-        });
-    }
-});
-const cache = {}
 
 module.exports = {
     gunGet,
     gunPut,
-    cachePathFromChainPath,
-    configPathFromSoul,
     configPathFromChainPath,
     configSoulFromChainPath,
     findID,
     gbForUI,
     gbByAlias,
-    linkColPvals,
     setValue,
-    setMergeValue,
     getValue,
     checkUniques,
     nextSortval,
     convertValueToType,
-    isMulti,
-    getPropType,
-    getDataType,
     tsvJSONgb,
-    Cache,
-    cache,
     allUsedIn,
     removeFromArr,
-    hasPropType,
-    getRowPropFromCache,
-    cachePathFromRowID,
-    setRowPropCacheValue,
-    bufferPathFromSoul,
     getAllActiveProps,
     buildPermObj,
     rand,
@@ -2068,11 +1812,10 @@ module.exports = {
     ALL_INSTANCE_NODES,
     DATA_INSTANCE_NODE,
     RELATION_INSTANCE_NODE,
-    DATA_PROP_SOUL: DATA_ADDRESS,
-    RELATION_PROP_SOUL: RELATION_ADDRESS,
+    DATA_ADDRESS,
+    RELATION_ADDRESS,
     ISO_DATE_PATTERN,
     NULL_HASH,
-    sortPutObj,
     newID,
     hash64,
     newDataNodeID,

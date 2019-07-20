@@ -4,7 +4,7 @@ const {convertValueToType,
     findRowID,
     findID,
     getValue,
-    setMergeValue,
+    setValue,
     removeFromArr,
     handleRowEditUndo,
     checkUniques,
@@ -14,7 +14,6 @@ const {convertValueToType,
     parseSoul,
     DATA_INSTANCE_NODE,
     PROPERTY_PATTERN,
-    sortPutObj,
     IS_CONFIG_SOUL,
     putData,
     newID,
@@ -987,7 +986,7 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
 
             let pconfig = newNodePropConfig({alias: palias, propType, dataType,enforceUnique})
             pconfig.id = p
-            setMergeValue(configPathFromChainPath(makeSoul({b,t,r,p})),pconfig,altgb)
+            setValue(configPathFromChainPath(makeSoul({b,t,r,p})),pconfig,altgb,true)
             newConfigs.push(pconfig)
         }
         aliasLookup[col] = p

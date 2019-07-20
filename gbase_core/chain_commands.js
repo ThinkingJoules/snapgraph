@@ -16,7 +16,6 @@ const{getValue,
     tsvJSONgb,
     convertValueToType,
     checkUniques,
-    hasPropType,
     getAllActiveProps,
     buildPermObj,
     makeSoul,
@@ -147,7 +146,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
     let newPath = makeSoul({b,[relationOrNode]:tid})
     let tCsoul = configSoulFromChainPath(newPath)
     //console.log(newPath,tCsoul)
-    
+
     makehandleConfigChange(gun,newGB)(tconfig,newPath,{isNew:true, internalCB:function(obj){
         let {configPuts} = obj
         Object.assign(toPut,configPuts)
@@ -769,10 +768,9 @@ const makerelatesTo = (gun,gb,getCell) => path => (trgt,r,rtProps) =>{//TODO
         
         let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb)
         r = findID(relations,r)//r will be '-'id, will throw error if not found
-        let rType = makeSoul({b,r})
-        let [srcP] = hasPropType(gb,rType,'source')
-        let [trgtP] = hasPropType(gb,rType,'target')
-        let [stateP] = hasPropType(gb,rType,'state')
+        let srcP = 'SRC'
+        let trgtP = 'TRGT'
+        let stateP = 'STATE'
         Object.assign(rtProps,{[srcP]:path,[trgtP]:trgt,[stateP]:'active'})
         let hashStr = path+trgt
         let i = hash64(hashStr)//should never have two relation nodes (of same r id) with same src+trgt

@@ -48,25 +48,15 @@ Subscriptions:
 */
 
 const {
-    cachePathFromChainPath,
-    configPathFromSoul,
     configPathFromChainPath,
     gbForUI,
     gbByAlias,
     setValue,
-    setMergeValue,
     getValue,
-    getPropType,
-    getDataType,
     findLinkingCol,
-    getRowPropFromCache,
-    cachePathFromRowID,
-    setRowPropCacheValue,
     findID,
-    bufferPathFromSoul,
     getAllActiveProps,
     formatQueryResults,
-    hasPropType,
     makeSoul,
     parseSoul,
     rand,
@@ -75,8 +65,8 @@ const {
     ALL_INSTANCE_NODES,
     DATA_INSTANCE_NODE,
     RELATION_INSTANCE_NODE,
-    DATA_PROP_SOUL,
-    RELATION_PROP_SOUL,
+    DATA_ADDRESS,
+    RELATION_ADDRESS,
     PROPERTY_PATTERN,
     ALL_TYPE_PATHS,
     ENQ,
@@ -235,8 +225,8 @@ function incomingPutMsg(msg){//wire listener
                 data.groups = {}
                 data.relations = {}
                 data.labels = {}
-                let configpath = configPathFromSoul(soul)
-                setMergeValue(configpath,data,gb)
+                let configpath = configPathFromChainPath(soul)
+                setValue(configpath,data,gb,true)
                 triggerConfigUpdate(soul)
             }else if(type === 'typeIndex'){
                 for (const tval in data) {//tval '#' + id || '-'+id
@@ -349,7 +339,6 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
 
 
     gbase.newBase = newBase
-    gbase.node = node
     gbase.ti = tIndex
     gbase.tl = tLog
     gbase.qi = qIndex
@@ -446,7 +435,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
         }        
         let data = JSON.parse(JSON.stringify(gundata))
         delete data['_']
-        let configpath = configPathFromSoul(baseLabels)
+        let configpath = configPathFromChainPath(baseLabels)
         setValue(configpath,data,gbMerge,true)
         toGet.got()
     })
@@ -476,7 +465,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
     function handleGunConfig(subSoul){
         return function(gundata){
             //will be type config or prop config 
-            let configpath = configPathFromSoul(subSoul)
+            let configpath = configPathFromChainPath(subSoul)
             if(gundata === undefined){
                 setValue(configpath,{},gbMerge)
             }else{
@@ -538,9 +527,68 @@ function updateConfig(){
         //console.log(configObj.forUI, configObj.byGB)
     }
 }
+//CHAIN HELPERS
+const ls = (path) =>(function(){
+    let things = {}
+    let {b,t,r} = path && parseSoul(path) || {}
+    if(t || r){
+        let cmd = new StringCMD(path,'prop')
+        let cPath = [...configPathFromChainPath(path),'props']
+        Object.entries(getValue(cPath,gb)).map(x => things[cmd.appendReturn(x[0])] = {ALIAS:x[1].alias,ID:x[0]})
+    }else if(!b){
+        let cmd = new StringCMD(path)
+        Object.entries(gb).map(x => things[cmd.appendReturn(x[0])] = {ID:x[0],ALIAS:x[1].alias})
+    }else if(b && !(t||r)){
+        let b1 = new StringCMD(path,'nodeType')
+        let b2 = new StringCMD(path,'relation')
+        let cP1 = [...configPathFromChainPath(path),'props']
+        let cP2 = [...configPathFromChainPath(path),'relations']
+        Object.entries(getValue(cP1,gb)).map(x => things[b1.appendReturn(x[0])] = {ALIAS:x[1].alias,ID:x[0]})
+        Object.entries(getValue(cP2,gb)).map(x => things[b2.appendReturn(x[0])] = {ALIAS:x[1].alias,ID:x[0]})
+    }
+    console.warn('You can use either the "ID" or the "ALIAS" in the api calls. "ALIAS" will check against the **current** configuration')
+    console.table(things)
+
+    return path
+    
+})
+function StringCMD(path,appendApiToEnd){
+    let self = this
+    this.curCMD = (path) ? 'gbase.base' : 'gbase'
+    this.configPath = path && configPathFromChainPath(path) || []
+    let cPath = this.configPath
+    if(appendApiToEnd)cPath = [...cPath,appendApiToEnd]
+    for (let i = 0; i < cPath.length; i++) {
+        const get = cPath[i];
+        if(i == cPath.length-1 && appendApiToEnd)this.curCMD+='.'+appendApiToEnd
+        else if(!(i%2))this.curCMD+=`('`+get+`')`
+        else if(i === 1 && get === 'props')this.curCMD+='.nodeType'
+        else if(i === 1 && get === 'relations')this.curCMD+='.relation'
+        else if(i === 3)this.curCMD+='.prop'
+        
+    }
+    this.appendReturn = function(string,asIs){
+        if(asIs)return self.curCMD+string
+        return self.curCMD+"('"+string+"')"
+    }
+}
+
+function chainHelp(path){
+    return function(){
+        let calls = Object.keys(this)
+        let table = {}
+        for (const key of calls) {
+            if(['ls','help'].includes(key))continue
+            let baseCMD = new StringCMD(path,key)
+            table[key] = {help:baseCMD.appendReturn('.help()',true)}
+        }
+        console.table(table)
+    }
+}
+
 
 //CHAIN CONSTRUCTORS
-function base(base){
+const base = (function(base){
     //check base for name in gb to find ID, or base is already ID
     //return baseChainOpt
     let path = '!'
@@ -560,168 +608,220 @@ function base(base){
     }
     let out = baseChainOpt(path)
     return out
+});
+base.help = function(){
+    let summary = 
+    `
+    Used to move your chain context to a particular base.
+    `
+    let table = {firstArg:{what:'ID or Alias',type:'string'}}
+
+    console.warn(summary)
+    console.table(table)
 }
-function nodeType(label){
-    //check base for name in gb to find ID, or base is already ID
-    //return depending on table type, return correct tableChainOpt
-    let {b} = parseSoul(this._path)
-    let id,isRoot
-    let tvals = gb[b].props
-    let check = getValue([b,'props',label],gb)
-    if(check !== undefined){
-        id = label
-    }else{
-        for (const tval in tvals) {
-            const {alias,parent} = tvals[tval];
-            if(label === alias){
-                id = tval
-                isRoot = (parent === '') ? true : false
+const nodeType = (path,isNode) =>{
+    const f = (function(label){
+        //check base for name in gb to find ID, or base is already ID
+        //return depending on table type, return correct tableChainOpt
+        let {b} = parseSoul(path)
+        let sym = (isNode) ? 't' : 'r'
+        let under = (isNode) ? 'props' : 'relations'
+        let thingType = makeSoul({b,[sym]:label})
+        let id
+        let tvals = gb[b][under]
+        let check = getValue(configPathFromChainPath(thingType),gb)
+        if(check !== undefined){
+            id = label
+        }else{
+            for (const tval in tvals) {
+                const {alias,parent} = tvals[tval];
+                if(label === alias){
+                    id = tval
+                    break
+                }
+            }
+        }
+        if(!id){
+            throw new Error('Cannot find corresponding ID for alias supplied')
+        }
+        let out
+        let newPath = makeSoul({b,[sym]:id})
+        out = nodeTypeChainOpt(newPath, isNode)
+
+        return out
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to move your chain context to a particular type of Node (Not a relationship!).
+        `
+        let table = {firstArg:{what:'ID or Alias',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
+    }
+    return f
+}
+const prop = (path) =>{
+    const f = (function(prop){
+        //check base for name in gb to find ID, or base is already ID
+        //return depending on table type, return correct columnChainOpt
+        let pathO = parseSoul(path)
+        let {b,t,r,i} = pathO
+        let id
+        let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
+        for (const pval in pvals) {
+            const {alias} = pvals[pval];
+            if(prop === alias || prop === pval){
+                id = pval
                 break
             }
         }
-    }
-    if(!id){
-        throw new Error('Cannot find corresponding ID for nodeType alias supplied')
-    }
-    let out
-    let newPath = makeSoul({b,t:id})
-    out = nodeTypeChainOpt(newPath, isRoot)
-    return out
-}
-function relation(label){
-    let base = this._path
-    let id
-    let rtvals = gb[base].props
-    let check = getValue([base,'relations',label],gb)
-    if(check !== undefined){
-        id = label
-    }else{
-        for (const tval in rtvals) {
-            const {alias} = rtvals[tval];
-            if(label === alias){
-                id = tval
-                break
-            }
+        if(!id){
+            throw new Error('Cannot find corresponding ID for prop alias supplied')
         }
-    }
-    if(!id){
-        throw new Error('Cannot find corresponding ID for relation alias supplied')
-    }
-    let out
-    let newPath = [base,'-',id].join('')
-    out = relationChainOpt(newPath)
-    return out
-}
-function group(group){
-    let base = this._path
-    let check = getValue([base,'groups'],gb)
-    if(check === undefined || !(check && check[group])){
-        throw new Error('Cannot find group specified')
-    }
-    let out = groupChainOpt(base,group)
-    return out
-}
-function prop(prop){
-    //check base for name in gb to find ID, or base is already ID
-    //return depending on table type, return correct columnChainOpt
-    let path = this._path
-    let pathO = parseSoul(path)
-    let {b,t,r,i} = pathO
-    let id
-    let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-    let isNode = !r
-    let ptype,dtype
-    for (const pval in pvals) {
-        const {alias, propType, dataType} = pvals[pval];
-        if(prop === alias || prop === pval){
-            ptype = propType
-            dtype = dataType
-            id = pval
-            break
+        let out
+        let newPath = makeSoul(Object.assign(pathO,{p:id}))
+        if(!i){
+            out = propChainOpt(newPath)
+        }else{//called prop from gbase.node(ID).prop(name)
+            out = nodeValueOpt(newPath)
         }
+        return out
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to move your chain context to a particular property of your current context.
+        `
+        let table = {firstArg:{what:'ID or Alias',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
     }
-    if(!id){
-        throw new Error('Cannot find corresponding ID for prop alias supplied')
-    }
-    let out
-    let newPath = makeSoul(Object.assign(pathO,{p:id}))
-    if(isNode && !i){
-        out = propChainOpt(newPath, ptype, dtype)
-    }else if(!i){
-        out = relationPropChainOpt(newPath, ptype, dtype)
-    }else{//called prop from gbase.node(ID).prop(name)
-        out = nodeValueOpt(newPath)
-    }
-    return out
+    return f
 }
-function node(nodeID){
-    //can be with just id of or could be whole string (!#$ or !-$)
-    //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
-    let path = this._path
-    let testPath = nodeID
-    if(path){//only if coming from base.nodeType.node
-        if(!INSTANCE_OR_ADDRESS.test(nodeID)){
-            testPath = parseSoul(path)
-            Object.assign(testPath,{i:testPath})
-            testPath = makeSoul(testPath)
-        } 
+const node = (path) =>{
+    const f = (function(nodeID){
+        //can be with just id of or could be whole string (!#$ or !-$)
+        //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
+        let testPath = nodeID
+        if(path){//only if coming from base.nodeType.node
+            if(!INSTANCE_OR_ADDRESS.test(nodeID)){
+                testPath = parseSoul(path)
+                Object.assign(testPath,{i:testPath})
+                testPath = makeSoul(testPath)
+            } 
+        }
+   
+        if(DATA_INSTANCE_NODE.test(testPath)){
+            return nodeChainOpt(testPath,true)
+        }else if(RELATION_INSTANCE_NODE.test(testPath)){
+            return nodeChainOpt(testPath,false)
+        }else if(DATA_ADDRESS.test(testPath)){//is a nodeProp
+            return nodeValueOpt(testPath)
+        }else if(RELATION_ADDRESS.test(testPath)){//is a relationProp
+            return nodeValueOpt(testPath)
+        }else{
+            throw new Error('Cannot decipher rowID given')
+        }
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to select a specific node OR property on a node (address)
+        `
+        let table = {'1st Arg, Opt 1':{what:'NodeID (!#$,!-$)',type:'string'},'1st Arg, Opt 2':{what:'Address (!#.$,!-.$)',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
     }
-    let {b,t,p} = parseSoul(testPath)
-
-    if(DATA_INSTANCE_NODE.test(testPath)){
-        return nodeChainOpt(testPath,true)
-    }else if(RELATION_INSTANCE_NODE.test(testPath)){
-        return nodeChainOpt(testPath,false)
-    }else if(DATA_PROP_SOUL.test(testPath)){//is a nodeProp
-        return nodeValueOpt(testPath)
-    }else if(RELATION_PROP_SOUL.test(testPath)){//is a relationProp
-        return nodeValueOpt(testPath)
-    }else{
-        throw new Error('Cannot decipher rowID given')
-    }
+    return f
 }
-
 
 //STATIC CHAIN OPTS
 function gbaseChainOpt(){
-    return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, item: node}
+    return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, node: node(),ls:ls(),help:chainHelp()}
 }
 function baseChainOpt(_path){
-    return {_path,kill:kill(_path), config: config(_path), subscribeQuery: performQuery(_path,true), retrieveQuery: performQuery(_path,false), newNodeType: newNodeType(_path,'t'), newRelationType: newNodeType(_path,'r'), importNewNodeType: importNewNodeType(_path), relation,nodeType,group,newGroup: newGroup(_path),setAdmin: setAdmin(_path),addUser: addUser(_path)}
+    return {_path,
+        ls:ls(_path),
+        help:chainHelp(_path),
+        kill:kill(_path), 
+        config: config(_path), 
+        subscribeQuery: performQuery(_path,true), 
+        retrieveQuery: performQuery(_path,false), 
+        newNodeType: newNodeType(_path,'t'), 
+        newRelationType: newNodeType(_path,'r'), 
+        importNewNodeType: importNewNodeType(_path), 
+        newGroup: newGroup(_path),
+        setAdmin: setAdmin(_path),
+        addUser: addUser(_path),
+        
+        relation:nodeType(_path,false),
+        nodeType:nodeType(_path,true)
+    }
 }
-function groupChainOpt(base, group){
-    return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
-}
-function nodeTypeChainOpt(_path){
-    let out = {_path,kill:kill(_path), config: config(_path), newNode: newNode(_path), addProp: addProp(_path), importData: importData(_path), subscribe:typeGet(_path,true),retrieve:typeGet(_path,false), prop,node}
+function nodeTypeChainOpt(_path,isNode){
+    let out = {_path,
+        ls:ls(_path),
+        help:chainHelp(_path),
+        kill:kill(_path), 
+        config: config(_path), 
+        addProp: addProp(_path), 
+        importData: importData(_path), 
+        subscribe:typeGet(_path,true),
+        retrieve:typeGet(_path,false), 
+        prop:prop(_path),
+        node:node(_path)
+    }
+
+    if(isNode){
+        Object.assign(out,{newNode: newNode(_path)})
+    }
+
     return out
 }
-function relationChainOpt(_path){
-    return {_path,kill:kill(_path), config: config(_path), addProp: addProp(_path), importData: importData(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false),prop}
-}
-
-function propChainOpt(_path, propType, dataType){
-    let out = {_path,kill:kill(_path), config: config(_path),subscribe:typeGet(_path,true),retrieve:typeGet(_path,false)}
+function propChainOpt(_path){
+    let out = {_path,
+        kill:kill(_path), 
+        config: config(_path),
+        subscribe:typeGet(_path,true),
+        retrieve:typeGet(_path,false)
+    }
     // if(['string','number'].includes(dataType) && propType === 'data'){
     //     out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
     // }
     return out
 }
-function relationPropChainOpt(_path){
-    let out = {_path, config: config(_path)}
-    return out
-}
 function nodeChainOpt(_path, isData){
-    let out = {_path,kill:kill(_path), edit: edit(_path,false,false), retrieve: nodeGet(_path,false), subscribe: nodeGet(_path,true),archive: archive(_path),unarchive:unarchive(_path),delete:deleteNode(_path)}
+    let out = {_path,
+        kill:kill(_path), 
+        edit: edit(_path,false,false), 
+        retrieve: nodeGet(_path,false), 
+        subscribe: nodeGet(_path,true),
+        archive: archive(_path),
+        unarchive:unarchive(_path),
+        delete:deleteNode(_path)}
     if(isData){
         Object.assign(out,{relatesTo:relatesTo(_path),newFrom:newFrom(_path)})
     }
     return out
 }
 function nodeValueOpt(_path){
-    let out = {_path,kill:kill(_path), edit: edit(_path,false,false),subscribe: addressGet(_path,true),retrieve:addressGet(_path,false), clearValue:nullValue(_path)}
-    return out
+    return {_path,
+        kill:kill(_path), 
+        edit: edit(_path,false,false),
+        subscribe: addressGet(_path,true),
+        retrieve:addressGet(_path,false), 
+        clearValue:nullValue(_path)
+    }
 }
+
+function groupChainOpt(base, group){
+    return {_path:base, add: userAndGroup(base,group,true), remove:userAndGroup(base,group,false), chp:chp(base,group)}
+}
+
 
 
 //DATA SUBSCRIPTIONS
@@ -750,9 +850,6 @@ function killSub (path,sID){
     }
     
 }
-
-
-
 
 //CACHE
 function formatData(format, pType,dType,val){
@@ -2760,7 +2857,7 @@ function Query(path,qArr,userCB,sID){
                     })
                 }
             }else{
-                let [p] = hasPropType(gb,thingType,thing[dir+'Is'])//looking for source/target pval
+                let p = (thing[dir+'Is'] === 'source') ? 'SRC' : 'TRGT' //looking for source/target pval
                 //technically if this is undirected, I think we should branch our path again, and navigate this dir with both src and trgt ids...
                 //not doing that now, just going to have bidirectional paths show as a single path in results
                 getCell(startID,p,function(nodeid){
