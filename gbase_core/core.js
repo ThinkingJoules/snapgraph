@@ -89,7 +89,8 @@ const {
     IS_CONFIG,
     IS_CONFIG_SOUL,
     gbGet:rawgbGet,
-    ALL_ADDRESSES
+    ALL_ADDRESSES,
+    StringCMD
 } = require('./util.js')
 const makegbGet = rawgbGet(gb)
 let gbGet
@@ -552,27 +553,6 @@ const ls = (path) =>(function(){
     return path
     
 })
-function StringCMD(path,appendApiToEnd){
-    let self = this
-    this.curCMD = (path) ? 'gbase.base' : 'gbase'
-    this.configPath = path && configPathFromChainPath(path) || []
-    let cPath = this.configPath
-    if(appendApiToEnd)cPath = [...cPath,appendApiToEnd]
-    for (let i = 0; i < cPath.length; i++) {
-        const get = cPath[i];
-        if(i == cPath.length-1 && appendApiToEnd)this.curCMD+='.'+appendApiToEnd
-        else if(!(i%2))this.curCMD+=`('`+get+`')`
-        else if(i === 1 && get === 'props')this.curCMD+='.nodeType'
-        else if(i === 1 && get === 'relations')this.curCMD+='.relation'
-        else if(i === 3)this.curCMD+='.prop'
-        
-    }
-    this.appendReturn = function(string,asIs){
-        if(asIs)return self.curCMD+string
-        return self.curCMD+"('"+string+"')"
-    }
-}
-
 function chainHelp(path){
     return function(){
         let calls = Object.keys(this)
@@ -741,7 +721,16 @@ const node = (path) =>{
 
 //STATIC CHAIN OPTS
 function gbaseChainOpt(){
-    return {newBase, showgb, showcache, showgsub, showgunsub, solve, base, node: node(),ls:ls(),help:chainHelp()}
+    return {newBase, 
+        showgb, 
+        showcache, 
+        showgsub, 
+        showgunsub, 
+        solve, 
+        base, 
+        node: node(),
+        ls:ls(),
+        help:chainHelp()}
 }
 function baseChainOpt(_path){
     return {_path,

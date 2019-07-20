@@ -37,7 +37,8 @@ const{getValue,
     removeP,
     grabThingPropPaths,
     NON_INSTANCE_PATH,
-    grabAllIDs
+    grabAllIDs,
+    StringCMD
 } = require('./util')
 
 const {relationIndex} = require('../chronicle/chronicle')
@@ -214,100 +215,154 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
         else Object.assign(toPut[soul],putObj)
     }
 }
-const makeaddProp = (gun, gb, timeLog) => (path) => (configObj)=>{
-    let {b,t,r} = parseSoul(path)
-    let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
-    let isNode = !r
-    let toPut = {}
-    let newGB = JSON.parse(JSON.stringify(gb))
-    let err
-    const config = makehandleConfigChange(gun,newGB)
-    makeProp()
-    function handlePropCreation(o){
-        propConfigArr.shift()
-        let {path,configPuts} = o
-        let cSoul = configSoulFromChainPath(path)
-        for (const soul in configPuts) {
-            addToPut(soul,configPuts[soul])
-        }
-        if(propConfigArr.length){
-            setValue(configPathFromChainPath(path),configPuts[cSoul],newGB)
-            makeProp()
-        }else{
-            done()
-        }
-
-    }
-    function makeProp(){
-        let nextPconfig = propConfigArr[0]
-        let {id} = nextPconfig
-        if(!id){
-            id = newID(newGB,makeSoul({b,t,r,p:true}))
-        }else if(id && /[^a-z0-9]/i.test(id)){
-            throw new Error('Invalid ID supplied. Must be [a-zA-z0-9]')
-        }else{
-            //using user supplied id
-            delete nextPconfig.id
-        }
-        let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
-        let newPpath = makeSoul({b,t,r,p:id})
-        config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
-
-    }
-    function done(){
-        if(err)return
-        for (const csoul in toPut) {//put all configs in
-            const cObj = toPut[csoul];
-            if(IS_CONFIG_SOUL.test(csoul)){
-                timeLog(csoul,cObj)
-                setValue(configPathFromChainPath(csoul),cObj,gb)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
+const makeaddProp = (gun, gb, timeLog) => (path,cb) =>{
+    const f = (function(configObj){
+        let {b,t,r} = parseSoul(path)
+        let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
+        let isNode = !r
+        let toPut = {}
+        let newGB = JSON.parse(JSON.stringify(gb))
+        let err
+        const config = makehandleConfigChange(gun,newGB)
+        let ID = ''
+        makeProp()
+        function handlePropCreation(o){
+            propConfigArr.shift()
+            let {path,configPuts} = o
+            let cSoul = configSoulFromChainPath(path)
+            for (const soul in configPuts) {
+                addToPut(soul,configPuts[soul])
             }
-            gun.get(csoul).put(cObj)
-        }
-    }
-    function throwError(errmsg){
-        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = error
-        console.log(error)
-        cb.call(cb,error)
-    }
-    function addToPut(soul,putObj){
-        if(!toPut[soul])toPut[soul] = putObj
-        else Object.assign(toPut[soul],putObj)
-    }
-}
-const makenewNode = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data, cb)=>{
-    let deps = makeDeps([DEPS_PUT_DATA(true)])
-    let {b,t} = parseSoul(path)
-    let allThings = grabAllIDs(gbGet(),b)
-    let allProps = []
-    for (const typeID in allThings) {
-        allProps.push([typeID,['log','externalID']])
-        const propArr = allThings[typeID];
-        for (const pPath of propArr) {
-            allProps.push([pPath,deps])
-        }
-    }
-    gbGet(allProps,newNode)
-    function newNode(gb){
-        try{
-            cb = (cb instanceof Function && cb) || function(){}
-            //API can be called from:
-            /*
-            gbase.base(b).nodeType(t).newNode() 
-            */
-           let rid = newDataNodeID()
-           data = data || {}
-           let opts = {isNew:true}
-           let newID = makeSoul({b,t,i:rid})
-           putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
-        }catch(e){
-            cb.call(this, e)
-            console.log(e)
-        }
-    }
+            if(propConfigArr.length){
+                setValue(configPathFromChainPath(path),configPuts[cSoul],newGB)
+                makeProp()
+            }else{
+                done()
+            }
     
+        }
+        function makeProp(){
+            let nextPconfig = propConfigArr[0]
+            let {id} = nextPconfig
+            if(!id){
+                id = newID(newGB,makeSoul({b,t,r,p:true}))
+            }else if(id && /[^a-z0-9]/i.test(id)){
+                throw new Error('Invalid ID supplied. Must be [a-zA-z0-9]')
+            }else{
+                //using user supplied id
+                delete nextPconfig.id
+            }
+            ID=id
+            let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
+            let newPpath = makeSoul({b,t,r,p:id})
+            config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+    
+        }
+        function done(){
+            if(err)return
+            for (const csoul in toPut) {//put all configs in
+                const cObj = toPut[csoul];
+                if(IS_CONFIG_SOUL.test(csoul)){
+                    timeLog(csoul,cObj)
+                    setValue(configPathFromChainPath(csoul),cObj,gb)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
+                }
+                gun.get(csoul).put(cObj)
+            }
+            cb.call(cb,undefined,ID)
+        }
+        function throwError(errmsg){
+            let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+            err = error
+            console.log(error)
+            cb.call(cb,error)
+        }
+        function addToPut(soul,putObj){
+            if(!toPut[soul])toPut[soul] = putObj
+            else Object.assign(toPut[soul],putObj)
+        }
+    })
+    f.help = function(){
+        let fromReadMe =
+`
+
+
+`
+        console.log(fromReadMe)
+    }
 }
+const makenewNode = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) =>{
+    const f = (function(data, cb){
+        let deps = makeDeps([DEPS_PUT_DATA(true)])
+        let {b,t} = parseSoul(path)
+        let allThings = grabAllIDs(gbGet(),b)
+        let allProps = []
+        for (const typeID in allThings) {
+            allProps.push([typeID,['log','externalID']])
+            const propArr = allThings[typeID];
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
+            }
+        }
+        gbGet(allProps,newNode)
+        function newNode(gb){
+            try{
+                cb = (cb instanceof Function && cb) || function(){}
+                //API can be called from:
+                /*
+                gbase.base(b).nodeType(t).newNode() 
+                */
+               let rid = newDataNodeID()
+               data = data || {}
+               let opts = {isNew:true}
+               let newID = makeSoul({b,t,i:rid})
+               putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,newID,data,opts,cb)
+            }catch(e){
+                cb.call(this, e)
+                console.log(e)
+            }
+        }
+    })
+    f.help = function(){
+        let fromReadMe = 
+`### newNode
+**newNode(*dataObj*, *cb*)**  
+All arguments are optional  
+dataObj = {Column Alias || pval: value}   
+cb = Function(err, value) 
+Note: A null node will be created if no dataObj provided
+Example usage:
+
+//assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "1t3ds2"
+gbase.base('ACME Inc.').nodeType('Items').newNode({name:'Anvil'})
+(can use the current alias for conveinence)
+
+OR
+(Preffered method)
+gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'})
+This will always work (if an alias changes the first method will fail)
+
+
+
+--With Data and CB--
+gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
+    if(err){//err will be falsy (undefined || false) if no error
+        //value = undefined
+        //handle err
+    }else{
+        //err = falsy
+        //value = will return the new nodes ID
+    }
+})`
+        console.log(fromReadMe)
+    }
+
+
+
+
+
+
+    return f
+} 
 const makenewFrom = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) => (data,cb,opt)=>{//TODO
     let deps = makeDeps([DEPS_PUT_DATA(true)])
     let {b,t,i} = parseSoul(path)
@@ -550,7 +605,8 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) => (cb,opt
         }
     }
 }
-const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) => (cb,opts)=>{
+const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
+    const f = (function(cb,opts){
     let deps = makeDeps([DEPS_GET_CELL])
     let {b,t,r,p} = parseSoul(path)//get rid of instance info
     let need = [makeSoul({b,t,r,p}),deps]
@@ -568,6 +624,45 @@ const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) => (cb,opts)=>{
             console.warn(e)
         }
     }
+    })
+    f.help = function(){
+        let summary,table,opts,toKill
+        if(subThing){
+            summary = 
+            `
+            Used to subscribe to changes on this specific property on this specific node.
+            `
+            table = {'1st Arg':{what:'callback fn',type:'function'},'2nd Arg':{what:'options object',type:'object'}}
+            opts = {'raw':{'Default':false,'Purpose':'To apply formatting according to config.format'},
+                    'subID':{'Default':Symbol(),'Purpose':'Must be unique against all other subIDs'}}
+            toKill = 
+            `
+            To kill the subscription, use like:
+            let sub = gbase.node(${path}).subscribe(cb,opts)
+            ...
+            gbase.node(someAddress).kill(sub)
+            `
+        }else{
+            summary = 
+            `
+            Used to retrieve this specific property on this specific node.
+            `
+            table = {'1st Arg':{what:'callback fn',type:'function'},'2nd Arg':{what:'options object',type:'object'}}
+            opts = {'raw':{'Default':false,'Purpose':'To apply formatting according to config.format'}}
+        }
+        
+    
+        console.warn(summary)
+        console.info('ARGUMENTS')
+        console.table(table)
+        console.info('')
+        console.info('Options')
+        console.table(opts)
+        if(subThing)console.warn(toKill)
+
+
+    }
+    return f
     
 }
 

@@ -1169,6 +1169,26 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
 
 }
+function StringCMD(path,appendApiToEnd){
+    let self = this
+    this.curCMD = (path) ? 'gbase.base' : 'gbase'
+    this.configPath = path && configPathFromChainPath(path) || []
+    let cPath = this.configPath
+    if(appendApiToEnd)cPath = [...cPath,appendApiToEnd]
+    for (let i = 0; i < cPath.length; i++) {
+        const get = cPath[i];
+        if(i == cPath.length-1 && appendApiToEnd)this.curCMD+='.'+appendApiToEnd
+        else if(!(i%2))this.curCMD+=`('`+get+`')`
+        else if(i === 1 && get === 'props')this.curCMD+='.nodeType'
+        else if(i === 1 && get === 'relations')this.curCMD+='.relation'
+        else if(i === 3)this.curCMD+='.prop'
+        
+    }
+    this.appendReturn = function(string,asIs){
+        if(asIs)return self.curCMD+string
+        return self.curCMD+"('"+string+"')"
+    }
+}
 
 //CONVERSION THINGS
 function convertValueToType(value, toType, rowAlias, delimiter){
@@ -1841,5 +1861,6 @@ module.exports = {
     grabThingPropPaths,
     NON_INSTANCE_PATH,
     ALL_ADDRESSES,
-    grabAllIDs
+    grabAllIDs,
+    StringCMD
 }
