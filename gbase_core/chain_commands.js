@@ -1,14 +1,3 @@
-
-const{newBaseConfig,
-    newNodeTypeConfig,
-    newNodePropConfig,
-    newRelationshipConfig,
-    newRelationshipPropConfig,
-    handleImportColCreation,
-    handleTableImportPuts,
-    makehandleConfigChange
-} = require('./configs')
-
 const{getValue,
     configPathFromChainPath,
     findID,
@@ -38,8 +27,21 @@ const{getValue,
     grabThingPropPaths,
     NON_INSTANCE_PATH,
     grabAllIDs,
-    StringCMD
+    StringCMD,
+
 } = require('./util')
+
+const{newBaseConfig,
+    newNodeTypeConfig,
+    newNodePropConfig,
+    newRelationshipConfig,
+    newRelationshipPropConfig,
+    handleImportColCreation,
+    handleTableImportPuts,
+    handleConfigChange
+
+} = require('./configs')
+
 
 const {relationIndex} = require('../chronicle/chronicle')
 /*
@@ -215,15 +217,15 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
         else Object.assign(toPut[soul],putObj)
     }
 }
-const makeaddProp = (gun, gb, timeLog) => (path,cb) =>{
+const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path,cb) =>{
     const f = (function(configObj){
+        cb = (cb instanceof Function && cb) || function(){}
         let {b,t,r} = parseSoul(path)
         let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
         let isNode = !r
         let toPut = {}
         let newGB = JSON.parse(JSON.stringify(gb))
         let err
-        const config = makehandleConfigChange(gun,newGB)
         let ID = ''
         makeProp()
         function handlePropCreation(o){
@@ -255,7 +257,7 @@ const makeaddProp = (gun, gb, timeLog) => (path,cb) =>{
             ID=id
             let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
             let newPpath = makeSoul({b,t,r,p:id})
-            config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+            handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
     
         }
         function done(){
@@ -284,11 +286,29 @@ const makeaddProp = (gun, gb, timeLog) => (path,cb) =>{
     f.help = function(){
         let fromReadMe =
 `
+**addProp(*configObj*,*cb*)**  
+All arguments are optional.
+For valid config options see [config](#config).
+Alias must be unique for the thingType you are adding it to.
+If you give the configObj.id a value, then it must be unique across all IDs
 
+Example usage:
+
+//assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "1tk23k"
+gbase.base('ACME Inc.').table('Items').addProp('Vendor',(err,value) =>{
+  if(err){//err will be falsy (undefined || false) if no error
+    //value = undefined
+    //handle err
+  }else{
+    //err = falsy
+    //value = will return the new prop ID
+  }
+})
 
 `
         console.log(fromReadMe)
     }
+    return f
 }
 const makenewNode = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) => (path) =>{
     const f = (function(data, cb){
@@ -400,11 +420,11 @@ const makenewFrom = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) 
     
 }
 
-const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb) =>{
+const makeconfig = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path) => (configObj, backLinkCol,cb) =>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
         
-        handleConfigChange(configObj, path, backLinkCol,cb)
+        handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,configObj, path, backLinkCol,cb)
         
     }catch(e){
         console.log(e)
@@ -412,56 +432,111 @@ const makeconfig = (handleConfigChange) => (path) => (configObj, backLinkCol,cb)
         return false
     }
 }
-const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => (editObj, cb, opt)=>{
-    let deps = makeDeps([DEPS_PUT_DATA(false)])
-    let pathObj = parseSoul(path)
-    let {b,t,r,p} = pathObj
-    let allThings = grabAllIDs(gbGet(),b)
-    let allProps = []
-    for (const typeID in allThings) {
-        allProps.push([typeID,['log','externalID']])
-        const propArr = allThings[typeID];
-        for (const pPath of propArr) {
-            allProps.push([pPath,deps])
-        }
-    }
-    gbGet(allProps,edit)
-    function edit(gb){
-        try{
-            cb = (cb instanceof Function && cb) || function(){}
-            let {own} = opt || {}
-            let stateP = 'STATE'
-            if(p){
-                let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-                delete pathObj.p
-                delete pathObj['.']
-                if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
-                else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
-                else if(typeof editObj === 'object' && ['unorderedSet','array'].includes(dataType))throw new Error('Value must not be an object')
+const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
     
-                editObj = {[p]:editObj}
-                path = makeSoul(pathObj)
+    const f = (function(editObj, cb, opt){
+        let deps = makeDeps([DEPS_PUT_DATA(false)])
+        let pathObj = parseSoul(path)
+        let {b,t,r,p} = pathObj
+        let allThings = grabAllIDs(gbGet(),b)
+        let allProps = []
+        for (const typeID in allThings) {
+            allProps.push([typeID,['log','externalID']])
+            const propArr = allThings[typeID];
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
             }
-            if(typeof editObj !== 'object' || editObj === null)throw new Error('Must pass in an object in order to edit.')
-            const checkForState = (value) =>{
-                let e
-                if(value === null){
-                    e = new Error('Node does not exist, must create a new one through ".newNode()" api.')
-                }else if(value === 'deleted'){//check existence
-                    e = new Error('Node is deleted. Must create a new one through ".newNode()"')
-                }else if(['active','archived'].includes(value)){
-                    putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,path,editObj,{own},cb)
+        }
+        gbGet(allProps,edit)
+        function edit(gb){
+            try{
+                cb = (cb instanceof Function && cb) || function(){}
+                let {own} = opt || {}
+                let stateP = 'STATE'
+                if(p){
+                    let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
+                    delete pathObj.p
+                    delete pathObj['.']
+                    if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
+                    else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
+                    else if(typeof editObj === 'object' && !['unorderedSet','array'].includes(dataType))editObj = Object.values(dataObj)[0]
+
+                    editObj = {[p]:editObj}
+                    path = makeSoul(pathObj)
                 }
+                if(typeof editObj !== 'object' || editObj === null)throw new Error('Must pass in an object in order to edit.')
+                const checkForState = (value) =>{
+                    let e
+                    if([undefined,null].includes(value)){
+                        e = new Error('Node does not exist, must create a new one through ".newNode()" api.')
+                    }else if(value === 'deleted'){//check existence
+                        e = new Error('Node is deleted. Must create a new one through ".newNode()"')
+                    }else if(['active','archived'].includes(value)){
+                        putData(gun,gb,getCell,cascade,timeLog,timeIndex,relationIndex,path,editObj,{own},cb)
+                    }
+                    console.log(e)
+                    cb.call(cb,e) 
+                }
+                getCell(path,stateP,checkForState,true)
+            }catch(e){
                 console.log(e)
-                cb.call(cb,e) 
+                cb.call(this, e)
             }
-            getCell(path,stateP,checkForState,true)
-        }catch(e){
-            console.log(e)
-            cb.call(this, e)
         }
+    })
+
+    f.help = function(){
+        let fromReadMe =
+`
+**edit(*\*dataObj* OR *\*value*, *cb*, *opts*)**  
+-cb and opts are optional  
+
+dataObj = {Prop Alias || PropID: value} || value* 
+cb = Function(err, value) 
+opts = {own:false} See [inheritance](#inheritance) for more info  
+
+**WARNING** If the context is an address you can just give edit the value for that property, 
+the API will effectively do {[propID]:value}. 
+If you give it an object **it will not look at the propID/alias in that object**. 
+The api does {[propID]:Object.values(dataObj)[0]}
+
+Example usage (3 chain locations (**2 usages!**)):
+//assume:
+'ACME Inc.'= "B123"
+'Items' = '1t2o3'
+'Vendor' = '3p3kd'
+
+nodeID = '!B123#1t2o3$abcd'
+address = '!B123#1t2o3.3p3kd$abcd'
+
+//because the nodeID or address contains all context, we can skip the middle bits
+gbase.node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+gbase.node(address).edit("Anvils 'r us")
+
+
+//However, the long api is still valid
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Vendor').edit("Anvils 'r us")
+
+gbase.base('ACME Inc.').nodeType('Items').node(address).edit("Anvils 'r us")
+
+
+
+--With Data and CB--
+gbase.node(address).edit("Anvils 'r us", (err,value) =>{
+    if(err){//err will be falsy (undefined || false) if no error
+    //value = undefined
+    //handle err
+    }else{
+    //err = falsy
+    //value will return the nodeID
     }
-    
+})
+`       
+        console.log(fromReadMe)
+    }
+    return f
 }
 
 
@@ -836,6 +911,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
     }
     
 }
+//export data..
 
 
 const makearchive = (gun,gb) => path => () =>{//TODO

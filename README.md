@@ -162,32 +162,34 @@ Nodes can only connect to other nodes by way of relationships. All nodes of the 
 
 
 # **API Docs**
-### GBase Chain API
-Basic APIs
+## GBase Chain API
+Chain constructors
 * [base](#base) (not updated)
-* [nodeType](#table) (not updated)
-* [relation](#table) (not updated)
-* [node](#row) (not updated)
-* [prop](#column) (not updated)
+* [nodeType](#nodeType) (not updated)
+* [relation](#relation) (not updated)
+* [node](#node) (not updated)
+* [prop](#prop) (not updated)
+------
+Creation API's
 * [newNodeType](#newTable) (not updated)
 * [newRelation](#newTable) (not updated)
-
 * [addProp](#addProp)
 * [newBase](#newBase) (not updated)
-* [newNode](#newNode) (not updated)
+* [newNode](#newNode)
 * [newFrom](#newRow) (not updated)
-* [relatesTo](#newRow) (not updated)
-
-* [edit](#edit) (not updated)
+------
+Data getter/setter APIs
+* [relatesTo](#relatesTo) (not updated)
+* [edit](#edit)
 * [subscribe](#subscribe) (not updated)
 * [retrieve](#retrieve) (not updated)
 
 
-
+------
 Config APIs
 * [config](#config) (not updated)
-
-
+* [getConfigs](#getConfigs) (not updated)
+-----
 Import APIs
 * [importNewTable](#importNewTable) (not updated)
 * [importData](#importData) (not updated)
@@ -202,7 +204,12 @@ formatQueryResult
 There is are `.ls()` and `.help()` functions you can try to access in console to help understand the api chain
 ```
 gbase.help() //show you your current options and commands to pick from
-gbase.ls()//should give you all available bases that will work in `.base()` api.
+
+gbase.ls() //should give you all available bases that will work in `.base()` api.
+
+commands themselves should (or will) have a `.help()` log as well like:
+gbase.node.help()
+
 ```
 **You should only really need to know the baseID (basically namespace) you want to look at on the graph, gbase will get everything below it for you and help you through it with the `.ls()` command**
 ________
@@ -220,23 +227,30 @@ chain options:
 [.getConfigs()](#getConfigs)
 ________
 ### base
-**base(*baseName*)**  
-All arguments are optional. Defaults are:  
+**base(*\*baseName*)**  
+Arugment is optional **IF** you only have loaded a single base config to your current gbase chain  
 `baseName = 'Base Alias' || 'baseID`
 
 Example usage:
 ```
+let baseID = B123 //alias of 'ACME Inc.'
+
 gbase.base('ACME Inc.')
+
+gbase.base() //if on startup you specified {bases:[baseID]} (only 1 base)
+//OR only specified one after startup with gbase.getConfig('!'+baseID)
+
+
 ```
-chain options:
-[.table()](#table)
-[.newStaticTable()](#newStaticTable)
-[.newInteractionTable()](#newInteractionTable)
-[.importNewTable()](#importNewTable)
-[.config()](#config)
+next chain options:  
+[.nodeType()](#nodeType)  
+[.relation()](#relation)  
+[.importNewNodeType()](#importNewNodeType)  
+[.config()](#config)  
+[.kill()](#kill)  
 
 ________
-### table
+### nodeType
 **table(*tableName*)**  
 All arguments are optional. Defaults are:  
 `tableName = 'Table Alias' || 'tval'` (ie; 't0' or 't3')
@@ -259,7 +273,7 @@ chain options for **all** table types:
 chain options for **'interaction'** table types that are transactional (plus all from above):
 [.listItems()](#listItems)
 ________
-### column
+### prop
 **column(*columnName*)**  
 All arguments are optional. Defaults are:  
 `columnName = 'Table Alias' || 'tval'` (ie; 't0' or 't3')
@@ -367,37 +381,49 @@ gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
 
 _________
 ### edit
-**edit(*\*dataObj*, *cb*)**  
-dataObj is required, others are optional   
-`dataObj = {Column Alias || pval: value} `  
+**edit(*\*dataObj* OR *\*value*, *cb*, *opts*)**  
+cb and opts are optional  
+`dataObj = {Prop Alias || PropID: value} || value* `  
 `cb = Function(err, value)`  
-Note: If you try to edit a function or link column, those values will be stripped out of your dataObj before putting data in to the database.
-Example usage:
+`opts = {own:false}` See [inheritance](#inheritance) for more info  
+**WARNING** If the context is an address you can just give edit the value for that property, the API will effectively do `{[propID]:value}`. If you give it an object **it will not look at the propID/alias in that object**. The api does `{[propID]:Object.values(dataObj)[0]}`  
+
+Example usage (3 chain locations (**2 usages!**)):
 ```
 //assume:
 'ACME Inc.'= "B123"
-'Items' = 't0'
-'Vendor' = 'p1'
-'8522761755' = 'B123/t0/r123'
+'Items' = '1t2o3'
+'Vendor' = '3p3kd'
 
-gbase.base('ACME Inc.').table('Items').row('8522761755').edit({p1: 'Anvils 'r Us'})
-gbase.B123.t0['B123/t0/r123'].edit({p1: 'Anvils 'r Us'})
-gbase.base('ACME Inc.').table('Items').row('8522761755').edit({'Vendor': 'Anvils 'r Us'})
-gbase.B123.t0['B123/t0/r123'].edit({'Vendor': 'Anvils 'r Us'})
-//all the same call
+nodeID = '!B123#1t2o3$abcd'
+address = '!B123#1t2o3.3p3kd$abcd'
+
+//because the nodeID or address contains all context, we can skip the middle bits
+gbase.node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+gbase.node(address).edit("Anvils 'r us")
+
+
+//However, the long api is still valid
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Vendor').edit("Anvils 'r us")
+
+gbase.base('ACME Inc.').nodeType('Items').node(address).edit("Anvils 'r us")
+
+
 
 --With Data and CB--
-gbase.base('ACME Inc.').table('Items').row('8522761755').edit({'Vendor': 'Anvils 'r Us'}, (err,value) =>{
+gbase.node(address).edit("Anvils 'r us", (err,value) =>{
   if(err){//err will be falsy (undefined || false) if no error
     //value = undefined
     //handle err
   }else{
     //err = falsy
-    //value will return truthy if successful
+    //value will return the nodeID
   }
 })
 ```
-[t0, p1? Read here to understand the terminology used.](#gbase-vocab)
+[nodeID, address? Read here to understand the terminology used.](#gbase-vocab)
 _________
 ### subscribe
 **subscribe(*\*callBack*, *colArr*, *queryArr*, *udSubID*)**  

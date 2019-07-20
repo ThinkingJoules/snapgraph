@@ -88,18 +88,18 @@ const {
     naturalCompare,
     IS_CONFIG,
     IS_CONFIG_SOUL,
-    gbGet:rawgbGet,
+    
     ALL_ADDRESSES,
     StringCMD
 } = require('./util.js')
-const makegbGet = rawgbGet(gb)
 let gbGet
 
 
-const {makehandleConfigChange,
-    basicFNvalidity
+const {
+    basicFNvalidity,
+    gbGet:rawgbGet,
 }= require('./configs')
-let handleConfigChange
+const makegbGet = rawgbGet(gb)
 
 const {makenewBase,
     makenewNodeType,
@@ -253,7 +253,13 @@ function incomingPutMsg(msg){//wire listener
                     }
                 }
             }else if(['thingConfig','propConfig','label'].includes(type)){
-                handleGunConfig(soul)(data)
+                let configpath = configPathFromChainPath(soul)
+                let data = JSON.parse(JSON.stringify(putObj))
+                delete data['_']
+                if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
+                if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
+                setValue(configpath,data,gb,true)
+                triggerConfigUpdate()
             }
         }
     }
@@ -307,7 +313,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     newBase = makenewBase(gun,tLog)
     newNodeType = makenewNodeType(gun,gb,tLog)//new should only need id/alias of current gb
     importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)//new should only need id/alias of current gb
-    addProp = makeaddProp(gun,gb,tLog)//new should only need id/alias of current gb
+    addProp = makeaddProp(gun,gb,getCell,cascade,solve,tLog,tIndex)//new should only need id/alias of current gb
     
     
     newNode = makenewNode(gun,gbGet,getCell,cascade,tLog,tIndex)
@@ -323,8 +329,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
   
 
     importData = makeimportData(gun, gbGet)//
-    handleConfigChange = makehandleConfigChange(gun,gbGet,getCell,cascade,solve,tLog,tIndex)//
-    config = makeconfig(handleConfigChange)
+    config = makeconfig(gun,gb,getCell,cascade,solve,tLog,tIndex)
     performQuery = makeperformQuery(gbGet,setupQuery)
     typeGet = maketypeGet(gbGet,setupQuery)
     nodeGet = makenodeGet(gbGet,getCell,subThing,nodeSubs)
@@ -571,6 +576,9 @@ function chainHelp(path){
 const base = (function(base){
     //check base for name in gb to find ID, or base is already ID
     //return baseChainOpt
+    let bases = Object.keys(gb)
+    if(base === undefined && bases.length == 1)base = bases[0]
+    else throw new Error('You must specify a baseID to use as context!')
     let path = '!'
     if(gb[base] !== undefined){
         path += base
@@ -791,7 +799,9 @@ function nodeChainOpt(_path, isData){
         subscribe: nodeGet(_path,true),
         archive: archive(_path),
         unarchive:unarchive(_path),
-        delete:deleteNode(_path)}
+        delete:deleteNode(_path),
+        prop:prop(_path)
+    }
     if(isData){
         Object.assign(out,{relatesTo:relatesTo(_path),newFrom:newFrom(_path)})
     }

@@ -17,6 +17,9 @@ const {convertValueToType,
     IS_CONFIG_SOUL,
     putData,
     newID,
+    gunGet,
+    gunPut,
+    IS_CONFIG
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -144,7 +147,7 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
     }
 }
 
-const makehandleConfigChange = (gun,gb,getCell,cascade,solve,timeLog, timeIndex) => (configObj, path, opts, cb) =>{
+function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,configObj, path, opts, cb){
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let {isNew,internalCB} = opts || {}
@@ -1006,15 +1009,71 @@ const handleTableImportPuts = (gun, resultObj, cb)=>{
     
     cb.call(this, undefined)
 }
+
+
+
+const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
+    //pathArgs = {path: [arrOfProps] || falsy(getAll)}
+    if(cb === undefined)return gb//short circuit so we can access gb to grab ids
+    let needed = [] //[[soul,prop],[soul,prop]]
+
+    for (const [path,requestedKeys] of pathArgs) {
+        let cSoul = configSoulFromChainPath(path)
+        if(!IS_CONFIG_SOUL.test(cSoul))continue
+        let type = IS_CONFIG(cSoul)
+        let allKeys
+        if(type === 'baseConfig')allKeys = Object.keys(newBaseConfig())
+        else if(type === 'thingConfig' && path.includes('#'))allKeys = Object.keys(newNodeTypeConfig({alias:path}))
+        else if(type === 'thingConfig' && path.includes('-'))allKeys = Object.keys(newRelationshipConfig({alias:path}))
+        else if(type === 'propConfig' && path.includes('#'))allKeys = Object.keys(newNodePropConfig({alias:path}))
+        else if(type === 'propConfig' && path.includes('-'))allKeys = Object.keys(newRelationshipPropConfig({alias:path}))
+        if(!allKeys)continue//something invalid?
+        let pathArr = configPathFromChainPath(path)
+        let has = getValue(pathArr,gb)
+        for (const key of allKeys) {
+            if(requestedKeys){
+                if(!requestedKeys.includes(key))continue //looking for specific keys, but not this one
+                if(has && has[key] !== undefined)continue
+                let thisPath = pathArr.slice()
+                thisPath.push(key)
+                needed.push([cSoul,key,thisPath])
+            }else{
+                if(has && has[key] !== undefined)continue
+                needed.push([cSoul,key])
+            }
+        }
+    }
+    if(!needed.length)cb(gb)
+    else{
+        const get = gunGet(gun)
+        let toGet = needed.length
+        for (const [soul,prop,pathArr] of needed) {
+            get(soul,prop,function(value){
+                //will be type config or prop config 
+                if(value === undefined){//should never happen?
+                    setValue(pathArr,null,gb)
+                }else{
+                    if(['usedIn','pickOptions'].includes(prop))value = JSON.parse(value)
+                    setValue(pathArr,value,gb)
+                }
+                toGet--
+                if(!toGet)cb(gb)
+            })
+        }
+    }
+}
+
+
 module.exports = {
     newBaseConfig,
     newNodeTypeConfig,
     newRelationshipConfig,
     newRelationshipPropConfig,
     newNodePropConfig,
-    makehandleConfigChange,
+    handleConfigChange,
     handleImportColCreation,
     handleTableImportPuts,
     checkConfig,
-    basicFNvalidity
+    basicFNvalidity,
+    gbGet,
 }
