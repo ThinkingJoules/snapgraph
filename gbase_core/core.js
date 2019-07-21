@@ -35,6 +35,8 @@ const upDeps = {}
 const downDeps = {}
 const addrSubs = {} //{[addr]:{sID:{cb,raw}}} //when new data is received gbase will for loop (+Symbol() loop) over object and fire each cb with the new value
 const nodeSubs = {} //{[nodeID]:{sID: {cb, addrSubs,props,raw,partial}}}//this could be a user cb or it might be for a query?
+
+const configSubs = {}
 /*
 Subscriptions:
     sID = could be anything that is a valid key, including Symbol() (Symbol is used by internal subscription cb, ie; nodeSubs, query)
@@ -43,7 +45,6 @@ Subscriptions:
 
     nodeSubs
     addrSubs = array of killObjects we can remove all of it's propSubs
-    props = array of pvals, needed so we can build the address from the nodeID to find and remove all propSubs
     partial = boolean, on change => true = fire callback with only the {[key]:value} that changed; false = fire callback with all specified props each time
 */
 
@@ -128,12 +129,13 @@ const {makenewBase,
     maketypeGet,
     makenodeGet,
     makeaddressGet,
-    makekill
+    makekill,
+    makegetConfig
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
 let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
-let typeGet, nodeGet, addressGet
+let typeGet, nodeGet, addressGet, getConfig
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgunsub = makeshowgunsub(gunSubs)
@@ -164,7 +166,7 @@ const querySubs = {}
 let nodeStatesBuffer = {}
 let stateBuffer = true
 let gbBases = []
-const kill = makekill(querySubs,killSub)
+const kill = makekill(querySubs,configSubs,killSub)
 
 function dumpStateChanges(){
     let buffer = Object.assign({}, nodeStatesBuffer)
@@ -172,7 +174,7 @@ function dumpStateChanges(){
     stateBuffer = !stateBuffer
     sendToSubs(buffer)
 }
-const showgsub = makeshowgsub(querySubs,addrSubs,nodeSubs)
+const showgsub = makeshowgsub(querySubs,addrSubs,nodeSubs,configSubs)
 
 function sendToSubs(buffer){
     for (const baseid in querySubs) {
@@ -228,7 +230,7 @@ function incomingPutMsg(msg){//wire listener
                 data.labels = {}
                 let configpath = configPathFromChainPath(soul)
                 setValue(configpath,data,gb,true)
-                triggerConfigUpdate(soul)
+                triggerConfigUpdate()
             }else if(type === 'typeIndex'){
                 for (const tval in data) {//tval '#' + id || '-'+id
                     const boolean = data[tval];
@@ -260,6 +262,14 @@ function incomingPutMsg(msg){//wire listener
                 if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
                 setValue(configpath,data,gb,true)
                 triggerConfigUpdate()
+            }
+            if(['typeIndex','propIndex'].includes(type))return
+            let values = JSON.parse(JSON.stringify(getValue(configPathFromChainPath(soul),gb)))
+            for (const subID in configSubs) {
+                const {cb,soul:cSoul} = configSubs[subID];
+                if(cSoul === soul){
+                    cb(values)
+                }
             }
         }
     }
@@ -309,7 +319,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     solve = makesolve(gbGet, getCell)
 
 
-
+    getConfig = makegetConfig(gbGet,configSubs,mountBaseToChain)
     newBase = makenewBase(gun,tLog)
     newNodeType = makenewNodeType(gun,gb,tLog)//new should only need id/alias of current gb
     importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)//new should only need id/alias of current gb
@@ -578,7 +588,7 @@ const base = (function(base){
     //return baseChainOpt
     let bases = Object.keys(gb)
     if(base === undefined && bases.length == 1)base = bases[0]
-    else throw new Error('You must specify a baseID to use as context!')
+    if(!base) throw new Error('You must specify a baseID to use as context!')
     let path = '!'
     if(gb[base] !== undefined){
         path += base
@@ -738,7 +748,10 @@ function gbaseChainOpt(){
         base, 
         node: node(),
         ls:ls(),
-        help:chainHelp()}
+        help:chainHelp(),
+        getConfig: getConfig(),
+        kill:kill()
+    }
 }
 function baseChainOpt(_path){
     return {_path,
@@ -754,6 +767,7 @@ function baseChainOpt(_path){
         newGroup: newGroup(_path),
         setAdmin: setAdmin(_path),
         addUser: addUser(_path),
+        getConfig: getConfig(_path),
         
         relation:nodeType(_path,false),
         nodeType:nodeType(_path,true)
@@ -768,7 +782,9 @@ function nodeTypeChainOpt(_path,isNode){
         addProp: addProp(_path), 
         importData: importData(_path), 
         subscribe:typeGet(_path,true),
-        retrieve:typeGet(_path,false), 
+        retrieve:typeGet(_path,false),
+        getConfig: getConfig(_path),
+
         prop:prop(_path),
         node:node(_path)
     }
@@ -784,7 +800,8 @@ function propChainOpt(_path){
         kill:kill(_path), 
         config: config(_path),
         subscribe:typeGet(_path,true),
-        retrieve:typeGet(_path,false)
+        retrieve:typeGet(_path,false),
+        getConfig: getConfig(_path)
     }
     // if(['string','number'].includes(dataType) && propType === 'data'){
     //     out = Object.assign(out,{importChildData: importChildData(_path),propIsLookup:propIsLookup(_path)})
@@ -800,6 +817,8 @@ function nodeChainOpt(_path, isData){
         archive: archive(_path),
         unarchive:unarchive(_path),
         delete:deleteNode(_path),
+        getConfig: getConfig(_path),
+
         prop:prop(_path)
     }
     if(isData){
@@ -813,7 +832,8 @@ function nodeValueOpt(_path){
         edit: edit(_path,false,false),
         subscribe: addressGet(_path,true),
         retrieve:addressGet(_path,false), 
-        clearValue:nullValue(_path)
+        clearValue:nullValue(_path),
+        getConfig: getConfig(_path)
     }
 }
 

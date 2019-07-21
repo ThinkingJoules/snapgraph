@@ -28,6 +28,7 @@ const{getValue,
     NON_INSTANCE_PATH,
     grabAllIDs,
     StringCMD,
+    BASE
 
 } = require('./util')
 
@@ -580,6 +581,7 @@ const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
 }
 const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
     const f = (function(cb,opts){
+        cb = (cb instanceof Function && cb) || function(){}
         let allProps = grabThingPropPaths(gbGet(),path)
         let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
         allProps = allProps.map(x => [x,deps])
@@ -645,6 +647,7 @@ const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
 }
 const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
     const f = (function(cb,opts){
+        cb = (cb instanceof Function && cb) || function(){}
         let allProps = grabThingPropPaths(gbGet(),path)
         allProps = allProps.map(x => [x,['hidden','archived','deleted','sortval','propType','format']])
         let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
@@ -707,23 +710,24 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
 }
 const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
     const f = (function(cb,opts){
-    let deps = makeDeps([DEPS_GET_CELL])
-    let {b,t,r,p} = parseSoul(path)//get rid of instance info
-    let need = [makeSoul({b,t,r,p}),deps]
-    let {raw,subID} = opts || {}
-    if(isSub && !subID)subID = Symbol()
-    gbGet(need,addressGet)
-    return subID
-    function addressGet(gb){
-        try{
-            let nodeID = removeP(path)
-            let {p} = parseSoul(path)
-            getCell(nodeID,p,cb,raw,true)
-            subThing(path,cb,false,{raw})
-        }catch(e){
-            console.warn(e)
+        cb = (cb instanceof Function && cb) || function(){}
+        let deps = makeDeps([DEPS_GET_CELL])
+        let {b,t,r,p} = parseSoul(path)//get rid of instance info
+        let need = [[makeSoul({b,t,r,p}),deps]]
+        let {raw,subID} = opts || {}
+        if(isSub && !subID)subID = Symbol()
+        gbGet(need,addressGet)
+        return subID
+        function addressGet(gb){
+            try{
+                let nodeID = removeP(path)
+                let {p} = parseSoul(path)
+                getCell(nodeID,p,cb,raw,true)
+                subThing(path,cb,false,{raw})
+            }catch(e){
+                console.warn(e)
+            }
         }
-    }
     })
     f.help = function(){
         let summary,table,opts,toKill
@@ -766,7 +770,77 @@ const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
     
 }
 
-const makekill = (querySubs,killSub) => (path) => (subID)=>{
+const makegetConfig = (gbGet,configSubs,mountBaseToChain) => (chainPath) =>{
+    const f = (function(cb,opts){
+        cb = (cb instanceof Function && cb) || function(){}
+        let {path,subID,full} = opts || {}
+        if(!path && !chainPath)throw new Error("Must specify either a nodeID or address to get it's configs")
+        path = path || chainPath
+        if(BASE.test(path) && !gb[path.slice(1)]){//adding a new base to the chain api
+            mountBaseToChain(path.slice(1),full,cb)
+            return
+        }
+        if(!INSTANCE_OR_ADDRESS.test(path) && !NON_INSTANCE_PATH.test(path))throw new Error('"path" must be a valid gbase path')
+        let {b,t,r,p} = parseSoul(path)//get rid of instance info
+        let cleanPath = makeSoul({b,t,r,p})
+        let need = [[cleanPath,false]]//should get all things
+        gbGet(need,getConfig)
+        return subID
+        function getConfig(gb){
+            let things = JSON.parse(JSON.stringify(getValue(configPathFromChainPath(cleanPath),gb)))
+            let cSoul = configSoulFromChainPath(cleanPath)
+            if(subID !== undefined)configSubs[subID] = {cb,soul:cSoul}
+            cb(things)
+
+        }
+    })
+    f.help = function(){
+        let msg = 
+`
+### getConfig  
+**getConfig(*cb*, *opts*)**  
+cb will fire with the config object for the chain context or for the path provided in opts.
+
+
+opts = {
+  path: '!'+baseID (for adding a new base to this gbase chain) || nodeID(for that type config) || address(for that property config)
+
+  subID: If provided, will subscribe and fire callback with full config object at each change
+
+  full: Only used for a '!'+baseID path. Determines whether to do a minimal load, or get all configs
+}
+
+
+Example usage:
+There are a couple ways to use.
+
+//To add a new base to the api chain:
+gbase.getConfig(cb,{path:'!B123'}) // if B123 was already mounted to this chain, it would return it't configs
+
+//To get by context
+gbase.base('B123').nodeType('Items').getConfig(cb)
+
+//To get by path
+nodeID = '!B123#1t2o3$abcd'
+gbase.getConfig(cb,{path: nodeID, subID: 'forUI'}) //Will subscribe the nodeType config object
+...
+gbase.kill('forUI') //config subs are not namespaced by path. Only subscription that can killed without context.
+
+`
+        console.log(msg)
+    }
+
+
+    return f
+}
+
+const makekill = (querySubs,configSubs,killSub) => (path) => (subID)=>{
+    if(!path){
+        if(configSubs && configSubs[subID]){
+            delete configSubs[subID]
+        }
+        return
+    }
     let {b} = parseSoul(path)
     if(INSTANCE_OR_ADDRESS.test(path)){//address sub
         killSub(path,subID)()
@@ -774,6 +848,8 @@ const makekill = (querySubs,killSub) => (path) => (subID)=>{
         if(querySubs && querySubs[b] && querySubs[b][subID]){
             let qParams = querySubs[b][subID]
             qParams.kill()
+        }else if(configSubs && configSubs[subID]){
+            delete configSubs[subID]
         }
     }
 }
@@ -1100,8 +1176,8 @@ const makeshowgb = (gb) => () =>{
 const makeshowcache = (cache) => () =>{
     console.log(cache)
 }
-const makeshowgsub = (querySub,addrSubs,nodeSubs) => () =>{
-    return [querySub,addrSubs,nodeSubs]
+const makeshowgsub = (querySub,addrSubs,nodeSubs,configSubs) => () =>{
+    return {querySub,addrSubs,nodeSubs,configSubs}
 }
 const makeshowgunsub = (gunSubs)=> () =>{
     return gunSubs
@@ -1135,5 +1211,6 @@ module.exports = {
     maketypeGet,
     makenodeGet,
     makeaddressGet,
-    makekill
+    makekill,
+    makegetConfig
 }

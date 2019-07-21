@@ -14,10 +14,10 @@ const BASE_CONFIG =/^![a-z0-9]+%$/i
 const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$$/i
 const RELATION_STATE = /^![a-z0-9]+-[a-z0-9]+\$$/i
 const BASE = /^![a-z0-9]+$/i
-const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+/i
-const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+/i
-const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+/i
-const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+/i
+const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+$/i
+const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+$/i
+const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+$/i
+const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+$/i
 const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
 const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
 const PROP_CONFIG = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+%$/i
@@ -1813,4 +1813,5 @@ module.exports = {
     ALL_ADDRESSES,
     grabAllIDs,
     StringCMD,
+    BASE
 }

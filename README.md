@@ -190,7 +190,7 @@ Data getter/setter APIs
 ------
 Config APIs
 * [config](#config) (not updated)
-* [getConfigs](#getConfigs) (not updated)
+* [getConfig](#getConfig) (not updated)
 -----
 Import APIs
 * [importNewTable](#importNewTable) (not updated)
@@ -468,11 +468,6 @@ let sub = gbase.base('ACME Inc.').subscribeQuery(function(data){
     [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
 }, queryArr,'forUIView')
 ```
-
-When you want to remove this subscription:
-```
-gbase.base('ACME Inc.').kill(sub)
-```
 [Read here to understand the terminology used.](#gbase-vocab)
 _________
 ### retrieveQuery
@@ -602,6 +597,41 @@ This is the same as [subscribe()](#subscribe) except that it only fires the call
 
 
 ## **gbase Chain -Config APIs-**
+________
+### getConfig  
+**getConfig(*cb*, *opts*)**  
+cb will fire with the config object for the chain context or for the path provided in opts.
+
+```
+opts = {
+  path: '!'+baseID (for adding a new base to this gbase chain) || nodeID(for that type config) || address(for that property config)
+
+  subID: If provided, will subscribe and fire callback with full config object at each change
+
+  full: Only used for a '!'+baseID path. Determines whether to do a minimal load, or get all configs
+}
+```
+
+Example usage:
+There are a couple ways to use.
+```
+//To add a new base to the api chain:
+gbase.getConfig(cb,{path:'!B123'}) // if B123 was already mounted to this chain, it would return it't configs
+
+//To get by context
+gbase.base('B123').nodeType('Items').getConfig(cb)
+
+//To get by path
+nodeID = '!B123#1t2o3$abcd'
+gbase.getConfig(cb,{path: nodeID, subID: 'forUI'}) //Will subscribe the nodeType config object
+...
+gbase.kill('forUI') //config subs are not namespaced by path. Only subscription that can killed without context.
+
+```
+_________
+
+
+
 ________
 ### config
 **config(*\*configObj*, *backLinkCol*, *cb*)**  

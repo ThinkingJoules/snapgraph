@@ -1013,7 +1013,7 @@ const handleTableImportPuts = (gun, resultObj, cb)=>{
 
 
 const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
-    //pathArgs = {path: [arrOfProps] || falsy(getAll)}
+    //pathArgs = [[path, [arrOfProps] || falsy(getAll)]]
     if(cb === undefined)return gb//short circuit so we can access gb to grab ids
     let needed = [] //[[soul,prop],[soul,prop]]
 
@@ -1031,6 +1031,8 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
         let pathArr = configPathFromChainPath(path)
         let has = getValue(pathArr,gb)
         for (const key of allKeys) {
+            let thisPath = pathArr.slice()
+            thisPath.push(key)
             if(requestedKeys){
                 if(!requestedKeys.includes(key))continue //looking for specific keys, but not this one
                 if(has && has[key] !== undefined)continue
@@ -1039,7 +1041,7 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
                 needed.push([cSoul,key,thisPath])
             }else{
                 if(has && has[key] !== undefined)continue
-                needed.push([cSoul,key])
+                needed.push([cSoul,key,thisPath])
             }
         }
     }
