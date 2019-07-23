@@ -45,7 +45,7 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
   let correctBlock = getBlockTime(idxDate)
   const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
   //console.log(correctBlock,correctSoul)
-  get(idIdx,relationSoul,function(prevIdx) {
+  gun.get(idIdx).get(relationSoul).once(function(prevIdx) {
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
       put(oldSoul,{[idxData]: false})
@@ -53,7 +53,7 @@ const relationIndex = (gun,relationSoul, srcTypeID, trgtTypeID, idxDate, opts) =
     }
     if(archive || deleteThis)return
     //at this point we are editing.
-    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    gun.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul]!== undefined){//add to existing block
           //root.get(correctSoul).put({[idxData]:idxDate})
@@ -211,14 +211,14 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   //console.log(correctBlock,correctSoul)
   const get = gunGet(gun)
   const put = gunPut(gun)
-  get(idIdx,idxData,function(prevIdx){
+  gun.get(idIdx).get(idxData).once(function(prevIdx){
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
       root.get(oldSoul).put({[idxData]: false})
     }
     if(archive || deleteThis)return
     //at this point we are editing.
-    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    gun.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul]!== undefined){//add to existing block
           root.get(correctSoul).put({[idxData]:idxDate})
@@ -295,7 +295,6 @@ const timeLog = (gun) => (idxID, changeObj) =>{
   let user = root.user()
   let pub = user && user.is && user.is.pub || false
   let idxDate = new Date().getTime()
-  const get = gunGet(gun)
   const put = gunPut(gun)
   for (const pval in changeObj) {
     const value = changeObj[pval];
@@ -309,7 +308,7 @@ const timeLog = (gun) => (idxID, changeObj) =>{
     let blockIdxSoul = makeSoul(Object.assign({},soulObj,{';':'BLKIDX'}))
     let correctBlock = getBlockTime(idxDate)
     const correctSoul = makeSoul(Object.assign({},soulObj,{';':correctBlock}))
-    get(blockIdxSoul,false,function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
+    gun.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul] !== undefined){//add to existing block
           //root.get(correctSoul).put({[idxDate]:log})

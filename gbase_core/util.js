@@ -53,6 +53,7 @@ const IS_CONFIG = (soul) =>{
     return is
 }
 const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX])
+const CONFIG_SOUL = regOr([BASE_CONFIG,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG])
 
 //other regex
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
@@ -347,6 +348,9 @@ function getAllActiveRelations(gb, bpath){
     }
     return out
 }
+function loadFullConfigFromPathDown(gb){
+
+}
 
 
 const gbForUI = (gb) =>{
@@ -418,12 +422,12 @@ function setValue(propertyPath, value, obj,merge){
     if(!Array.isArray(propertyPath))throw new Error('Must provide an array for propertyPath')
     if (propertyPath.length > 1) {
         if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
-        return setValue(propertyPath.slice(1), value, obj[propertyPath[0]])
+        return setValue(propertyPath.slice(1), value, obj[propertyPath[0]],merge)
     } else {
         if(merge && typeof value == 'object' && value !== null){
-            if(typeof obj[propertyPath[0]] === 'object')obj[propertyPath[0]] = {}
+            if (!obj.hasOwnProperty(propertyPath[0]) || typeof obj[propertyPath[0]] !== "object") obj[propertyPath[0]] = {}
             for (const key in value) {
-                obj[propertyPath[0]][key] = value[key];
+                obj[propertyPath[0]][key] = value[key]
             }
         }else{
             obj[propertyPath[0]] = value
@@ -466,7 +470,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     let {b,t,r,i} = IDobj
     let isNode = !r
     let thingType = makeSoul({b,t,r})
-    let {props} = getValue(configPathFromChainPath(nodeID),gb)
+    let {props,externalID} = getValue(configPathFromChainPath(nodeID),gb)
     let {relations,labels} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
     let refChanges = [], setState = false //contains what user requested in putObj
     if(ctx && isNew){
@@ -484,6 +488,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     const get = gunGet(gun)
     const put = gunPut(gun)
     initialCheck()
+    console.log(JSON.parse(JSON.stringify(putObj)))
     //findIDs and convert userValues to correct value type
     let timeIndices = {},  relationsIndices = {}, logs = {}, run = [], toPut = {}, err
     let allProps = getAllActiveProps(gb,nodeID), putProps = Object.keys(putObj)
@@ -567,7 +572,11 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
                 get(soul,p,function(val){
                     if(dataType === 'array'){
-                        val = JSON.parse(val)
+                        try {
+                            val = JSON.parse(val)
+                        } catch (error) {
+                            
+                        }
                     }
                     if(typeof val === 'object' && val !== null){//unorderedSet
                         val = JSON.parse(JSON.stringify(val))
@@ -944,13 +953,15 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let pval = findID(props, palias) 
             let v = putObj[palias]
             if (!pval)throw new Error('Cannot find property with name: '+ palias +'. Edit aborted')
-            let {alias,propType,dataType} = props[pval]
+            let {alias,propType,dataType,enforceUnique} = props[pval]
             
             let cVal = convertValueToType(v,dataType,alias)
             if(dataType === 'array'){
-                cVal = JSON.parse(cVal)//convert value will stringify arrays so they are gun ready
+                try {
+                    cVal = JSON.parse(cVal)//convert value will stringify arrays so they are gun ready 
+                } catch (error) {}
             }
-            if(isEnq(cVal)){
+            if(isEnq(cVal) && !enforceUnique && externalID !== pval){//cannot inherit values on unique properties
                 refChanges.push(cVal)
             }
             if(pval === 'LABELS'){
@@ -1061,6 +1072,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 if(v === null){
                     addToPut(id,{[pval]: v})
                 }else{
+                    console.log('SET TO PUT',propPath,Object.assign({},v))
+
                     addToPut(propPath,v)
                     addToPut(id,{[pval]: {'#': propPath}})//make sure the set is linked to?
                 }
@@ -1115,7 +1128,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         for (const soul in toPut) {
             const putObj = toPut[soul];
             if(!Object.keys(putObj).length)continue
-            console.log(soul,putObj)
+            //console.log(soul,putObj)
             put(soul,putObj)
         }
         for (const index in timeIndices) {
@@ -1194,29 +1207,32 @@ function StringCMD(path,appendApiToEnd){
 function convertValueToType(value, toType, rowAlias, delimiter){
     let out
     if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
-    if(toType === undefined) throw new Error('Must specify what "type" you are trying to convert ' + value + ' to.')
     if(isEnq(value))return value//this is a lookup value, just return it.
     if(USER_ENQ.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
         return makeEnq(value)
     }
+    if(toType === undefined) throw new Error('Must specify what "type" you are trying to convert ' + value + ' to.')
+    
     if(typeof value === 'string' &&  /^\$\{(.+)\}/.test(value))return value//if this is an imported user enq, leave as is.
     delimiter = delimiter || ', '
+    console.log('BEFORE',JSON.parse(JSON.stringify(value)))
 
     if(toType === 'string'){
+        let test
         if(value === null) return null
-        let wasJSON
         if(typeof value === 'string'){//could be a JSON string
             try {
-                value = JSON.parse(value)//in case it is a string, that is stringified. Want to get rid of the the JSON
-                wasJSON = true
+                test = JSON.parse(value)//in case it is a string, that is stringified. Want to get rid of the the JSON
             } catch (error) {
                 //do nothing, it is not JSON, `value` should still be the original 'string'
             }
         }
+        if(test === null)return null
+        else if(typeof test === 'string') value = test
         let type = typeof value
         if(type === 'string'){//already a string (or was a stringified 'string')
             out = value
-        }else if(wasJSON || type === 'object'){//if they passed in anything that wasn't a string, it will be now,
+        }else if(type === 'object'){//if they passed in anything that wasn't a string, it will be now,
             out = JSON.stringify(value)
         }else{//for number, boolean (technically should be valid JSON?)
             out = String(value)
@@ -1283,16 +1299,15 @@ function convertValueToType(value, toType, rowAlias, delimiter){
             out = null
         }else if(typeof value === 'string'){
             try {//is it already valid JSON?
-                out = JSON.stringify(JSON.parse(value))
+                value = JSON.parse(value)
             } catch (error) {//nope, make array from split
-                out = JSON.stringify(value.split(delimiter))//arrays are stored as strings on puts
+                value = value.split(delimiter)//arrays are stored as strings on puts
             }
-        }else if (Array.isArray(value)){
-            out = JSON.stringify(value)
-        }else{
+        }else if(!Array.isArray(value)){
             let err = 'Conversion aborted. Cannot convert '+ value + ' for '+ rowAlias + ' to an Array. Value must be a string with a delimiter (default delimiter: ", ")'
             throw new Error(err)
         }
+        out = JSON.stringify(value)
     }else if(toType === 'unorderedSet'){
         let temp
         if (value === null){
@@ -1309,8 +1324,9 @@ function convertValueToType(value, toType, rowAlias, delimiter){
             } catch (error) {
                 temp = DATA_INSTANCE_NODE.test(value) ? [value] : value.split(delimiter)
             }
-        }else if(Array.isArray(value))temp=value
-        
+        }else if(Array.isArray(value) || typeof value == 'object')temp=value
+        //is an object at this point, could be an array
+        console.log('TO O',temp)
         if (!Array.isArray(temp)){
             let o = {}
             for (const key in temp) {
@@ -1329,7 +1345,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
         }else if (Array.isArray(temp)){
             //assuming array is to be added (for example, like on linking conversion from imported data)
             let o = {}
-            for (const val of value) {
+            for (const val of temp) {
                 if(ALL_INSTANCE_NODES.test(val)){
                     o[val] = {'#': val}
                 }else{
@@ -1341,6 +1357,8 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     }else{
         throw new Error('Can only attempt to convert value to "string", "number", "boolean", "array", or "unorderedSet" using this function')
     }
+    console.log('AFTER',JSON.parse(JSON.stringify(out)))
+
     return out
 }
 function tsvJSONgb(tsv){//Need to make better so it can be a csv, tsv, \r || \r\n without any issues
@@ -1584,9 +1602,10 @@ function toAddress(node,p){
 }
 function removeP(address){//address > nodeID
     let idObj = parseSoul(address)
+    let pval = idObj.p
     delete idObj.p
     delete idObj['.']
-    return makeSoul(idObj)
+    return [makeSoul(idObj),pval]
 }
 function isEnq(val){
     if(typeof val === 'string' && ENQ_LOOKUP.test(val)){
@@ -1597,7 +1616,7 @@ function isEnq(val){
 function makeEnq(nodeOrAddress,p){
     let soul = nodeOrAddress
     if(p && DATA_INSTANCE_NODE.test(nodeOrAddress)){
-        soul = makeSoul(Object.assign({},parseSoul(nodeOrAddress),{p}))
+        soul = toAddress(nodeOrAddress,p)
     }else if(USER_ENQ.test(nodeOrAddress)){
         soul = nodeOrAddress.match(USER_ENQ)[1]
     }
@@ -1813,5 +1832,6 @@ module.exports = {
     ALL_ADDRESSES,
     grabAllIDs,
     StringCMD,
-    BASE
+    BASE,
+    CONFIG_SOUL
 }

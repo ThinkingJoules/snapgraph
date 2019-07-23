@@ -178,16 +178,16 @@ const showgsub = makeshowgsub(querySubs,addrSubs,nodeSubs,configSubs)
 
 function sendToSubs(buffer){
     for (const baseid in querySubs) {
-        if(!buffer[baseID])continue
+        if(!buffer[baseid])continue
         const subO = querySubs[baseid];
         for (const sVal in subO) {
             const qParams = subO[sVal];
-            qParams.newStates(buffer[baseID])   
+            qParams.newStates(buffer[baseid])   
         }
     }
     
 }
-function incomingPutMsg(msg){//wire listener
+function incomingPutMsg(msg){//wire listener should get all emitted puts (either from us, or from other peers)
     if(msg && msg.put){
         let soul = Object.keys(msg.put)[0]
         let putObj = msg.put[soul]
@@ -201,21 +201,43 @@ function incomingPutMsg(msg){//wire listener
                 stateBuffer = !stateBuffer
                 setTimeout(dumpStateChanges,50)
             }
-        }else if(ALL_INSTANCE_NODES.test(soul) && !msg['@']){//watching for incoming data
-            for (const p in putObj) {
-                if(p === '_')continue
-                let addr = toAddress(soul,p)
-                let cVal = cache.get(addr)
-                if(cVal === undefined)continue //nothing is subscribing to this value yet, ignore
-                const v = putObj[p];
-                if(cVal === v)continue //value is unchanged, do nothing
-                sendToCache(soul,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
-                let subs = addrSubs[addr]
-                if(subs === undefined)continue //no current subscription for this addr
+        }else if(INSTANCE_OR_ADDRESS.test(soul) && !msg['@']){//watching for incoming data
+            if(ALL_INSTANCE_NODES.test(soul)){//non-unorderedSet values
+                for (const p in putObj) {
+                    if(p === '_')continue
+                    let addr = toAddress(soul,p)
+                    let cVal = cache.get(addr)
+                    if(cVal === undefined)continue //nothing is subscribing to this value yet, ignore
+                    const v = putObj[p];
+                    if(cVal === v)continue //value is unchanged, do nothing
+                    let isSet = (typeof v === 'object' && v !== null && v['#'])
+                    if(!isSet)sendToCache(soul,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
+                    let subs = addrSubs[addr]
+                    if(subs === undefined)continue //no current subscription for this addr
+                    
+                    if(isEnq(v) || isSet)getCell(soul,p,processValue(addr,subs),true,true)//has subs, but value isEnq, get referenced value, then process subs
+                    else processValue(addr,subs)(v)//value is a value to return, process subs with value available
+                }
+            }else if(ALL_ADDRESSES.test(soul)){//this is an unorderedSet, soul is the address
+                let cVal = cache.get(soul)
+                console.log('INCOMING ADDRESS/SET',soul,putObj,cVal)
 
-                if(isEnq(v))getCell(soul,p,processValue(addr,subs),true,true)//has subs, but value isEnq, get referenced value, then process subs
-                else processValue(addr,subs)(v)//value is a value to return, process subs with value available
+                if(cVal === undefined)return //nothing is subscribing to this value yet, ignore
+                let v = (Array.isArray(cVal)) ? new Set(cVal) : new Set()
+                for (const item in putObj) {
+                    if(item == '_')continue
+                    const boolean = putObj[item];
+                    if(boolean)v.add(item) //added something to the set that wasn't there before
+                    else if(!boolean && v.has(item))v.delete(item) //removed something that was previously in the set
+                }
+                v = [...v]
+                let [s,p] = removeP(soul)
+                sendToCache(s,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
+                let subs = addrSubs[soul]
+                if(subs === undefined)return //no current subscription for this addr
+                processValue(soul,subs)(v)//value is a value to return, process subs with value available
             }
+            
         }else if(IS_CONFIG_SOUL.test(soul) && !msg['@']){//watching for config updates
             let type = IS_CONFIG(soul)
             if(!type)return
@@ -230,7 +252,6 @@ function incomingPutMsg(msg){//wire listener
                 data.labels = {}
                 let configpath = configPathFromChainPath(soul)
                 setValue(configpath,data,gb,true)
-                triggerConfigUpdate()
             }else if(type === 'typeIndex'){
                 for (const tval in data) {//tval '#' + id || '-'+id
                     const boolean = data[tval];
@@ -261,7 +282,6 @@ function incomingPutMsg(msg){//wire listener
                 if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
                 if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
                 setValue(configpath,data,gb,true)
-                triggerConfigUpdate()
             }
             if(['typeIndex','propIndex'].includes(type))return
             let values = JSON.parse(JSON.stringify(getValue(configPathFromChainPath(soul),gb)))
@@ -276,6 +296,12 @@ function incomingPutMsg(msg){//wire listener
 }
 function processValue(addr,subs){
     return function(val){
+        let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
+        if(dataType === 'array'){
+            try{
+                val = JSON.parse(val)
+            }catch(e){} 
+        }
         for (const sID in subs) { //value has changed, trigger all subs
             handleSub(subs[sID],val)
         }
@@ -287,13 +313,11 @@ function processValue(addr,subs){
             //console.log('firing sub for',addr)
             const {cb,raw} = subO
             if(!raw){
-                let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
                 val = formatData(format,propType,dataType,val)
             }
             cb.call(cb,val)
         }
     }
-    
 }
 
 
@@ -339,7 +363,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
   
 
     importData = makeimportData(gun, gbGet)//
-    config = makeconfig(gun,gb,getCell,cascade,solve,tLog,tIndex)
+    config = makeconfig(gun,gbGet,getCell,cascade,solve,tLog,tIndex)
     performQuery = makeperformQuery(gbGet,setupQuery)
     typeGet = maketypeGet(gbGet,setupQuery)
     nodeGet = makenodeGet(gbGet,getCell,subThing,nodeSubs)
@@ -360,6 +384,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     gbase.qi = qIndex
     
     gun._.on('put',incomingPutMsg)
+    //gun._.on('in',function(msg){console.assert(!(msg && msg['@']),msg)})
 
     Object.assign(gbase,gbaseChainOpt())
     //random test command to fire after start
@@ -424,7 +449,6 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
             Object.assign(gb,gbMerge)
             //merge with gb
             //fireCB
-            triggerConfigUpdate()
             cb(true)
         }
         return
@@ -490,7 +514,6 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
                 if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
                 if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
                 setValue(configpath,data,gbMerge,true)
-                triggerConfigUpdate(subSoul)
             }
             toGet.got()
         }
@@ -553,7 +576,7 @@ const ls = (path) =>(function(){
         Object.entries(getValue(cPath,gb)).map(x => things[cmd.appendReturn(x[0])] = {ALIAS:x[1].alias,ID:x[0]})
     }else if(!b){
         let cmd = new StringCMD(path)
-        Object.entries(gb).map(x => things[cmd.appendReturn(x[0])] = {ID:x[0],ALIAS:x[1].alias})
+        Object.entries(gb).map(x => things[cmd.appendReturn(`.base('${x[0]}')`,true)] = {ID:x[0],ALIAS:x[1].alias})
     }else if(b && !(t||r)){
         let b1 = new StringCMD(path,'nodeType')
         let b2 = new StringCMD(path,'relation')
@@ -940,7 +963,7 @@ function sendToCache(nodeID, p, value){
                 for (const depAddr of deps) {
                     let subs = addrSubs[addr]
                     if(subs === undefined)continue
-                    let nodeID = removeP(depAddr)
+                    let [nodeID]= removeP(depAddr)
                     getCell(nodeID,p,processValue(depAddr,subs),true,true)
                     checkDeps(depAddr)//recur... until it can't
                 }
@@ -964,8 +987,7 @@ function getCell(nodeID,p,cb,raw,addSub){
             from = lookup
         }
         if(cVal !== undefined){
-            let fromN = removeP(from)
-            let {p} = parseSoul(from)
+            let [fromN,p] = removeP(from)
             returnGetValue(fromN,p,cVal,cb,raw,addSub)
             //console.log('getCell,cache in:',Date.now()-start)
             return cVal //for using getCell without cb, assuming data is in cache
@@ -979,8 +1001,7 @@ function getCell(nodeID,p,cb,raw,addSub){
     }
     let args = [cb,raw,addSub]
     if(!getBuffer[nodeID]){
-        getBuffer[nodeID] = new Map([[p,[args]]])
-        return
+        getBuffer[nodeID] = new Map()
     }
     let argArr = getBuffer[nodeID].get(p)
     if(!argArr)getBuffer[nodeID].set(p,[args])
@@ -1017,6 +1038,11 @@ function retrieveCell(nodeID,p,argsArr,cb){
                 delete fromSoul['.']
                 //sendToCache(soul,pval,val)//put the lookup in cache
                 retrieveCell(makeSoul(fromSoul),fromP,argsArr,cb)
+            }else if(typeof val == 'object' && val !== null && val['#']){
+                let s = val['#']
+                gunGet(gun)(s,false,function(obj){
+                    handleGetValue(nodeID,p,obj,argsArr)
+                })
             }else{
                 if(cb){
                     cb(val)
@@ -1058,6 +1084,11 @@ function retrieveNode(nodeID,pMap){
                 retrieveCell(makeSoul(fromSoul),fromP,false,function(val){
                     handleGetValue(nodeID,p,val,argsArr)
                 })
+            }else if(typeof val == 'object' && val !== null && val['#']){
+                let s = val['#']
+                gunGet(gun)(s,false,function(obj){
+                    handleGetValue(nodeID,p,val,obj,argsArr)
+                })
             }else{
                 handleGetValue(nodeID,p,val,argsArr)
             }   
@@ -1073,9 +1104,10 @@ function handleGetValue(nodeID,p,val,argsArr){
 function returnGetValue(fromSoul,fromP,val,cb,raw,addSub){
     let {b,t,r} = parseSoul(fromSoul)
     let {propType,dataType,format} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:fromP})),gb)
+    let fromAddr = toAddress(fromSoul,fromP)
     if([null,undefined].includes(val)){
         if(addSub)sendToCache(fromSoul,fromP,null)
-        cb.call(cb,null,fromSoul)
+        cb.call(cb,null,fromAddr)
         //console.log('getCell,NULL in:',Date.now()-start)
         return
     }
@@ -1083,16 +1115,21 @@ function returnGetValue(fromSoul,fromP,val,cb,raw,addSub){
     if(dataType === 'unorderedSet'){//this will be a full object
         let data = JSON.parse(JSON.stringify(val))
         let setVals = []
-        for (const key in data) {
-            if(key === '_')continue
-            const boolean = data[key];
-            if (boolean) {//if currently part of the set
-                setVals.push(key) 
+        if(Array.isArray(data)){
+            setVals = data.slice()
+        }else{
+            for (const key in data) {
+                if(key === '_')continue
+                const boolean = data[key];
+                if (boolean) {//if currently part of the set
+                    setVals.push(key) 
+                }
             }
         }
+        
         if(fromP === 'LABELS')setVals.unshift(t)
         val = setVals
-    }else if(dataType = 'array'){
+    }else if(dataType === 'array'){
         try {
             val = JSON.parse(val)
             for (let i = 0; i < val.length; i++) {
@@ -1107,7 +1144,7 @@ function returnGetValue(fromSoul,fromP,val,cb,raw,addSub){
     }
     if(addSub)sendToCache(fromSoul,fromP,val)
     if(!raw)val = formatData(format,propType,dataType,val)
-    cb.call(cb,val, fromSoul)
+    cb.call(cb,val, fromAddr)
     //console.log('getCell,DATA in:',Date.now()-start)
 
 }
@@ -3477,7 +3514,8 @@ function Query(path,qArr,userCB,sID){
         let {sID,userCB} = qParams
         if(['string','number','symbol'].includes(typeof self.sID) && self.sID && self.runs === 1){//is valid type, truthy
             console.log('Setting up query: '+ sID)
-            console.log('Be sure to remove unused queries. Use `let sub = gbase.base('+self.base+').subscribeQuery(); sub.kill()')
+            let kType = typeof self.sID === 'string' && `'${self.sID}'` || `${self.sID}`
+            console.log(`To remove this query: gbase.base('${self.base}').kill(${kType})`)
             setValue([self.base,self.sID],qParams,querySubs)
         }
         qParams.state = ''

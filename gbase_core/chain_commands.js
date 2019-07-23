@@ -19,10 +19,9 @@ const{getValue,
     DATA_INSTANCE_NODE,
     newDataNodeID,
     configSoulFromChainPath,
-    IS_CONFIG_SOUL,
+    CONFIG_SOUL,
     makeEnq,
     toAddress,
-    setMergeValue,
     removeP,
     grabThingPropPaths,
     NON_INSTANCE_PATH,
@@ -39,7 +38,8 @@ const{newBaseConfig,
     newRelationshipPropConfig,
     handleImportColCreation,
     handleTableImportPuts,
-    handleConfigChange
+    handleConfigChange,
+    loadAllConfigs
 
 } = require('./configs')
 
@@ -112,7 +112,7 @@ const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID,cb) =>{
             gun.get(makeSoul({b,'%':true})).put(baseC)
 
             let newgb = Object.assign({},{[b]:baseC},{[b]:{props:{},relations:{},groups:{}}})
-            makenewNodeType(gun,newgb,timeLog)(makeSoul({b}),'t')({alias: 'Users',humanID:'ALIAS'},false,[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
+            makenewNodeType(gun,newgb,timeLog)(makeSoul({b}),'t')({id:'USERS',alias: 'Users',humanID:'ALIAS'},false,[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
         }
         setTimeout(putRest,1000)
         return baseID
@@ -151,7 +151,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
     let tCsoul = configSoulFromChainPath(newPath)
     //console.log(newPath,tCsoul)
 
-    makehandleConfigChange(gun,newGB)(tconfig,newPath,{isNew:true, internalCB:function(obj){
+    handleConfigChange(gun,newGB,false,false,false,timeLog,false,tconfig,newPath,{isNew:true, internalCB:function(obj){
         let {configPuts} = obj
         Object.assign(toPut,configPuts)
         let forGB = Object.assign({},configPuts[tCsoul],{props:{}})
@@ -190,18 +190,18 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => (configOb
         }
         let pconfig = newNodePropConfig(nextPconfig)
         let newPpath = makeSoul({b,[relationOrNode]:tid,p:id})
-        console.log(pconfig)
-        config(pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+        //console.log(pconfig)
+        handleConfigChange(gun,newGB,false,false,false,timeLog,false,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
 
     }
     function done(){
         if(err)return
         for (const csoul in toPut) {//put all configs in
             const cObj = toPut[csoul];
-            if(IS_CONFIG_SOUL.test(csoul)){
+            if(CONFIG_SOUL.test(csoul)){
                 timeLog(csoul,cObj)
-                console.log(csoul,cObj)
-                setMergeValue(configPathFromChainPath(csoul),cObj,newGB)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
+                //console.log(csoul,cObj)
+                setValue(configPathFromChainPath(csoul),cObj,newGB,true)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
             }
             gun.get(csoul).put(cObj)
         }
@@ -265,7 +265,7 @@ const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path,cb
             if(err)return
             for (const csoul in toPut) {//put all configs in
                 const cObj = toPut[csoul];
-                if(IS_CONFIG_SOUL.test(csoul)){
+                if(CONFIG_SOUL.test(csoul)){
                     timeLog(csoul,cObj)
                     setValue(configPathFromChainPath(csoul),cObj,gb)//mutate gb object before the gun CB hits, that way when this done CB is called user can use gb
                 }
@@ -421,17 +421,30 @@ const makenewFrom = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) 
     
 }
 
-const makeconfig = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path) => (configObj, backLinkCol,cb) =>{
-    try{
-        cb = (cb instanceof Function && cb) || function(){}
+const makeconfig = (gun,gbGet,getCell,cascade,solve,timeLog,timeIndex) => (path) => {
+    
+    const f = (function(configObj,cb){
+        let loadPath = makeSoul({b:parseSoul(path).b})//load all the configs regardless of chain context
+        loadAllConfigs(gbGet,loadPath,config)
+        function config(gb){
+            try{
+                cb = (cb instanceof Function && cb) || function(){}
+                
+                handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,configObj, path, false,cb)
+                
+            }catch(e){
+                console.log(e)
+                cb.call(this,e)
+                return false
+            }
+        }
         
-        handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,configObj, path, backLinkCol,cb)
-        
-    }catch(e){
-        console.log(e)
-        cb.call(this,e)
-        return false
+    })
+
+    f.help = function(){
+        console.log('.config( configObj, doneCB )')
     }
+    return f
 }
 const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
     
@@ -720,8 +733,7 @@ const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
         return subID
         function addressGet(gb){
             try{
-                let nodeID = removeP(path)
-                let {p} = parseSoul(path)
+                let [nodeID,p] = removeP(path)
                 getCell(nodeID,p,cb,raw,true)
                 subThing(path,cb,false,{raw})
             }catch(e){
@@ -914,7 +926,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
         }
         let altgb = JSON.parse(JSON.stringify(gb))
         configObj.id = t
-        setMergeValue(configPathFromChainPath(makeSoul({b,t})),configObj,altgb)
+        setValue(configPathFromChainPath(makeSoul({b,t})),configObj,altgb,true)
         //console.log(b,t)
         let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
         let colHeaders = dataArr[0]
@@ -991,11 +1003,11 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
         function done(){
             makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newGB){
                 if(!err){
-                    triggerConfigUpdate()//fire callback for app code to get new config data.
+                    console.log(newGB)
                     for (const newSoul in result) {
                         let put = result[newSoul]
                         putData(gun, newGB, getCell, false, timeLog, timeIndex, false, newSoul, put, {isNew:true,isUnique:true}, function(err){
-                            console.log('put errors',newSoul,err)
+                            //console.log('put errors',newSoul,err)
                         })
                     } 
                 }else{

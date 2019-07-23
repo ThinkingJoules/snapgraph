@@ -19,7 +19,11 @@ const {convertValueToType,
     newID,
     gunGet,
     gunPut,
-    IS_CONFIG
+    IS_CONFIG,
+    ALL_INSTANCE_NODES,
+    CONFIG_SOUL,
+    toAddress,
+    removeP
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -130,9 +134,8 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
                 validateAutoIncrement(testVal)
             }
         }else{
-            console.log(validObj,testObj)
-            let err = key + ' does not match valid keys of: '+ Object.keys(validObj).join(', ')
-            throw new Error(err)
+            console.warn(key + ' does not match valid keys of: '+ Object.keys(validObj).join(', '))
+            delete testObj[key]
         }
     }
     function validateAutoIncrement(val){
@@ -147,7 +150,7 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
     }
 }
 
-function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,configObj, path, opts, cb){
+function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, configObj, path, opts, cb){
     //configObj = {alias: 'new name', sortval: 3, vis: false, archived: false, deleted: false}
     //this._path from wherever config() was called
     let {isNew,internalCB} = opts || {}
@@ -157,7 +160,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
     let csoul = configSoulFromChainPath(path)
     let thisConfig = getValue(cpath,gb) || {}
     let toPut = {},configPuts={}, cPut = configPuts[csoul] = {}, tempStore = {},soulList = [],run = []
-    let getData = false, convertData = false,err, typeChange = false
+    let convertData = false,err, typeChange = false
     let pType = (configObj.propType !== undefined) ? configObj.propType : thisConfig.propType
     let delimiter = configObj.delimiter || ', '
     let pathType
@@ -165,13 +168,24 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
 
     let dType = (configObj.propType !== undefined) ? convertData || configObj.dataType : thisConfig.dataType
     
-    let configAPIPropType = ['data','date','pickList']
-    let simpleConfigs = ['inheritPermissions','log','alias','sortval','required','defaultval','externalID','pickOptions','format','allowMultiple']
+    let configAPIPropType = ['data','date','pickList','function']
+    let complexConfigs = ['externalID','format','enforceUnique']
     for (const key in configObj) {//split config obj based on keys
         const value = configObj[key];
-        if(simpleConfigs.includes(key) || isNew)cPut[key] = value//these config vals have no additional checks needed
-        else if(['enforceUnique','externalID'].includes(key) && value)run.push(['checkUnique',[tempStore]])
+        if(!complexConfigs.includes(key) || isNew)cPut[key] = value//these config vals have no additional checks needed
+        else if(['enforceUnique'].includes(key) && value)run.push(['checkUnique',[null]])
         else if(key === 'propType' && value !== thisConfig.propType && configAPIPropType.includes(value))typeChange = value
+        else if(key === 'externalID'){
+            cPut[key] = value
+            if(value !== ''){
+                run.push(['checkUnique',[null]]);
+                p = value;
+            }else{
+                p = thisConfig.externalID
+            }
+            let pSoul = configSoulFromChainPath(makeSoul({b,t,r,p}))
+            addToPut(pSoul,{enforceUnique: !!value},configPuts)
+        }
     }
 
     //below is the config router, can only take one 'path', but can have more than one 'utilCall'
@@ -185,45 +199,10 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         run.push(['changePropType',[null]])
     }else if(configObj.fn && thisConfig.propType === 'function'){//update function
         run.push(['handleFN',[configObj]])
-    }else if(configObj.dataType && thisConfig.propType === 'data'){//only changing dataType
-        run.push(['changeDataType',[configObj.dataType]])
     }else if(!run.length && !Object.keys(cPut).length){
         throw new Error('No configs to change')
     }
     const util = {
-        getList: function(whatPath,toObj,listOnly){
-            //whatPath must be !#. It should be base,nodeType/relationType,prop
-            //Check to make sure soul is correct
-            let {b,t,r,p} = parseSoul(whatPath)
-            let createdSoul = makeSoul({b,t,r,':':true})
-            gun.get(createdSoul).once(function(data){
-                if(data === undefined){runNext(); return}//for loop would error if not stopped
-                for (const soul in data) {
-                    if(!DATA_INSTANCE_NODE.test(soul))continue
-                    if(data[soul]){//truthy
-                        //(if something is archived we won't be operating on that data... good? bad? not sure)
-                        //in unarchive, we can run through .edit api and it will attempt to convert values to current types
-                        soulList.push(soul)
-                    }
-                }
-                if(!listOnly){
-                    let toGet = soulList.length
-                    for (const soul of soulList) {
-                        getCell(soul,p,function(val){
-                            toGet--
-                            toObj[soul] = val
-                            if(toGet <= 0){
-                                runNext()
-                            }
-    
-                        },true)
-                    }
-                }else{
-                    runNext()
-                }
-                
-            })
-        },
         changeDataType: function(toType){//only used to convert all values for property this config() was called for. any others need manual conversion
             let from = thisConfig.dataType
             let toSingle = (configObj.allowMultiple === false && thisConfig.allowMultiple === true) ? true : false
@@ -233,16 +212,17 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
                 return
             }
             getList(function(list){
+                console.log(list)
                 for (const idOnList in list) {
                     const value = list[idOnList];
                     if(Array.isArray(value) && toSingle && value.length > 1){
-                        throwErr('Too many values in Array for {allowMultiple: false} setting')
+                        throwErr('Too many values in Array for {allowMultiple: false} setting. nodeID:', idOnList)
                         return
                     }
                     try {
-                        let v = convertValueToType(value,dType,idOnList,delimiter)
-                        tempStore[soul] = v
-                        addToPut(soul,{[p]:v},toPut)//might be overwritten later, but if not, this is the only time it is added to the output
+                        let v = convertValueToType(value,toType,idOnList,delimiter)
+                        tempStore[idOnList] = v
+                        addToPut(idOnList,{[p]:v},toPut)//might be overwritten later, but if not, this is the only time it is added to the output
                     } catch (error) {
                         if(pType === 'date'){
                             throwErr('Cannot parse values into a date.')
@@ -271,9 +251,11 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
                     if(!toGet)cb.call(cb,toObj)
                     for (const soul of soulList) {
                         getCell(soul,p,function(val,from){
+                            let addr = toAddress(soul,p)
+                            let [fromSoul] = removeP(from)
                             toGet--
-                            if(soul === from){
-                                toObj[from] = val
+                            if(addr === from){
+                                toObj[fromSoul] = val
                             }
                             if(!toGet){
                                 cb.call(cb,toObj)
@@ -284,17 +266,28 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
             }
         },
         checkUnique: function(){
-
             getList(function(list){
                 list = list || {}
                 let vals = Object.values(list)
                 let set = new Set(vals)
                 if(set.size !== vals.length){
-                    throwErr('Non-Unique values already exist. Remove duplicates and try again. Expected: '+vals.length+' unique values. Found: '+set.size)
+                    let all = Object.entries(list)
+                    let same = {}
+                    for (const [soul,val] of all) {
+                        let v = String(val)
+                        if(!same[v])same[v] = soul
+                        else if(Array.isArray(same[v]))same[v].push(soul)
+                        else{
+                            let firstSoul = same[v]
+                            same[v] = [firstSoul,soul]
+                        }
+                    }
+                    let conflictSouls = Object.values(same).filter(x=>Array.isArray(x)).reduce((p,c)=>{p.concat(c)})
+                    throwErr('Non-Unique values already exist on souls: '+conflictSouls.join(', '))
                 }
                 runNext()
             })
-            function getList(cb){
+            function getList(cb){//gets a single property off a soul {[soul]:propVal}
                 let stateSoul = makeSoul({b,t,r,i:true})
                 let toObj = {}
                 let soulList = []
@@ -344,9 +337,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
                 }
                 //handleFNColumn(path, configObj, cb) //initial change to fn column
                 run.unshift(['handleFN',[configObj]])
-            }else if (pType === 'pickList'){//parse equation and store
+            }else if (pType === 'pickList'){//make sure it is an array
                 let opts = configObj.pickOptions
-                if(!opts){throwErr('Must specify an array of options for {pickOptions: ["option 1","option 2"]}');return}
+                if(!opts || !Array.isArray(opts)){throwErr('Must specify an array of options for {pickOptions: ["option 1","option 2"]}');return}
                 cPut.pickOptions = opts
             }else if (pType === 'date'){
                 //don't really need to do anything more? maybe something with format?
@@ -408,7 +401,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
             //console.log(usedIn)
             
             cPut.fn = fn
-            let toSolve = soulList.length
+            let toSolve = soulList.length //NEED TO BUILD SOULLIST
             for (const rowid of soulList) {
                 solve(rowid,fn,function(val){
                     addToPut(rowid,{[p]:val},toPut)
@@ -457,7 +450,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
     }
     //start logic
 
-    //console.log(JSON.stringify(run))
+    console.log(JSON.stringify(run))
     runNext()
 
     
@@ -474,17 +467,17 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         }
         
         let validConfig
-        let type = (path.includes('#')) ? 'node' : 'relation'
-        if(path.includes('.') && path.includes('#')){//node Prop
+        let type = (t) ? 'node' : 'relation'
+        if(p && t){//node Prop
             pathType = 'nodeProp'
             validConfig = newNodePropConfig()
-        }else if(path.includes('.') && path.includes('-')){//relation prop
+        }else if(p && r){//relation prop
             pathType = 'relationProp'
             validConfig = newRelationshipPropConfig()
-        }else if(path.includes('#')){//nodeType
+        }else if(t){//nodeType
             pathType = 'nodeType'
             validConfig = newNodeTypeConfig()
-        }else if(path.includes('-')){//relationType
+        }else if(r){//relationType
             pathType = 'relationType'
             validConfig = newRelationshipConfig()
         }else{//base (or row, but validConfig is not called)
@@ -498,7 +491,14 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         //these should throw errors and stop the call if they don't pass
         checkConfig(validConfig, configObj,type) //SHOULD ADD VALIDATION FOR SPECIAL PROP STRING FORMATTING (format?)
         checkUniques(gb, path, configObj)//will pass if alias/sortval is not present
-        if(['nodeType','relationType'].includes(pathType))return //rest is for properties
+        if(['nodeType','relationType'].includes(pathType)){
+            if(configObj.externalID && configObj.externalID !== '' && !isNew){
+                let isID = findID(gb,configObj.externalID,makeSoul({b,t,r,p:configObj.externalID}))
+                if(isID === undefined)throw new Error('Cannot locate the property specified for the externalID')
+                configObj.externalID = isID
+            }
+            return
+        } //rest is for properties
         //config obj has valid keys/values, next is figuring out if the dataType is valid
         let dType = (configObj.dataType !== undefined) ? configObj.dataType : thisConfig.dataType
 
@@ -515,6 +515,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         }
         let listOnly = false
         if(dType !== thisConfig.dataType){//need to change the dataType
+            console.warn('setting dataType to:',dType)
             convertData = dType
             getData = true
         }else if((enforceUnique && !thisConfig.enforceUnique) || configObj.externalID){//turning on enforceUnique, dataType is already correct
@@ -523,7 +524,6 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
             getData = true
             listOnly = true
         }
-        if(!isNew && getData)run.push(['getList',[path,tempStore,listOnly]])
         if(!isNew && convertData)run.push(['changeDataType',[convertData]])
         cPut.dataType = dType
         let o = {allowMultiple,enforceUnique,autoIncrement}
@@ -571,25 +571,23 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
     function done(){
         if(err !== undefined)return
         let dataToPut = Object.keys(toPut).length
-
         if(internalCB && internalCB instanceof Function){
             internalCB.call(this,{path,configPuts,toPut})
         }else{
+            putConfigs()
             if(!isNew && dataToPut){
+                console.log('Data changed from config: ',toPut)
                 for (const nodeID in toPut) {//data soul = dataID, (!#$ || !-$) or it is lookupNexts !#$[lookup
                     const putObj = toPut[nodeID];
-                    putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, {own:true}, function(err){
+                    putData(gun, gb, getCell, cascade, timeLog, timeIndex, false, nodeID, putObj, {own:true}, function(err){
                         if(err){
                             throwErr(err)
                             return
                         }
                         dataToPut--
-                        if(!dataToPut)putConfigs()
                     })
                 }
-            }else{
-                putConfigs()
-            }  
+            }
             console.log(configPuts)  
         }
 
@@ -597,7 +595,11 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         function putConfigs(){
             for (const csoul in configPuts) {//put all configs in
                 const cObj = configPuts[csoul];
-                if(IS_CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
+                if(!Object.keys(cObj).length)continue
+                if(CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
+                //merge before put so putData will work
+                let cpath = configPathFromChainPath(csoul)
+                setValue(cpath,cObj,gb,true)
                 gun.get(csoul).put(cObj)
             }
             cb.call(cb,undefined)
@@ -631,6 +633,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         for (const csoul in configPuts) {
             const cObj = configPuts[csoul];
             let curC = getValue(configPathFromChainPath(csoul),gb) || {}
+
             for (const key in cObj) {
                 let v = cObj[key];
                 let curv = curC[key]
@@ -649,10 +652,10 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog, timeIndex,conf
         }
     }
     function throwErr(errmsg){
-        let e = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = e
-        cb.call(cb,err)
-        console.log(e)
+        errmsg = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+        err = errmsg
+        cb.call(cb,errmsg)
+        console.log(errmsg)
     }
     function addToPut(soul,putObj,collector){
         if(!collector[soul]){
@@ -940,7 +943,6 @@ function handleNewLinkColumn(gun, gb, gunSubs, newColumn, loadColDataToCache, pr
 
 
 //IMPORT STUFF
-
 const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
     // create configs
     let {b,t,r} = parseSoul(path)
@@ -987,7 +989,7 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
                 dataType = 'string'
             }
 
-            let pconfig = newNodePropConfig({alias: palias, propType, dataType,enforceUnique})
+            let pconfig = (t) ? newNodePropConfig({alias: palias, propType, dataType,enforceUnique}) : newRelationshipPropConfig({alias: palias, propType, dataType,enforceUnique})
             pconfig.id = p
             setValue(configPathFromChainPath(makeSoul({b,t,r,p})),pconfig,altgb,true)
             newConfigs.push(pconfig)
@@ -996,21 +998,54 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
     }
     return [newConfigs,aliasLookup]
 }
-const handleTableImportPuts = (gun, resultObj, cb)=>{
-    cb = (cb instanceof Function && cb) || function(){}
-    for (const rowID in resultObj) {//put alias on row node
-        const data = resultObj[rowID]
-        gun.get(rowID).put(data)
 
-        //put data in through edit?? would handle timeIndex and timeLog..
 
+const loadAllConfigs = (gbGet,path,cb) =>{
+    //will load full configs from depth specified, downwards
+    let cPath = configPathFromChainPath(path)
+    let {b,t,r} = parseSoul(path)
+    let gb = gbGet()
+    let {relations,props} = getValue(cPath,gb)//if it is a base, then relations will have something , else only props
+    let output = []
+
+    if(!t && !r){//if this is asking to load in the whole base...
+        output.push([path,Object.keys(newNodeTypeConfig())])
+    }
+    if(relations){
+        let rK = Object.keys(newRelationshipConfig())
+        for (const rval in relations) {
+            const pObj = relations[rval].props;
+            let rSoul = makeSoul({b,r:rval})
+            output.push([rSoul,rK])
+            let rpK = Object.keys(newRelationshipPropConfig())
+            for (const pval in pObj) {
+                let rpSoul = makeSoul({b,r:rval,p:pval})
+                output.push([rpSoul,rpK])
+            }
+        }
+    }
+    if(props && !t && !r){
+        let tK = Object.keys(newNodeTypeConfig())
+        for (const tval in props) {
+            const pObj = props[tval].props;
+            let tSoul = makeSoul({b,t:tval})
+            output.push([tSoul,tK])
+            let rpK = Object.keys(newNodePropConfig())
+            for (const pval in pObj) {
+                let tpSoul = makeSoul({b,t:tval,p:pval})
+                output.push([tpSoul,rpK])
+            }
+        }
+    }else if(props){//just a prop
+        let ks = t && Object.keys(newNodePropConfig()) || r && Object.keys(newRelationshipPropConfig())
+        for (const pval in props) {
+            let pSoul = makeSoul({b,t,r,p:pval})
+            output.push([pSoul,ks])
+        }
 
     }
-    
-    cb.call(this, undefined)
+    gbGet(output,cb)
 }
-
-
 
 const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
     //pathArgs = [[path, [arrOfProps] || falsy(getAll)]]
@@ -1019,7 +1054,7 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
 
     for (const [path,requestedKeys] of pathArgs) {
         let cSoul = configSoulFromChainPath(path)
-        if(!IS_CONFIG_SOUL.test(cSoul))continue
+        if(!CONFIG_SOUL.test(cSoul))continue
         let type = IS_CONFIG(cSoul)
         let allKeys
         if(type === 'baseConfig')allKeys = Object.keys(newBaseConfig())
@@ -1074,8 +1109,8 @@ module.exports = {
     newNodePropConfig,
     handleConfigChange,
     handleImportColCreation,
-    handleTableImportPuts,
     checkConfig,
     basicFNvalidity,
     gbGet,
+    loadAllConfigs
 }
