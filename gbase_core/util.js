@@ -29,7 +29,10 @@ const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
 const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
 const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
 const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
+const TIME_DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
+const TIME_RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
 
+const TIME_INDEX_PROP = regOr([TIME_DATA_ADDRESS,TIME_RELATION_ADDRESS])
 const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
 const INSTANCE_OR_ADDRESS = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE,DATA_ADDRESS,RELATION_ADDRESS])
 const NON_INSTANCE_PATH = regOr([BASE,NODE_TYPE,RELATION_TYPE,PROP_TYPE])
@@ -197,7 +200,7 @@ function collectPropIDs(gb,path,name,isNode){
     return out
 }
 function lookupID(gb,alias,path){//used for both alias change check, and new alias
-    const checkAgainst = {t:{'#':true},l:{'&':true},r:{'-':true},g:{'^':true}}
+    const checkAgainst = {t:{'#':true},l:{'&':true},r:{'-':true}}
     let pathObj = parseSoul(path)
     if(pathObj.p){//prop, simple check
         return findID(gb,alias,path)
@@ -469,10 +472,10 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     let ctxType = false
     let {b,t,r,i} = IDobj
     let isNode = !r
-    let thingType = makeSoul({b,t,r})
     let {props,externalID} = getValue(configPathFromChainPath(nodeID),gb)
     let {relations,labels} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
     let refChanges = [], setState = false //contains what user requested in putObj
+    let err
     if(ctx && isNew){
         if(DATA_INSTANCE_NODE.test(ctx)){
             let {t:ct} = parseSoul(ctx)
@@ -488,9 +491,9 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     const get = gunGet(gun)
     const put = gunPut(gun)
     initialCheck()
-    console.log(JSON.parse(JSON.stringify(putObj)))
+    //console.log(JSON.parse(JSON.stringify(putObj)))
     //findIDs and convert userValues to correct value type
-    let timeIndices = {},  relationsIndices = {}, logs = {}, run = [], toPut = {}, err
+    let timeIndices = {},  relationsIndices = {}, logs = {}, run = [], toPut = {}
     let allProps = getAllActiveProps(gb,nodeID), putProps = Object.keys(putObj)
     let addRemoveRelations = {}
     
@@ -953,7 +956,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let pval = findID(props, palias) 
             let v = putObj[palias]
             if (!pval)throw new Error('Cannot find property with name: '+ palias +'. Edit aborted')
-            let {alias,propType,dataType,enforceUnique} = props[pval]
+            let {alias,propType,dataType,enforceUnique,pickOptions} = props[pval]
             
             let cVal = convertValueToType(v,dataType,alias)
             if(dataType === 'array'){
@@ -993,6 +996,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 if(testDate.toString() === 'Invalid Date'){
                     let err = new Error('Cannot understand the date string in value, edit aborted! Try saving again with a valid date string (hh:mm:ss is optional): "mm/dd/yyyy, hh:mm:ss"')
                     throw err
+                }
+            }else if(propType === 'pickList' && dataType !== 'unorderedSet'){
+                if(!pickOptions.includes(cVal)){
+                    let e = new Error('Invalid pick list option. Pick one of: '+pickOptions.join(', '))
+                    throwError(e)
+                    return
                 }
             }
             
@@ -1215,7 +1224,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     
     if(typeof value === 'string' &&  /^\$\{(.+)\}/.test(value))return value//if this is an imported user enq, leave as is.
     delimiter = delimiter || ', '
-    console.log('BEFORE',JSON.parse(JSON.stringify(value)))
+    //console.log('BEFORE',JSON.parse(JSON.stringify(value)))
 
     if(toType === 'string'){
         let test
@@ -1326,7 +1335,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
             }
         }else if(Array.isArray(value) || typeof value == 'object')temp=value
         //is an object at this point, could be an array
-        console.log('TO O',temp)
+        //console.log('TO O',temp)
         if (!Array.isArray(temp)){
             let o = {}
             for (const key in temp) {
@@ -1357,7 +1366,7 @@ function convertValueToType(value, toType, rowAlias, delimiter){
     }else{
         throw new Error('Can only attempt to convert value to "string", "number", "boolean", "array", or "unorderedSet" using this function')
     }
-    console.log('AFTER',JSON.parse(JSON.stringify(out)))
+    //console.log('AFTER',JSON.parse(JSON.stringify(out)))
 
     return out
 }
@@ -1390,65 +1399,7 @@ function parseIncrement(incr){
         return false
     }
 }
-const checkUniques = (gb,path, cObj)=>{//for config vals that must be unique among configs
-    let uniques = ['sortval']
-    let configPath = configPathFromChainPath(path)
-    let endPath = configPath.pop()//go up one level
-    let things = getValue(configPath, gb)
-    if(!path.includes('#') && !path.includes('-') && !path.includes('.')){
-        return true //base nothing unique
-    }
-    let isNotUnique = lookupID(gb,cObj.alias,path)
-    let err = {}
-    if(isNotUnique)err[isNotUnique] = true
-    let sorts = 0
-    if(things !== undefined){
-        for (const id in things) {
-            if(id === endPath)continue
-            const thingPropConfig = things[id];
-            for (const prop of uniques) {
-                let cVal = thingPropConfig[prop]
-                if(prop === 'sortval'){
-                    sorts = (sorts < cVal) ? cVal : sorts
-                }
-                let compare = cObj[prop]
-                if(cVal !== undefined && compare !== undefined && (cVal == compare || id == compare)){
-                    err[prop] = cVal
-                }
-            
-            }
-        }
-        if(err.sortval !== undefined){
-            cObj.sortval = sorts+10
-            delete err.sortval
-        }
-        let keys = Object.keys(err)
-        if(keys.length){
-            throw new Error('Non-unique value found on key(s): '+keys.join(', '),Object.values(err).join(', '))
-        }
-        return true
-    }else{
-        let errmsg = 'Cannot find config data at path: ' + configPath
-        throw new Error(errmsg)
-    }
-}
-const nextSortval = (gb,path,pval)=>{
-    //pval is only used if curIDsPath fails
-    let curIDsPath = configPathFromChainPath(path)
-    curIDsPath.push('props')
-    let psort = (pval && pval.split('p')[0]*10) || 10
-    let curIDs = getValue(curIDsPath, gb) || {[pval]:psort}
-    let nextSort = 0
-    for (const key in curIDs) {
-        const sortval = curIDs[key].sortval;
-        //console.log(sortval, nextSort)
-        if(sortval && sortval >= nextSort){
-            nextSort = sortval
-        }
-    }
-    nextSort += 10
-    return nextSort
-}
+
 
 
 
@@ -1787,8 +1738,6 @@ module.exports = {
     gbByAlias,
     setValue,
     getValue,
-    checkUniques,
-    nextSortval,
     convertValueToType,
     tsvJSONgb,
     allUsedIn,
@@ -1833,5 +1782,6 @@ module.exports = {
     grabAllIDs,
     StringCMD,
     BASE,
-    CONFIG_SOUL
+    CONFIG_SOUL,
+    TIME_INDEX_PROP
 }

@@ -89,7 +89,7 @@ const {
     naturalCompare,
     IS_CONFIG,
     IS_CONFIG_SOUL,
-    
+    TIME_INDEX_PROP,
     ALL_ADDRESSES,
     StringCMD
 } = require('./util.js')
@@ -192,16 +192,18 @@ function incomingPutMsg(msg){//wire listener should get all emitted puts (either
         let soul = Object.keys(msg.put)[0]
         let putObj = msg.put[soul]
         if(IS_STATE_INDEX.test(soul)){//watching for a change on an index
+            let stateAlias = {true:'active',false:'archived',null:'deleted'}
             for (const nodeID in putObj) {
                 let {b} = parseSoul(nodeID)
                 const state = putObj[nodeID];
-                setValue([b,nodeID],state,nodeStatesBuffer)
+                let toBuffer = stateAlias[state]
+                setValue([b,nodeID],toBuffer,nodeStatesBuffer)
             }
             if(stateBuffer){
                 stateBuffer = !stateBuffer
                 setTimeout(dumpStateChanges,50)
             }
-        }else if(INSTANCE_OR_ADDRESS.test(soul) && !msg['@']){//watching for incoming data
+        }else if(!TIME_INDEX_PROP.test(soul) && INSTANCE_OR_ADDRESS.test(soul) && !msg['@']){//watching for incoming data
             if(ALL_INSTANCE_NODES.test(soul)){//non-unorderedSet values
                 for (const p in putObj) {
                     if(p === '_')continue
@@ -2200,7 +2202,7 @@ function Query(path,qArr,userCB,sID){
                     if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
                     const stateArr = stateObj[userVar];
                     if(!Array.isArray(stateArr)) stateArr = ['active'] //default instead of error
-                    elements[userVar].states = stateArr
+                    elements[userVar].validStates = stateArr
                 }
             }
         }
@@ -2327,7 +2329,7 @@ function Query(path,qArr,userCB,sID){
         this.localDone = false
         this.matchIndex = mIdx
         this.nodeUsedInPaths = {} //{nodeID: Set{JSON.stringify(fullPath)}}
-        this.states = ['active']
+        this.validStates = ['active']
         this.nodes = {} //{[nodeID]:{state:true,labels:true,filter:true,match:true,passing:true}}
 
         //expand
@@ -2462,7 +2464,7 @@ function Query(path,qArr,userCB,sID){
         this.return = false
         this.localDone = false
         this.matchIndex = mIdx
-        this.states = ['active']
+        this.validStates = ['active']
         this.nodes = {} //{[nodeID]:{state:'active',labels:[],filter:{pval:val}}}
 
 
@@ -2630,6 +2632,7 @@ function Query(path,qArr,userCB,sID){
                             if(validStates.includes(state)){//check to see if it has the correct state
                                 qParams.elements[userVar].toCheck.add(nodeID)
                                 self.bufferTrigger = true
+
                                 //if it does, then we need to see if this can be added to the query
                                 //the hope is that most will get filtered about before traversal
                             }
@@ -2670,7 +2673,7 @@ function Query(path,qArr,userCB,sID){
     this.getIndex = function(){
         let qParams = self
         let startVar = qParams.elementRank[0]
-        let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes,states} = qParams.elements[startVar]
+        let {types,labels,ranges,ID,isNode, bestIndex,srcTypes,trgtTypes,validStates} = qParams.elements[startVar]
         console.log('Beginning query by',bestIndex)
 
         //bestIndex could be one of ['id','range','types','labels']
@@ -2704,7 +2707,7 @@ function Query(path,qArr,userCB,sID){
                             let state = node[nodeID];//true = 'active', false = 'archived', null = 'deleted
                             state = state == true && 'active' || state === false && 'archived' || state === null && 'deleted'
                             self.observedStates[nodeID] = state
-                            if (states.includes(state)) {
+                            if (validStates.includes(state)) {
                                 qParams.elements[startVar].toCheck.add(nodeID)
                             }
                         }
@@ -2987,7 +2990,7 @@ function Query(path,qArr,userCB,sID){
         let {observedStates, sID} = qParams
         let thing = qParams.elements[el]
         let {t,r,i} = parseSoul(nodeID)
-        let {isNode,states,nodes} = thing
+        let {isNode,validStates,nodes} = thing
 
         checkIDandType()
         function checkIDandType(){
@@ -3030,7 +3033,7 @@ function Query(path,qArr,userCB,sID){
                 },true,sID)
             }
             function evalState(state){
-                if(!states.includes(state)){
+                if(!validStates.includes(state)){
                     setValue([nodeID,'state'],false,nodes)
                     localDone(false)
                 }else{
@@ -3262,11 +3265,17 @@ function Query(path,qArr,userCB,sID){
         for (let i = 0, l = paths.length; i < l; i++) {
             const {sortValues,pathArr} = paths[i]
             let nodeID = pathArr[pathIdx]
-            if(sortValues.length === sortProps.length)continue //assumes that they are filled with values already and subscribed
+            if(sortValues.length === sortProps.length){//assumes that they are filled with values already and subscribed
+                toGet--
+                continue
+            } 
             let propsToGet = sortProps.length
             for (let j = 0, lj = sortProps.length; j < lj; j++) {
                 let alias = sortProps[j]
-                if(sortValues[j] !== undefined)continue
+                if(sortValues[j] !== undefined){//not sure?
+                    toGet--
+                    continue
+                }
                 hasPending = true
                 let p = qParams.aliasToID.id(nodeID,alias)
                 if(p!==undefined){

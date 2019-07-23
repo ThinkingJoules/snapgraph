@@ -4,7 +4,6 @@ const{getValue,
     findRowID,
     tsvJSONgb,
     convertValueToType,
-    checkUniques,
     getAllActiveProps,
     buildPermObj,
     makeSoul,
@@ -45,29 +44,11 @@ const{newBaseConfig,
 
 
 const {relationIndex} = require('../chronicle/chronicle')
-/*
-ID Length (using A-Za-z0-9)
-Base: 10
-nodeType: 6
-relation: 6
-nodeID: 10
-column: 6
-group: 5
-
-Appx name space with 99.999% no collision:
-Base: 10mil
-nodeType: 1000
-relation: 1000
-nodeID: 10mil
-column: 1000
-group: 100
-
-*/
 
 const DEPS_GET_CELL = ['propType','dataType','format']
 const DEPS_ACTIVE_PROPS = ['hidden','archived','deleted','sortval']
 const DEPS_PUT_DATA = (isNew) =>{
-    let base = [...DEPS_GET_CELL,...DEPS_ACTIVE_PROPS,'enforceUnique','autoIncrement']
+    let base = [...DEPS_GET_CELL,...DEPS_ACTIVE_PROPS,'enforceUnique','autoIncrement','pickOptions']
     if(!isNew)return base
     return [...base,'required','defaultval']
 }
@@ -258,7 +239,7 @@ const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path,cb
             ID=id
             let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
             let newPpath = makeSoul({b,t,r,p:id})
-            handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+            handleConfigChange(gun,newGB,getCell,cascade,solve,timeLog,timeIndex,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
     
         }
         function done(){

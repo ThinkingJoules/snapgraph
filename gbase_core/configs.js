@@ -7,7 +7,6 @@ const {convertValueToType,
     setValue,
     removeFromArr,
     handleRowEditUndo,
-    checkUniques,
     findHIDprop,
     rand,
     makeSoul,
@@ -23,7 +22,8 @@ const {convertValueToType,
     ALL_INSTANCE_NODES,
     CONFIG_SOUL,
     toAddress,
-    removeP
+    removeP,
+    lookupID
 } = require('../gbase_core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -118,8 +118,14 @@ const checkConfig = (validObj, testObj, type) =>{//use for new configs, or updat
                 let err = 'typeof value must be one of: '+ Object.keys(nullValids).join(', ')
                 throw new Error(err)
             }else if(vTypeof !== tTypeof){
-                let err = vTypeof + ' !== '+ tTypeof + ' at: '+key
-                throw new Error(err)
+                let test
+                try {//want to allow the JSON arrays through
+                    test = JSON.parse(validObj[key])
+                    if(!Array.isArray(test))throw new Error()
+                } catch (error) {
+                    let err = vTypeof + ' !== '+ tTypeof + ' at: '+key
+                    throw new Error(err)
+                }
             }
             if(key === 'propType' && !validPropTypes.includes(testObj[key])){//type check the column data type
                 let err = 'propType does not match one of: '+ validPropTypes.join(', ')
@@ -165,8 +171,6 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
     let delimiter = configObj.delimiter || ', '
     let pathType
     verifyConfig()//attempts to throw errors if anything is invalid and sets the dataType it should be.
-
-    let dType = (configObj.propType !== undefined) ? convertData || configObj.dataType : thisConfig.dataType
     
     let configAPIPropType = ['data','date','pickList','function']
     let complexConfigs = ['externalID','format','enforceUnique']
@@ -345,6 +349,8 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 //don't really need to do anything more? maybe something with format?
                 //this would have the special format requirements
                 if(!configObj.format)console.warn('A date format is suggested but not required. Will currently return a unix timestamp.')
+            }else if (pType === 'data'){
+                //don't really need to do anything more? maybe something with format if coming from a certain type? Maybe just '' the format field?
             }else{
                 throwErr('propType specified is not editable')//Should never run because checkConfig verifies it's valid (only 'source' and 'target' could get here)
             }
@@ -490,7 +496,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
         // }
         //these should throw errors and stop the call if they don't pass
         checkConfig(validConfig, configObj,type) //SHOULD ADD VALIDATION FOR SPECIAL PROP STRING FORMATTING (format?)
-        checkUniques(gb, path, configObj)//will pass if alias/sortval is not present
+        checkName()
         if(['nodeType','relationType'].includes(pathType)){
             if(configObj.externalID && configObj.externalID !== '' && !isNew){
                 let isID = findID(gb,configObj.externalID,makeSoul({b,t,r,p:configObj.externalID}))
@@ -499,9 +505,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }
             return
         } //rest is for properties
+        handleSortval()
         //config obj has valid keys/values, next is figuring out if the dataType is valid
         let dType = (configObj.dataType !== undefined) ? configObj.dataType : thisConfig.dataType
-
         let allowMultiple = (configObj.allowMultiple !== undefined) ? configObj.allowMultiple : thisConfig.allowMultiple
         let enforceUnique = (configObj.enforceUnique !== undefined) ? configObj.enforceUnique : thisConfig.enforceUnique
         let autoIncrement = (configObj.autoIncrement !== undefined) ? configObj.autoIncrement : thisConfig.autoIncrement
@@ -514,6 +520,8 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }
         }
         let listOnly = false
+
+        //determine what needs to change
         if(dType !== thisConfig.dataType){//need to change the dataType
             console.warn('setting dataType to:',dType)
             convertData = dType
@@ -544,13 +552,42 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             if((pType === 'pickList' && !allowMultiple) || pType === 'function')return ['string','number']
             return ['string']
         }
+        function checkName(){
+            let aliasNotUnique = (configObj.alias) ? lookupID(gb,configObj.alias,path) : false
+            if(aliasNotUnique)throwErr(new Error('`alias` is not unique'))
+        }
+        function handleSortval(){
+            let {sortval} = configObj
+            if(sortval === undefined && !isNew)return
+            let {props} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb) || {}
+            let copyProps = JSON.parse(JSON.stringify(props))
+            let copyConfig = JSON.parse(JSON.stringify(configObj))
+            if(isNew && (copyConfig.sortval === undefined || copyConfig.sortval === 0))copyConfig.sortval = Infinity
+            copyProps[p] = copyConfig
+            console.log(p,copyProps[p])
+            let things = Object.entries(copyProps)
+            things.sort((a,b)=>a[1].sortval-b[1].sortval)
+            console.log(things.map(x=>[x[0],x[1].sortval]))
+            for (let i = 0; i < things.length; i++) {
+                const [pval] = things[i];
+                let normalized = (i+1)*10
+                let cur = copyProps[pval] && copyProps[pval].sortval && copyProps[pval].sortval
+                let different = cur !== normalized
+                if(different){
+                    let thisSoul = configSoulFromChainPath(makeSoul({b,t,r,p:pval}))
+                    addToPut(thisSoul,{sortval:normalized},configPuts)
+                }
+            }
+            delete configObj.sortval
+        }
     }
+    
     function runNext(){
-        if(run.length){
+        if(run.length && !err){
             let [fn, args] = run[0]
             run.shift()
             util[fn](...args)
-        }else{
+        }else if(!err){
             validateConfigPut()
         }
         
@@ -588,11 +625,11 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                     })
                 }
             }
-            console.log(configPuts)  
         }
 
         
         function putConfigs(){
+            console.log('putting configs',configPuts)  
             for (const csoul in configPuts) {//put all configs in
                 const cObj = configPuts[csoul];
                 if(!Object.keys(cObj).length)continue
