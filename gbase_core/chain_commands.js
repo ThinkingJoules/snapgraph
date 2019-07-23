@@ -769,6 +769,7 @@ const makegetConfig = (gbGet,configSubs,mountBaseToChain) => (chainPath) =>{
         let {path,subID,full} = opts || {}
         if(!path && !chainPath)throw new Error("Must specify either a nodeID or address to get it's configs")
         path = path || chainPath
+        let gb = gbGet()
         if(BASE.test(path) && !gb[path.slice(1)]){//adding a new base to the chain api
             mountBaseToChain(path.slice(1),full,cb)
             return
