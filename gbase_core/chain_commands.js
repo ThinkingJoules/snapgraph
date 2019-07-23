@@ -892,13 +892,12 @@ const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not u
     }
     handleTableImportPuts(gun, path, result, cb)
 }
-const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getCell) => (path) => (tsv, configObj,opts, cb)=>{//updated
-    //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
-    try{
+const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getCell) => (path) => {
+    const f = (function(tsv, configObj,opts, cb){//updated
+        //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
         let {b} = parseSoul(path)
         cb = (cb instanceof Function && cb) || function(){}
-        let {delimiter,labels} = opts
-        delimiter = delimiter || ', '
+        let {labels} = opts
         let t = (typeof configObj === 'object') ? configObj.id : undefined
         configObj = configObj && newNodeTypeConfig(configObj) || newNodeTypeConfig()
         configObj.alias = configObj.alias || 'New NodeType' + rand(2)
@@ -913,7 +912,6 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
         let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
         let colHeaders = dataArr[0]
         let [newParr, aliasLookup] = handleImportColCreation(altgb, path , colHeaders, dataArr[1],{externalID,labels, append:true})
-        console.log(newParr)
         let externalIDidx = colHeaders.indexOf(externalID)
         if(externalIDidx === -1 && externalID)throw new Error('Cannot find the external IDs specified')
         if(externalIDidx !== -1){
@@ -938,7 +936,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
                 if(!temp[curID])temp[curID] = {}
                 let {dataType,id:headerPval} = newParr[j]
                 try {
-                    value = convertValueToType(value,dataType,curID,delimiter)
+                    value = convertValueToType(value,dataType,curID)
                 } catch (error) {
                     //need to fail back to a 'string' type on this pval and re-convert all data on final time through
                     //convert will not throw errors on 'string' everything else will.
@@ -992,19 +990,34 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
                             //console.log('put errors',newSoul,err)
                         })
                     } 
+                    cb.call(cb,undefined)
                 }else{
                     console.log(e)
-                    cb.call(this,e)
+                    cb.call(cb,e)
                 }
             },newParr.slice())
-                      
+                    
         }
-    }catch(e){
-        console.log(e)
-        cb.call(this,e)
-        return e
+    })
+
+    f.help = function(){
+        let fromReadMe =
+`
+**importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
+This api is for importing a new node type in to gbase, building the configs from the data.
+
+tsv || array = should have a single header row for the properties on each node.  Should be 2D `[[headerRow],[dataRow1],[dataRow2],etc]`
+configObj = for this nodeType (not any of the properties). For more info see [config options](#config-options).
+opts = {labels: 'Header Name that contains anything that has labels you want to tag the nodes with'}
+cb = function(error||undefined). If there is an error, the cb will fire with an error object, otherwise it will return the new node type id
+
+Usage:
+
+gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
+`
+        console.log(fromReadMe)
     }
-    
+    return f
 }
 //export data..
 
