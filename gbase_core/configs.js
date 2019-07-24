@@ -68,7 +68,7 @@ const newNodePropConfig = (config) =>{
     let pickOptions = config.pickOptions || JSON.stringify([])
     let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
     if(['labels','state'].includes(propType))hidden = true
-    if(allowMultiple){
+    if(allowMultiple || propType === 'labels'){
         dataType = 'unorderedSet'
     }else if(autoIncrement){
         dataType = 'number'
@@ -348,7 +348,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }else if (pType === 'date'){
                 //don't really need to do anything more? maybe something with format?
                 //this would have the special format requirements
-                if(!configObj.format)console.warn('A date format is suggested but not required. Will currently return a unix timestamp.')
+                if(!configObj.format)console.warn('A date format is suggested but not required. Will currently return a unix timestamp.')                
             }else if (pType === 'data'){
                 //don't really need to do anything more? maybe something with format if coming from a certain type? Maybe just '' the format field?
             }else{

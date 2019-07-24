@@ -26,7 +26,8 @@ const{getValue,
     NON_INSTANCE_PATH,
     grabAllIDs,
     StringCMD,
-    BASE
+    BASE,
+    lookupID
 
 } = require('./util')
 
@@ -36,7 +37,6 @@ const{newBaseConfig,
     newRelationshipConfig,
     newRelationshipPropConfig,
     handleImportColCreation,
-    handleTableImportPuts,
     handleConfigChange,
     loadAllConfigs
 
@@ -64,7 +64,7 @@ const makeDeps = (arrOfArrs) =>{
     return [...out]
 }
 
-//GBASE CHAIN COMMANDS
+//create things
 const makenewBase = (gun,timeLog) => (alias, basePermissions, baseID,cb) =>{
     try{
         cb = (cb instanceof Function && cb) || function(){}
@@ -402,31 +402,36 @@ const makenewFrom = (gun,gbGet,getCell,cascade,timeLog,timeIndex,relationIndex) 
     
 }
 
-const makeconfig = (gun,gbGet,getCell,cascade,solve,timeLog,timeIndex) => (path) => {
-    
-    const f = (function(configObj,cb){
-        let loadPath = makeSoul({b:parseSoul(path).b})//load all the configs regardless of chain context
-        loadAllConfigs(gbGet,loadPath,config)
-        function config(gb){
-            try{
-                cb = (cb instanceof Function && cb) || function(){}
-                
-                handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,configObj, path, false,cb)
-                
-            }catch(e){
-                console.log(e)
-                cb.call(this,e)
-                return false
-            }
+const makeaddLabel = (gun,gb) => (path,cb)=>{
+    const f = (function(labelName){
+        cb = (cb instanceof Function && cb) || function(){}
+        let {b} = parseSoul(path)
+        let {labels} = getValue(configPathFromChainPath(path),gb)
+        let all = Object.entries(labels)
+        for (let i = 0; i < all.length; i++) {
+            const values = all[i];
+            if(values.includes(labelName))throw new Error(`Name already taken. ID: ${values[0]}`)
         }
-        
+        let idx = makeSoul({b,l:true})
+        let id = newID(gb,idx)
+        gun.get(idx).put({[id]:labelName},function(ack){
+            cb.call(cb,id)
+        })
     })
-
     f.help = function(){
-        console.log('.config( configObj, doneCB )')
+        let msg = 
+`
+.addLabel("Some Label",doneCB)
+* doneCB(newID)
+`
+        console.log(msg)
     }
     return f
 }
+
+
+
+//setters
 const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
     
     const f = (function(editObj, cb, opt){
@@ -449,15 +454,14 @@ const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
                 let {own} = opt || {}
                 let stateP = 'STATE'
                 if(p){
-                    let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-                    delete pathObj.p
-                    delete pathObj['.']
-                    if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')throw new Error('Must provide an object to edit an unorderedSet')
+                    let {dataType} = getValue(configPathFromChainPath(path),gb)
+                    let [nodeID,p] = removeP(path)
+                    if((typeof editObj !== 'object' || (typeof editObj === 'object' && Array.isArray(editObj))) && dataType === 'unorderedSet')console.warn('Must provide an object to edit an unorderedSet, array will add all values to set')
                     else if(Array.isArray(editObj) && dataType !== 'array')throw new Error('Must provide a full array to edit an array value')
-                    else if(typeof editObj === 'object' && !['unorderedSet','array'].includes(dataType))editObj = Object.values(dataObj)[0]
+                    else if(typeof editObj === 'object' && !['unorderedSet','array'].includes(dataType))editObj = Object.values(editObj)[0]
 
                     editObj = {[p]:editObj}
-                    path = makeSoul(pathObj)
+                    path = nodeID
                 }
                 if(typeof editObj !== 'object' || editObj === null)throw new Error('Must pass in an object in order to edit.')
                 const checkForState = (value) =>{
@@ -534,7 +538,7 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
     return f
 }
 
-
+//subscription/getters
 const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
     
     const f = (function(cb, queryArr,subID){
@@ -581,22 +585,27 @@ const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
         allProps = allProps.map(x => [x,deps])
         let {b,t,r,p} = parseSoul(path)
         let type = t || r
-        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props,labels} = opts || {}
+        let {sortBy,skip,limit,idOnly, returnAsArray,propsByID,noID,noAddress,raw,subID,props,labels,filter,range} = opts || {}
 
         if(isSub && !subID)subID = Symbol()
         //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+        //labels = [pval, orAlias, of, labels] 
+        //filter = 'AND()'
+        //range = {pval:{from,to,...}}
         gbGet(allProps,typeGet)
         return subID
         function typeGet (gb){
             try{
-                
                 skip = skip || 0
                 limit = limit || Infinity
                 props = (p) ? [p] : props || getAllActiveProps(gb,path)
                 sortBy = sortBy || []
                 let ret = {RETURN:[]}
                 let retArg = ret.RETURN
-                let matchStr = (t) ? 'MATCH (x:'+type+')' : 'MATCH ()-[x:'+type+']-()'
+                let typeStr = `x:${type}`
+                labels = (Array.isArray(labels)) ? labels.map(x => lookupID(gb,x,path)) : []
+                typeStr = (t && labels.length) ? typeStr+':'+labels.join(':') : typeStr
+                let matchStr = (t) ? `MATCH (${typeStr})` : `MATCH ()-[${typeStr}]-()`
                 let match = {CYPHER:[matchStr]}
         
                 let retFirstArg = {limit,skip,idOnly}
@@ -621,8 +630,14 @@ const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
                 }
                 retSecArg.x.props = propArr
                 retArg.push(retSecArg)
-        
+
+               
                 let queryArr = [match,ret]
+                //filter and ranges
+                if(filter && typeof filter === 'string')queryArr.push({FILTER:['x',filter]})
+                if(range && typeof range === 'object' && range !== null)queryArr.push({RANGE:['x',range]})
+        
+                
                 console.log('Number of props to get:',propArr.length)
                 setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
             }catch(e){
@@ -763,6 +778,53 @@ const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
     
 }
 
+const makekill = (querySubs,configSubs,killSub) => (path) => (subID)=>{
+    if(!path){
+        if(configSubs && configSubs[subID]){
+            delete configSubs[subID]
+        }
+        return
+    }
+    let {b} = parseSoul(path)
+    if(INSTANCE_OR_ADDRESS.test(path)){//address sub
+        killSub(path,subID)()
+    }else if(NON_INSTANCE_PATH.test(path)){//query sub path is either !, !#, !-, !#., !-.
+        if(querySubs && querySubs[b] && querySubs[b][subID]){
+            let qParams = querySubs[b][subID]
+            qParams.kill()
+        }else if(configSubs && configSubs[subID]){
+            delete configSubs[subID]
+        }
+    }
+}
+
+
+//config
+const makeconfig = (gun,gbGet,getCell,cascade,solve,timeLog,timeIndex) => (path) => {
+    
+    const f = (function(configObj,cb){
+        let loadPath = makeSoul({b:parseSoul(path).b})//load all the configs regardless of chain context
+        loadAllConfigs(gbGet,loadPath,config)
+        function config(gb){
+            try{
+                cb = (cb instanceof Function && cb) || function(){}
+                
+                handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex,configObj, path, false,cb)
+                
+            }catch(e){
+                console.log(e)
+                cb.call(this,e)
+                return false
+            }
+        }
+        
+    })
+
+    f.help = function(){
+        console.log('.config( configObj, doneCB )')
+    }
+    return f
+}
 const makegetConfig = (gbGet,configSubs,mountBaseToChain) => (chainPath) =>{
     const f = (function(cb,opts){
         cb = (cb instanceof Function && cb) || function(){}
@@ -828,70 +890,7 @@ gbase.kill('forUI') //config subs are not namespaced by path. Only subscription 
     return f
 }
 
-const makekill = (querySubs,configSubs,killSub) => (path) => (subID)=>{
-    if(!path){
-        if(configSubs && configSubs[subID]){
-            delete configSubs[subID]
-        }
-        return
-    }
-    let {b} = parseSoul(path)
-    if(INSTANCE_OR_ADDRESS.test(path)){//address sub
-        killSub(path,subID)()
-    }else if(NON_INSTANCE_PATH.test(path)){//query sub path is either !, !#, !-, !#., !-.
-        if(querySubs && querySubs[b] && querySubs[b][subID]){
-            let qParams = querySubs[b][subID]
-            qParams.kill()
-        }else if(configSubs && configSubs[subID]){
-            delete configSubs[subID]
-        }
-    }
-}
-
-
-const makeimportData = (gun, gb) => (path) => (tsv, ovrwrt, append,cb)=>{//not updated, NEEDS WORK
-    //gbase[base].importNewTable(rawTSV, 'New Table Alias')
-
-    //should run all of these through .edit(), to ensure it matches schema/types
-
-
-    cb = (cb instanceof Function && cb) || function(){}
-    ovrwrt = (ovrwrt === undefined) ? false : !!ovrwrt
-    append = !!append
-    
-    //append && ovrwrt: Add non-existing rows, and update existing rows
-    //append && !ovrwrt: Add non-exiting rows, do not update existing rows <---Default
-    //!append && ovrwrt: Do not add non-existing rows, update existing rows
-
-    let dataArr = tsvJSONgb(tsv)
-    let base = path.split('/')[0]
-    let tval = path.split('/')[1]
-    let result = {}
-    let headers = dataArr[0]
-    let headerPvals = handleImportColCreation(gun, gb, base, tval, headers, dataArr[1], append)
-    let existingRows = getValue([base,'props',tval,'rows'], gb)
-
-    for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
-        const rowArr = dataArr[i];
-        let rowsoul = findRowID(existingRows, rowArr[0])
-        if(rowsoul === undefined){
-            rowsoul =  base + '/' + tval + '/r' + Gun.text.random(6)
-        }
-        if(rowArr[0] && ((append && ovrwrt)||(!append && ovrwrt && soul) || (!ovrwrt && append && !soul))){//only add if user said so
-            for (let j = 0; j < rowArr.length; j++) {
-                const value = rowArr[j];
-                if(value !== ""){//ignore empty strings only
-                    const header = headers[j]
-                    const headerPval = headerPvals[header]
-                    let GBidx = {}
-                    GBidx[rowsoul] = value
-                    result[headerPval] = Object.assign(result[headerPval], GBidx)
-                }
-            }
-        }
-    }
-    handleTableImportPuts(gun, path, result, cb)
-}
+//import/export
 const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getCell) => (path) => {
     const f = (function(tsv, configObj,opts, cb){//updated
         //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
@@ -1022,6 +1021,7 @@ gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
 //export data..
 
 
+//state change
 const makearchive = (gun,gb) => path => () =>{//TODO
 
 }
@@ -1198,7 +1198,6 @@ module.exports = {
     makenewFrom,
     makeconfig,
     makeedit,
-    makeimportData,
     makeimportNewNodeType,
     makeshowgb,
     makeshowcache,
@@ -1219,5 +1218,6 @@ module.exports = {
     makenodeGet,
     makeaddressGet,
     makekill,
-    makegetConfig
+    makegetConfig,
+    makeaddLabel
 }

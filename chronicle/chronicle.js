@@ -191,7 +191,7 @@ const getRelationNodes = (gun,relationType,srcTypeArr,trgtTypeArr,cb,opts) =>{
 }
 
 const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
-  //idxID = must be !# !#.$ !-.$ soul  THERE IS NO VERIFICATION ON ID OR DATA PASSED IN
+  //idxID = must be !# !#. !-. soul  THERE IS NO VERIFICATION ON ID OR DATA PASSED IN
   //idxData = if !# = !#$  if idx is !(#|-). then data is !(#|-)$ ...VV
   //idxDate = This is the timestamp you are indexing the idxData at. 
   let root = gun.back(-1)
@@ -209,7 +209,6 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   let correctBlock = getBlockTime(idxDate)
   const correctSoul = makeSoul(Object.assign({},soulObj,{':':correctBlock}))
   //console.log(correctBlock,correctSoul)
-  const get = gunGet(gun)
   const put = gunPut(gun)
   gun.get(idIdx).get(idxData).once(function(prevIdx){
     if (prevIdx !== undefined){//false old index in case of edit
@@ -251,6 +250,7 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
     }
     let newBlock = {prev:prevSoul ,next: nextSoul, [idxData]:idxDate}
     put(correctSoul,newBlock)
+    put(blockIdxSoul,{head:correctBlock,[correctSoul]:correctBlock})
     //root.get(correctSoul).put(newBlock)//put data and prev in new block
     if(prevSoul !== null){
       put(prevSoul,{next:correctSoul})
@@ -374,7 +374,7 @@ const timeLog = (gun) => (idxID, changeObj) =>{
   }
 }
 
-const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
+const getLabeledNodes = (gun,getCell,nodeType,labelArr,cb)=>{
   let {b,t,r} = parseSoul(nodeType)
   if(r)throw new Error('Relationships do not have labels')
   if(!(cb instanceof Function))throw new Error('Must provide a callback')
@@ -384,10 +384,9 @@ const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
 
   //if we have a length property on each label, we could find the shortest list first, then get that list, then get the set from those props
   //for now, we will not.
-  let idx = makeSoul({b,t,l:labelArr[0]})
-  const get = gunGet(gun)
+  let idx = makeSoul({b,t,l:labelArr[0]})//get first label
 
-  get(idx,false,function(nodes){
+  gun.get(idx).once(function(nodes){
     let nodesToTry = []
     for (const nodeID in nodes) {
       const boolean = nodes[nodeID];
@@ -397,11 +396,11 @@ const getLabeledNodes = (gun,gb,nodeType,labelArr,cb)=>{
     }
     let toGet = nodesToTry.length
     for (const node of nodesToTry) {
-      get(node,'LABELS',function(set){
+      getCell(node,'LABELS',function(set){
         toGet--
         let pass = true
         for (const label of labelArr) {
-          if(!set[label])pass=false;break;
+          if(!set.includes(label))pass=false;break; //getCell should give us an array
         }
         if(pass)out.push(node)
         if(!toGet)cb(out)
@@ -464,27 +463,28 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCof
   }else{
     dateShift = 0
   }
-
-  if (startDate && startDate instanceof Date && dateShift){ 
+  console.log(startDate,stopDate)
+  if (typeof startDate == 'number'){ 
+    begin = startDate
+  }else if (startDate && startDate instanceof Date && dateShift){ 
     let correctedDate = granularDate(startDate)
     correctedDate[4] += dateShift
-    begin = new Date(granularToUnix(correctedDate))
+    begin = new Date(granularToUnix(correctedDate)).getTime()
   }else if (startDate && startDate instanceof Date){ 
-    begin = startDate
-  }else if (startDate){ 
-    console.warn('Warning: Improper start Date used for .range()')
+    begin = startDate.getTime()
   }else{
     begin = -Infinity
   }
 
-  if (stopDate && stopDate instanceof Date && dateShift){ 
+
+  if (typeof stopDate == 'number'){ 
+    end = stopDate
+  }else if (stopDate && stopDate instanceof Date && dateShift){ 
     let correctedDate = granularDate(stopDate)
     correctedDate[4] += dateShift
-    end = new Date(granularToUnix(correctedDate))
+    end = new Date(granularToUnix(correctedDate)).getTime()
   }else if (stopDate && stopDate instanceof Date){ 
-    end = stopDate
-  }else if (stopDate){ 
-    console.warn('Warning: Improper start Date used for .range()')
+    end = stopDate.getTime()
   }else{
     end = Infinity
   }
@@ -502,16 +502,18 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCof
   let soulObj = parseSoul(idxID)
   let blockIdxSoul = makeSoul(Object.assign({},soulObj,{':':'BLKIDX'}))
   if(!(cb instanceof Function))throw new Error('Must provide a callback')
-  let toGet = srcTypeArr.length*trgtTypeID.length
   let blocks = []
 
   gun.get(blockIdxSoul).once(function(blockIdx){
+    console.log(blockIdx)
     //will have head, tail, and the rest is keys of block souls and values of unix times
     if(blockIdx !== undefined){
       for (const block in blockIdx) {
         if (['_','head','tail'].includes(block))continue
         let unixMid = blockIdx[block]
         let incl = unixMid + MS_BLOCK_LENGTH//midnight could be outside of range, but end of block might be in range
+        console.log(incl, begin, unixMid, end)
+        console.log((incl >= begin && unixMid <= end))
         if(incl >= begin && unixMid <= end){
           blocks.push([block,unixMid])
         }
@@ -529,6 +531,7 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCof
     if(!blocks.length){cb(result);return;}//didn't hit specified limit, but ran out of blocks
     let [blockSoul] = blocks.shift()
     gun.get(blockSoul).once(function(data){
+      console.log(data)
       if(data !== undefined){
         for (const soul in data) {
           const unix = data[soul];
@@ -541,14 +544,11 @@ const queryIndex = (gun) => (idxID,cb,items,startDate,stopDate,resultOrder,UTCof
               return
             }
           }
-          
         }
+        getNextBlock()
       }else{
         cb(result)
         return
-      }
-      if(!toGet){
-        cb(result)
       }
     })
   }

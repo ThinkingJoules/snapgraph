@@ -17,6 +17,7 @@ const BASE = /^![a-z0-9]+$/i
 const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+$/i
 const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+$/i
 const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+$/i
+const LABEL_INDEX = /^![a-z0-9]+&$/i
 const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+$/i
 const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
 const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
@@ -45,7 +46,8 @@ const ALL_CONFIGS = {
     propIndex: regOr([TYPE_PROP_INDEX,RELATION_PROP_INDEX]),
     thingConfig: regOr([TYPE_CONFIG,RELATION_CONFIG]),
     propConfig: PROP_CONFIG,
-    label: LABEL_TYPE
+    label: LABEL_TYPE,
+    labelIndex: LABEL_INDEX
 }
 const IS_CONFIG = (soul) =>{
     let is = false
@@ -55,14 +57,14 @@ const IS_CONFIG = (soul) =>{
     }
     return is
 }
-const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX])
+const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX,LABEL_INDEX])
 const CONFIG_SOUL = regOr([BASE_CONFIG,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG])
 
 //other regex
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const ENQ_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
 const USER_ENQ = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
-const LABEL_ID = /\d+f[a-z0-9]+/i
+const LABEL_ID = /\d+l[a-z0-9]+/i
 const NULL_HASH = hash64(JSON.stringify(null))
 const ENQ = String.fromCharCode(5) //enquiry NP char. Using for an escape to say the value that follow is the node to find this prop on
 
@@ -94,6 +96,8 @@ function configPathFromChainPath(thisPath){
     return configpath
 
 }
+
+//soul creators
 function configSoulFromChainPath(thisPath){
     //should just need to append % to end if they are in right order..
     //should parse, then make soul to be safe
@@ -104,6 +108,20 @@ function configSoulFromChainPath(thisPath){
     return soul
 
 }
+function stateIdxSoulFromChainPath(thisPath){
+
+}
+function labelIdxSoulFromChainPath(thisPath){
+
+}
+function dateIdxSoulFromChainPath(thisPath){
+
+}
+function createdIdxSoulFromChainPath(thisPath){
+
+}
+
+
 //alias-ID finders
 function findConfigFromID(gb,path,someID){
     //look through base, then nodeTypes, then Relations, then Groups, then Labels, if still not found, look through all props
@@ -232,9 +250,9 @@ const findID = (objOrGB, name, path) =>{//obj is level above .props, input human
     let search = (!path) ? objOrGB : getValue(cPath,objOrGB)
     for (const key in search) {
         if(gOrL){
-            const id = search[key]
-            if(id == name || key == name){
-                gbid = id
+            const alias = search[key]
+            if(key == name || alias == name){
+                gbid = key
                 break
             }
         }else{
@@ -253,7 +271,7 @@ const findID = (objOrGB, name, path) =>{//obj is level above .props, input human
 const newID = (gb, path) =>{
     //should be base or base, node (creating new prop) thing we are creating should be parsed as boolean
     //props will be an incrementing integer + noise so no alias conflict: Number() + 'x' + rand(2)
-    let {b,t,r,p,f,g} = parseSoul(path)
+    let {b,t,r,p,l,g} = parseSoul(path)
     let n = 0
     let things
     let delimiter
@@ -269,12 +287,11 @@ const newID = (gb, path) =>{
     }else if(r === true){
         let {relations} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
         things = relations
-        delimiter='i'
-    }else if(f === true){
+        delimiter='r'
+    }else if(l === true){
         let {labels} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
         things = labels
-        delimiter='f'
-        byName = true
+        delimiter='l'
     }else if(g === true){
         let {groups} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
         things = groups
@@ -573,7 +590,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let toGet = pvals.length
             for (const p of pvals) {
                 let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
-                get(soul,p,function(val){
+                gun.get(soul).get(p).once(function(val){
                     if(dataType === 'array'){
                         try {
                             val = JSON.parse(val)
@@ -860,7 +877,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let stateSoul = makeSoul({b,t,r,i:true})
                 let toObj = {}
                 let soulList = []
-                get(stateSoul,false,function(data){
+                gun.get(stateSoul).once(function(data){
                     if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
                     for (const soul in data) {
                         if(!ALL_INSTANCE_NODES.test(soul))continue
@@ -970,12 +987,14 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             if(pval === 'LABELS'){
                 //cVal should be an obj with {label: t/f}
                 let temp = {}
+                allLabels = Object.entries(labels)
                 for (const label in cVal) {
-                    let labelID = (LABEL_ID.test(label)) ? label : labels[label]
+                    let labelID = allLabels.filter(x=> x.includes(label))[0][0]
                     if(labelID){//no error, just clean incorrect links
                         temp[labelID] = cVal[label]
                     }else{
                         console.warn('Invalid reference ['+label+'] on prop: '+alias+', removing from request and continuing.')
+                        console.warn(`To add a new label: gbase.base('${b}').addLabel('${label}')`)
                     }
                 }
                 if(Object.keys(temp).length){
@@ -1055,7 +1074,8 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 return
             }
             if(propType === 'date'){
-                timeIndices[propPath] = {value:id,unix:v}
+                let idxPath = makeSoul({b,t,r,p:pval})
+                timeIndices[idxPath] = {value:id,unix:v}
                 addToPut(id,{[pval]:value})
                 logObj[pval] = value
             }else if(dataType === 'unorderedSet'){
@@ -1070,7 +1090,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 }else if(pval === 'LABELS' && v !== null){
                     for (const label in v) {
                         let labelIdx = makeSoul({b,t,l:label})
-                        const boolean = v[pick];
+                        const boolean = v[label];
                         if(boolean){
                             let labelList =  makeSoul({b,t,l:true})
                             addToPut(labelList,{[label]:true})
@@ -1081,8 +1101,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 if(v === null){
                     addToPut(id,{[pval]: v})
                 }else{
-                    console.log('SET TO PUT',propPath,Object.assign({},v))
-
                     addToPut(propPath,v)
                     addToPut(id,{[pval]: {'#': propPath}})//make sure the set is linked to?
                 }
@@ -1509,7 +1527,7 @@ function makeSoul(argObj){
     let soul = ''
     for (const sym of SOUL_SYM_ORDER) {
         let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
-        if(val !== undefined || (sym === '&' && val === '')){
+        if(val !== undefined){
             soul += sym
             if(val === 'new' && length[sym])val=rand(length[sym])
             if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
@@ -1540,8 +1558,7 @@ function parseSoul(soul){
         toIdx = toIdx || idx
         let s = curSym.pop()
         let al = SOUL_ALIAS[s]
-        let args = soul.slice(last+1,toIdx) || true //"", which we want for variants, else `true` for no args
-        if(s === '&' && args===true)args = ''
+        let args = soul.slice(last+1,toIdx) || true 
         out[s] = args
         if(al)out[al] = args //put both names in output?
     }

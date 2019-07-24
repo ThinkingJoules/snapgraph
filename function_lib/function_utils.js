@@ -417,6 +417,7 @@ function evaluateAllFN(FNstr){
     let r = /[A-Z]+(?=\(.+?\))/
     let match = r.exec(FNstr)
     let resolvedArgs = []
+    let result
     if(!match){//no functions in this string
         return FNstr
     }
@@ -426,18 +427,36 @@ function evaluateAllFN(FNstr){
     }
     let find = findFN(FNstr, match.index)
     let argsArr = findFNArgs(find)
+    if(match[0] === 'IFERROR'){
+        try{
+            result = evaluateAllFN(args[0])
+        }catch(e){
+            result = evaluateAllFN(args[1])
+        }
+        FNstr = FNstr.replace(find,result)
+        try {
+            FNstr = JSON.parse(FNstr)//need to eval to get string 'true' to boolean `true` if it is just a string or number then it remains
+        } catch (error) {}
+        
+        return FNstr
+    }
     for (let i=0; i<argsArr.length; i++){
         let val = argsArr[i]
         let more = r.exec(val)
-        if(more && match[0] !== 'IFERROR'){//arg contains a FN
+        if(more){//arg contains a FN
+            console.log('more',val)
             resolvedArgs.push(evaluateAllFN(val))
         }else{
-            let pureMath = /[0-9=+*/^-]+/gi.test(val);
+            let hasMath = /[0-9=+*/^-]+/gi.test(val);
+            let hasletters = /[a-z]/i.test(val)
+            let pureMath = hasMath && !hasletters
             let compare = /[<>!=+*/^-]+/gi.test(val)
-            if(pureMath){
+            let reg = /(\/[^\n\r]+\/)([gimuy]+)?/.test(val)
+            console.log('math:',pureMath, 'compare:',compare, 'reg:',reg)
+            if(pureMath && !compare && !reg){
                 let solver = new MathSolver()
                 resolvedArgs.push(solver.solve(val))
-            }else if(compare){
+            }else if(compare && !reg){
                 let solver = new MathSolver()
                 resolvedArgs.push(solver.solveAndCompare(val))
             }else{
@@ -445,9 +464,12 @@ function evaluateAllFN(FNstr){
             }
         }
     }
-    let result = gfn[match[0]](resolvedArgs)
+    result = gfn[match[0]](resolvedArgs)
     FNstr = FNstr.replace(find,result)
-    FNstr = evaluateAllFN(FNstr)
+    try {
+        FNstr = JSON.parse(FNstr)//need to eval to get string 'true' to boolean `true` if it is just a string or number then it remains
+    } catch (error) {}
+    
     return FNstr
 }
 
@@ -719,5 +741,6 @@ module.exports = {
     initialParseLinks,
     verifyLinksAndFNs,
     regexVar,
-    ALL_LINKS_PATTERN
+    ALL_LINKS_PATTERN,
+    MathSolver
 }

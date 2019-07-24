@@ -27,7 +27,8 @@ const fnArgHelpText = {
     NOT:        'T/F Expression',
     T:          'value',
     CONCAT:     '"Strings ", "to ", "concatenate.",...',
-    JOIN:       '"quoted seperation character", "string 1". "string 2", ..."string n"'
+    JOIN:       '"quoted seperation character", "string 1". "string 2", ..."string n"',
+    TEST:       '"quoted string to test", javascript regex literal'
 }
 const fnExamples = {
     IF:         ['IF(2<3, "A is less than B", "B is greater than or equal to A") => "A is less than B"'],
@@ -49,12 +50,13 @@ const fnExamples = {
     OR:         ['OR(2+10 < 5, 2 = 3, 3 != 3) => FALSE()', 'OR(2+10 < 5, 2 = 3, 3 != 2) => TRUE()'],
     COUNT:      ['COUNT("string", "another string") => 2', 'COUNT("string", "") => 1', 'COUNT(0,1,2,3) => 4'],
     COUNTALL:   ['COUNTALL("string", "another string") => 2', 'COUNTALL("string", "") => 2', 'COUNTALL(0,1,2,3) => 4'],
-    TRUE:       ['TRUE()'],
-    FALSE:      ['FALSE()'],
-    NOT:        ['NOT(2+2 < 5) => FALSE()', 'NOT(8 < 5) => TRUE()'],
-    T:          ['T("String") => "STRING"', 'T(123) => ""'],
+    TRUE:       ['TRUE() => true'],
+    FALSE:      ['FALSE() => false'],
+    NOT:        ['NOT(2+2 < 5) => FALSE()', 'NOT(8 < 5) => TRUE()', 'NOT(FALSE()) => TRUE()'],
+    T:          ['T("String") => "String"', 'T(123) => ""'],
     CONCAT:     ['CONCAT("Strings ", "to ", "concatenate.") => "Strings to concatenate"', 'CONCAT("Quoted", "Spaces ", "are", "Preserved  .") => "QuotedSpaces arePreserved  ."'],
-    JOIN:       ['JOIN(", ", "A", "B", "C") => "A, B, C"', 'JOIN(" ","Quoted", "Spaces ", "are", "Preserved  .") => "Quoted Spaces  are Preserved  ."']
+    JOIN:       ['JOIN(", ", "A", "B", "C") => "A, B, C"', 'JOIN(" ","Quoted", "Spaces ", "are", "Preserved  .") => "Quoted Spaces  are Preserved  ."'],
+    TEST:       ['TEST("Some String",/Some/) => TRUE()', 'TEST("Some String",/some/) => FALSE()', 'TEST("Some String",/some/i) => TRUE()']
 }
 function fnHelp(fn){
     let out = []
@@ -306,13 +308,9 @@ function AND(args){
     let out = true
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        let containsCompareChars = /[()+\-*/<>=!]/g.test(arg)
         if(!arg){//catch straight up falsy values
             out = false
             break
-        }else if(containsCompareChars){//needs comparison done
-            out = findTruth(arg)
-            if(!out)break
         }
     }
     return out
@@ -322,14 +320,10 @@ function OR(args){
     let out = false
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        let containsCompareChars = /[()+\-*/<>=!]/g.test(arg)
-        if(!containsCompareCharsarg && arg){//catch straight up truthy values
+        if(arg){//catch straight up truthy values
             out = true
             break
-        }else if(containsCompareChars){//needs comparison done
-            out = findTruth(arg)
-            if(out)break
-        }       
+        }    
     }
     return out
 }
@@ -364,12 +358,12 @@ function NOT(args){
 function T(args){
     //Returns the argument if it is text and blank otherwise.
     if(args.length !== 1){
-        throw new Error('ABS() can only receive one value')
+        throw new Error('T() can only receive one value')
     }
     let arg = args[0]
     let out
     if(typeof arg === 'string' && !isNaN(arg*1)){
-            out = arg
+        out = arg
     }else{
         out = ""
     }
@@ -383,8 +377,7 @@ function CONCAT(args){
 function JOIN(args){
     //args[0] = seperator
     //args[1-n]= values to join
-    let seperator = args[0]
-    let other = args.slice(1)
+    let [seperator,...other] = args
     let out = other.reduce((prev,cur) => prev + seperator + cur)
     return out
 
@@ -392,6 +385,7 @@ function JOIN(args){
 function TEST(args){
     if(args.length !== 2)throw new Error('TEST expects two arugments. Value to test, and a regex string "/regExStuffHere/gi"')
     let [value,regexStr] = args
+    console.log(value,regexStr)
     let [match,regex,flags] = regexStr.match(/(\/[^\n\r]+\/)([gimuy]+)?/) || []
     if(!match)throw new Error('Regex string was not valid. Should be "/regExStuffHere/gi"')
     let r = new RegExp(eval(regex),flags)

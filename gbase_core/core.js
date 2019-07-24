@@ -109,7 +109,6 @@ const {makenewBase,
     makenewFrom,
     makeconfig,
     makeedit,
-    makeimportData,
     makeimportNewNodeType,
     makeshowgb,
     makeshowcache,
@@ -130,12 +129,13 @@ const {makenewBase,
     makenodeGet,
     makeaddressGet,
     makekill,
-    makegetConfig
+    makegetConfig,
+    makeaddLabel
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
-let importData,importNewNodeType,archive,unarchive,deleteNode,newFrom
+let importNewNodeType,archive,unarchive,deleteNode,newFrom
 let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
-let typeGet, nodeGet, addressGet, getConfig
+let typeGet, nodeGet, addressGet, getConfig,addLabel
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgunsub = makeshowgunsub(gunSubs)
@@ -146,7 +146,8 @@ const {makesolve,
     parseTruthStr,
     findFNArgs,
     regexVar,
-    evaluateAllFN
+    evaluateAllFN,
+    MathSolver
 } = require('../function_lib/function_utils');
 let solve
 
@@ -277,15 +278,16 @@ function incomingPutMsg(msg){//wire listener should get all emitted puts (either
                         setValue(path,null,gb)
                     }
                 }
-            }else if(['thingConfig','propConfig','label'].includes(type)){
+            }else if(['thingConfig','propConfig','labelIndex'].includes(type)){
                 let configpath = configPathFromChainPath(soul)
                 let data = JSON.parse(JSON.stringify(putObj))
                 delete data['_']
                 if(data.usedIn)data.usedIn = JSON.parse(data.usedIn)
                 if(data.pickOptions)data.pickOptions = JSON.parse(data.pickOptions)
                 setValue(configpath,data,gb,true)
+
             }
-            if(['typeIndex','propIndex'].includes(type))return
+            if(['typeIndex','propIndex','labelIndex'].includes(type))return
             let values = JSON.parse(JSON.stringify(getValue(configPathFromChainPath(soul),gb)))
             for (const subID in configSubs) {
                 const {cb,soul:cSoul} = configSubs[subID];
@@ -350,7 +352,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     newNodeType = makenewNodeType(gun,gb,tLog)//new should only need id/alias of current gb
     importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)//new should only need id/alias of current gb
     addProp = makeaddProp(gun,gb,getCell,cascade,solve,tLog,tIndex)//new should only need id/alias of current gb
-    
+    addLabel = makeaddLabel(gun,gb)
     
     newNode = makenewNode(gun,gbGet,getCell,cascade,tLog,tIndex)
     newFrom = makenewFrom(gun,gbGet,getCell,cascade,tLog,tIndex)
@@ -364,7 +366,6 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
 
   
 
-    importData = makeimportData(gun, gbGet)//
     config = makeconfig(gun,gbGet,getCell,cascade,solve,tLog,tIndex)
     performQuery = makeperformQuery(gbGet,setupQuery)
     typeGet = maketypeGet(gbGet,setupQuery)
@@ -449,6 +450,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
         this.count--
         if(!toGet.count){
             Object.assign(gb,gbMerge)
+
             //merge with gb
             //fireCB
             cb(true)
@@ -793,6 +795,7 @@ function baseChainOpt(_path){
         setAdmin: setAdmin(_path),
         addUser: addUser(_path),
         getConfig: getConfig(_path),
+        addLabel: addLabel(_path),
         
         relation:nodeType(_path,false),
         nodeType:nodeType(_path,true)
@@ -805,7 +808,6 @@ function nodeTypeChainOpt(_path,isNode){
         kill:kill(_path), 
         config: config(_path), 
         addProp: addProp(_path), 
-        importData: importData(_path), 
         subscribe:typeGet(_path,true),
         retrieve:typeGet(_path,false),
         getConfig: getConfig(_path),
@@ -1998,16 +2000,18 @@ function Query(path,qArr,userCB,sID){
                 elements[userVar].filter = fnString
             }
             function parseRange(obj){
-                //obj = {RANGE: [userVar,{index,from,to,items,relativeTime,timePointToDate,lastTimeUnit,firstDayOfWeek}]}
+                //obj = {RANGE: [userVar,{index:{from,to,items,relativeTime,timePointToDate,lastTimeUnit,firstDayOfWeek}}]}
                 //Needs to end up with a from, to
                 //from and to must be date obj or unix time
+                console.log("RANGE",obj)
                 if(!obj.RANGE)return false
                 let [userVar,ranges] = obj.RANGE
                 //ranges is an object with keys of index's (props || _CREATED) and value of object with params
                 if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
                 for (const index in ranges) {
                     const params = ranges[index];
-                    elements[userVar].ranges[index] = calcToFrom(params)
+                    let {to,from} = calcToFrom(params)
+                    elements[userVar].ranges.push({alias:index,to,from})
                 }
                 function calcToFrom(args){
                     let {from,to,relativeTime,timePointToDate,lastTimeUnit,firstDayOfWeek} = args
@@ -2131,7 +2135,6 @@ function Query(path,qArr,userCB,sID){
                         let curHour = now.getHours()
                         let minute = now.getMinutes()
                         let fromDate = new Date()
-                        to = Infinity
                         switch (unit) {
                             case 'y':
                                 from = fromDate.setFullYear(year-num)
@@ -2172,7 +2175,7 @@ function Query(path,qArr,userCB,sID){
                         if(d.toString() !== 'Invalid Date'){
                             out.to = d.getTime()
                         }else{
-                            throw new Error('Cannot parse "from" argument in RANGE')
+                            throw new Error('Cannot parse "to" argument in RANGE')
                         }
                     }else{
                         out.to = Infinity
@@ -2233,7 +2236,7 @@ function Query(path,qArr,userCB,sID){
                         }
                     }
                 }
-                for (const name in ranges) {
+                for (const {alias:name} of ranges) {
                     if(name === '_CREATED')continue //??
                     allNames.add(name)
                     let v = collectPropIDs(gb,path,name,isNode)
@@ -2243,10 +2246,9 @@ function Query(path,qArr,userCB,sID){
                         else Object.assign(self.aliasToID[key],vals)
                     }
                 }
-                for (const {alias:name} of props) {
 
+                for (const {alias:name} of props) {
                     allNames.add(name)
-                    
                     let v = collectPropIDs(gb,path,name,isNode)
                     for (const key in v) {
                         const vals = v[key];
@@ -2421,7 +2423,7 @@ function Query(path,qArr,userCB,sID){
                     for (const idx of this.ranges) {
                         let {from,to} = idx;
                         if(from === -Infinity)from = new Date(-99999,0).getTime()
-                        if(to === Infinity)to = new Date(99999,0).getTime()
+                        if(to === Infinity)to = Date.now()
                         let s = Math.round(((1000*60*60*24)*100)/(to-from))
                         idx.score = s
                         if(s>range)range = s
@@ -2744,7 +2746,8 @@ function Query(path,qArr,userCB,sID){
             let toGet = types.length
             for (const id of types) {
                 let s = makeSoul({b,t:id})
-                getLabeledNodes(gun,gb,s,labels,function(nodes){
+                getLabeledNodes(gun,getCell,s,labels,function(nodes){
+                    toGet--
                     for (const id of nodes) {
                         qParams.elements[startVar].toCheck.add(id)
                     }
@@ -2858,8 +2861,7 @@ function Query(path,qArr,userCB,sID){
             }
         }
         let thing = qParams.elements[startVar]
-        let {b,t,r} = parseSoul(startID)
-        let thingType = makeSoul({b,t,r})
+        let {b} = parseSoul(startID)
         let {isNode,nodes} = thing//notDistinct is not yet implemented
         otherDir = (dir === 'right') ? 'left' : 'right'//might already be done, but this way we can check easily
         if(!isNode && pathParams.rTraversed[startID]){
@@ -2878,7 +2880,10 @@ function Query(path,qArr,userCB,sID){
             let {isNode,nodes} = thing
             if(!passing){
                 self.openPaths--
-                setValue([nodeID,'match'],null,nodes)
+                setValue([startID,'match'],null,nodes)
+                if(!self.openPaths){
+                    self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
+                }
                 return
             }
             let {t,i} = parseSoul(startID)
@@ -2891,8 +2896,11 @@ function Query(path,qArr,userCB,sID){
                     dirDone()
                     return
                 }else if(!rTypes){//should have a next, but nothing valid to get (bad query?)
-                    setValue([nodeID,'match'],false,nodes)
+                    setValue([startID,'match'],false,nodes)
                     self.openPaths--
+                    if(!self.openPaths){
+                        self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
+                    }
                     return
                 }
 
@@ -2929,6 +2937,9 @@ function Query(path,qArr,userCB,sID){
                 if(!toTraverse.length){
                     self.openPaths--//should have had more links to get, which means this doesn't match the pattern
                     setValue([startID,'match'],false,nodes)
+                    if(!self.openPaths){
+                        self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
+                    }
                     return
                 }
                 setValue([startID,'match'],true,nodes)
@@ -2977,7 +2988,6 @@ function Query(path,qArr,userCB,sID){
                     }
                 }else{//started in the middle, need to verify other half
                     //we are not starting a new path, as we are continuing the current path
-                    console.log()
                     pathParams.curDir = otherDir
                     self.checkPath(curPath,pathParams)
 
@@ -3061,20 +3071,27 @@ function Query(path,qArr,userCB,sID){
                     let subID = subThing(addr,checkLocalSub(el,'labels',nodeID),false,{raw:true})
                     setValue(['addrSubs',addr,'element',el,'labels'],subID,self)
                 }
-                for (const andLabel of thing.labels) {//ALL labels it must have
-                    if(!curLabelsArr.includes(andLabel)){
-                        setValue([nodeID,'labels'],false,nodes)
-                        localDone(false)
-                        return
+                if(!Array.isArray(curLabelsArr) && thing.labels.length){//needs to have a label, but doesn't
+                    setValue([nodeID,'labels'],false,nodes)
+                    localDone(false)
+                    return
+                }else if(Array.isArray(curLabelsArr)){//has labels, but either has andLabel and/or notLabels
+                    for (const andLabel of thing.labels) {//ALL labels it must have
+                        if(!curLabelsArr.includes(andLabel)){
+                            setValue([nodeID,'labels'],false,nodes)
+                            localDone(false)
+                            return
+                        }
+                    }
+                    for (const notLabel of thing.not) {//ALL labels it cannot have
+                        if(curLabelsArr.includes(notLabel)){
+                            setValue([nodeID,'labels'],false,nodes)
+                            localDone(false)
+                            return
+                        }
                     }
                 }
-                for (const notLabel of thing.not) {//ALL labels it cannot have
-                    if(curLabelsArr.includes(notLabel)){
-                        setValue([nodeID,'labels'],false,nodes)
-                        localDone(false)
-                        return
-                    }
-                }
+                //if ((has no labels, and only notLabels were specified) || has labels, and meets query) => pass this node
                 setValue([nodeID,'labels'],true,nodes)
                 checkRange()
             },true,sID)
@@ -3089,6 +3106,7 @@ function Query(path,qArr,userCB,sID){
             let toGet = propRanges.length
             if(!toGet){setValue([nodeID,'range'],true,nodes);checkFilter();return}
             let values = []
+            console.log(propRanges)
             for (const range of propRanges) {
                 let {from,to,alias} = range
                 let p = qParams.aliasToID.id(nodeID,alias)
@@ -3128,7 +3146,7 @@ function Query(path,qArr,userCB,sID){
             let toGet = thing.filterProps.length
             if(!toGet){setValue([nodeID,'filter'],true,nodes);localDone(true);return}
             let values = {}
-            for (const alias of filterProps) {
+            for (const alias of thing.filterProps) {
                 let p = qParams.aliasToID.id(nodeID,alias)
                 if(p===undefined){
                     console.warn('Cannot find '+alias+' for '+nodeID+' ---considered not passing---')
@@ -3150,12 +3168,14 @@ function Query(path,qArr,userCB,sID){
                 },true,sID)
             }
             function verifyFilter(){
-                let eq = filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
+                let eq = thing.filter.replace(/\{(?:`([^`]+)`|([a-z0-9]+))\}/gi,function(match,$1,$2){
                     let alias = ($1!==undefined) ? $1 : $2
                     return values[alias]
                 })
-                let passed = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
-                if(!passed){setValue([nodeID,'filter'],false,nodes);localDone(false)}
+                //console.log('{} replaced',eq)
+                let result = evaluateAllFN(eq)//could techincally construct a function that does not eval to true or false, so truthy falsy test?
+                //console.log(result)
+                if(!result){setValue([nodeID,'filter'],false,nodes);localDone(false)}
                 else localDone(true)
             }
         } 
