@@ -1,19 +1,21 @@
 # gundb-gbase
-gundb-gbase is a wrapper around Gun(^0.9.x)
+gundb-gbase is a wrapper around Gun(^0.2019.612)
 
 This is sort of a command line (or console if you expose gbase to window) tool to help organize and connect nodes in graph. It echoes of Neo4j, but approaches lables/node typing differently. This is currently a WIP so beware. Everything will change and data on disk will break.
 
-[API Docs](#api-docs)
+**[CLICK HERE TO GO DIRECTLY TO THE API DOCS!!](#api-docs)**
 
 # Features
 * Define nodeTypes with properties that gbase will enforce such as uniqueness*, data type, incrementing*, etc,
 * Indexing nodes by adding 'Labels'
 * Relating nodes with a relationship
 * Basic queries and graph traversal (API works, but is messy)
-* Helper chain api functions to list all things given it's context (nodeTypes, relations, or properties on either of them depending on chain context) 
+* Helper chain api functions to list all things given it's context (nodeTypes, relations, or properties on either of them depending on chain context)
+* Data inheritance from other nodes (Similar to javascript prototypical inheritance of using Object.create()) 
 ____
 (coming soon)
-* Derived data (functions will run when dependent data changes)
+* Expand Query (start from a node and traverse given a set of rules)
+* Functions (functions will run when dependent data changes)
 * Permissions enforced by super peer (group based)
 
 *To the best effort given the limits of how Gun operates underneath
@@ -37,10 +39,7 @@ let full = true //default false, if true it will load ALL configs for the baseID
 gunToGbase(gun,{bases,full},()=>{console.log('gbase chain.api ready!)});
 ```
 ## Creating a new Base
-```
-gbase.newBase('Base Name', permissionsObj, baseID, errCB)
-```
-There is an optional 4th argument which will be the Base ID. This should be sufficiently unique as a collision on the graph would merge Bases. If nothing is passed in a `'B' + Random 12 digit alpha numeric` will be generated. The return value from the above command will be the Base ID string.
+SEE [.newBase() API](#newBase)
 
 ## gbase chain
 This is slightly different than the gun.chain api, but the general point is the same. The chain commands change as you traverse the api, for example:
@@ -59,7 +58,7 @@ gbase.base('Cool Database').nodeType('People').node('!B123456abcdef#1tso3$so3d_2
 ```
 gbase.base(BaseID).config({alias: 'New Name'})//Base Name
 gbase.base(BaseID).nodeType(type).config({alias: 'New Type Name'})//NodeType Name
-gbase.base(BaseID).table(tval).column(pval).config({alias: 'New Property Name'})//Table Name
+gbase.base(BaseID).nodeType(tval).prop(pval).config({alias: 'New Property Name'})//Table Name
 ```
 
 ## Adding NodeType(or Relations)/Properties/Nodes
@@ -68,18 +67,7 @@ The same chaining concepts apply from above:
 
 ```
 ## Importing Data
-Currently have an API for .tsv files, not .csv (having a parsing problem with commas on google sheets export)
-```
-gbase.base(BaseID).importNewNodeType(tsvFileAsText, 'Table Name');
-//creates a new table with alias: 'Table Name'
-```
-importNewTable will create a new table.
-importData will import data to an existing table:
-```
-gbase.base(BaseID).nodeType('Table').importData(tsvFileAsText, ovrwrt, append)
-```
-ovrwrt & append are booleans. If you only want to update matching rows (matches by first column, and header names) then ovrwrt = true and append = false. Outcomes for other value combinations are left for the reader to ponder.
-
+SEE [.importNewNodeType() API](#importNewNodeType)
 
 # Functions
 ## and derived data (out of date, but intent is to make something like this)
@@ -163,28 +151,30 @@ Nodes can only connect to other nodes by way of relationships. All nodes of the 
 
 
 # **API Docs**
-Chain constructors  
-* [base](#base) (not updated)
-* [nodeType](#nodeType) (not updated)
-* [relation](#relation) (not updated)
-* [node](#node) (not updated)
-* [prop](#prop) (not updated)
+[Chain constructors](#chain-constructors)  
+* [base](#base)
+* [nodeType](#nodeType)
+* [relation](#relation)
+* [node](#node)
+* [prop](#prop)
 ------
-Creation API's
-* [newNodeType](#newTable) (not updated)
-* [newRelation](#newTable) (not updated)
+[Creation API's](#creation-apis)
+* [newBase](#newBase)
+* [newNodeType](#newNodeType)
+* [newRelation](#newRelation) (not updated)
+* [addLabel](#addLabel)
 * [addProp](#addProp)
-* [newBase](#newBase) (not updated)
 * [newNode](#newNode)
 * [newFrom](#newRow) (not updated)
 ------
-Data getter/setter APIs
-* [relatesTo](#relatesTo) (not updated)
+[Data getter/setter APIs](#getter-and-setter-apis)
 * [edit](#edit)
+* [relatesTo](#relatesTo) (not updated)
 * [subscribeQuery](#subscribeQuery)
 * [retrieveQuery](#retrieveQuery)
 * [subscribe](#subscribe)
 * [retrieve](#retrieve)
+* [kill](#kill) (for removing subscriptions)
 
 
 ------
@@ -217,6 +207,7 @@ gbase.node.help()
 ```
 **You should only really need to know the baseID (basically namespace) you want to look at on the graph, gbase will get everything below it for you and help you through it with the `.ls()` command**
 ________
+## Chain Constructors
 ### gbase
 **gbase**  
 This is the chain origination
@@ -224,16 +215,19 @@ Example usage:
 ```
 gbase
 ```
-chain options:
-[.base()](#base)
-[.newBase()](#newBase)
-[.node()](#item)
-[.getConfigs()](#getConfigs)
+chain options:  
+[.base()](#base)  
+[.newBase()](#newBase)  
+[.node()](#item)  
+[.getConfig()](#getConfig)  
+[.kill()](#kill)  
 ________
 ### base
 **base(*\*baseName*)**  
 Arugment is optional **IF** you only have loaded a single base config to your current gbase chain  
-`baseName = 'Base Alias' || 'baseID`
+`baseName = 'Base Alias' || 'baseID`  
+**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+It will give you all valid options that this api will accept.
 
 Example usage:
 ```
@@ -250,84 +244,185 @@ next chain options:
 [.nodeType()](#nodeType)  
 [.relation()](#relation)  
 [.importNewNodeType()](#importNewNodeType)  
+[.getConfig()](#getConfig)  
 [.config()](#config)  
 [.kill()](#kill)  
 
 ________
 ### nodeType
-**table(*tableName*)**  
-All arguments are optional. Defaults are:  
-`tableName = 'Table Alias' || 'tval'` (ie; 't0' or 't3')
+**nodeType( *\*type* )**  
+Argument is required  
+`type = 'Type Alias' || 'typeID`  
+**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+It will give you all api options to go down in to the next level.
 
 Example usage:
 ```
-gbase.base('ACME Inc.').table('Customers')
+gbase.base('ACME Inc.').nodeType('Items')
 
 ```
-chain options for **all** table types:
-[.row()](#row)
-[.column()](#column)
-[.newRow()](#newRow)
-[.newColumn()](#newColumn)
-[.importData()](#importData)
-[.subscribe()](#subscribe)
-[.retrieve()](#retrieve)
-[.associateTables()](#associateTables)
-[.config()](#config)
-chain options for **'interaction'** table types that are transactional (plus all from above):
-[.listItems()](#listItems)
+chain options:  
+[.node()](#node)  
+[.prop()](#prop)  
+[.newNode()](#newNode)  
+[.addProp()](#addProp)  
+[.subscribe()](#subscribe)  
+[.retrieve()](#retrieve)  
+[.getConfig()](#getConfig)  
+[.config()](#config)  
+________
+### relation
+**relation( *\*type* )**  
+Argument is required  
+`type = 'Type Alias' || 'typeID`  
+**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+It will give you all api options to go down in to the next level.
+
+Example usage:
+```
+gbase.base('ACME Inc.').relation('PURCHASED')
+
+```
+chain options:  
+[.node()](#node)  
+[.prop()](#prop)  
+[.addProp()](#addProp)  
+[.subscribe()](#subscribe)  
+[.retrieve()](#retrieve)  
+[.config()](#config)  
 ________
 ### prop
-**column(*columnName*)**  
-All arguments are optional. Defaults are:  
-`columnName = 'Table Alias' || 'tval'` (ie; 't0' or 't3')
+**prop(*\*prop*)**  
+Argument is required  
+`prop = 'Prop Alias' || 'propID`  
 
+**WARNING** *`.prop()` api is used in two different contexts!! First is in the context of the nodeType or relation (What these docs show). The other returns the same chain options as [.node(address)](#node) see that api for usage*  
+
+**NOTE**: There is a list function that can be accessed like: `gbase.base().nodeType(typeID).ls()`  
+It will give you all valid options that this api will accept.
 Example usage:
 ```
-gbase.base('ACME Inc.').table('Customers').column('First Name')
+gbase.base('ACME Inc.').nodeType('Items').prop('Part Number')
 
 ```
-chain options for **all** table types:
-[.row()](#row)
-[.column()](#column)
-[.newRow()](#newRow)
-chain options for **'Static'** table types with column type of `'string'` or `'number'`:
-[.linkColumnTo()](#linkColumnTo)
+chain options for **nodeType** context:  
+[.subscribe()](#subscribe)  
+[.retrieve()](#retrieve)  
+[.getConfig()](#getConfig)  
+[.config()](#config)  
+__________
+### node
+**node(*\*ID*)**  
+Argument is required  
+`ID = 'nodeID' || 'address`  
 
-base,table,colum,row
+**WARNING** *`.node()` has two different usages. First is just for a nodeID the other is for an address see example usage below to see the differences*  
+
+Example usage (all of these calls do the **exact** same thing):
+```
+let nodeID = '!baseID#typeID$instanceID'
+let address = '!baseID#typeID.propID$instanceID' // propID is for 'Cost'
+
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).edit({Cost: '$10'})
+gbase.node(nodeID).edit({Cost: '$10'})
+gbase.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Cost').edit('$10')
+gbase.node(nodeID).prop('Cost').edit('$10')
+gbase.node(address).edit('$10')
+
+```
+chain options for **nodeID** context:  
+[.subscribe()](#subscribe)  
+[.kill()](#kill)  
+[.retrieve()](#retrieve)  
+[.getConfig()](#getConfig) (gives you the nodeType/Relation configObj)  
+[.newFrom()](#newFrom) (Only available if nodeID is **NOT** a relationship node)  
+[.archive()](#archive)  
+[.delete()](#delete)  
+
+chain options for **address** context:   
+[.edit()](#edit)  
+[.subscribe()](#subscribe)  
+[.kill()](#kill)  
+[.retrieve()](#retrieve)  
+[.getConfig()](#getConfig)  (gives you the property configObj)  
+__________
 
 
-
+## Creation API's
 ### newBase
-**newBase(*baseName*, *tableName*, *firstColumnName*, *baseID*)**  
+**newBase(*configObj*, *basePermissions??*, *cb*)**  
 All arguments are optional. Defaults are:  
-`baseName = 'New Base'`  
-`tableName = 'New Table'`  
-`firstColumnName = 'New Column'`  
-`baseID = 'B' + Gun.text.random(8)`//'B' + Random 8 Digit alphanumeric
+The alias of the base is **NOT** unique. The namespacing is the baseID, and since we can't control other base alias' then we cannot enforce uniqueness.
+
+**Permissions are not implemented yet, so this may change**
 
 Example usage:
 ```
-gbase.newBase('ACME Inc.','Customers','Customer ID', "B123")
-//returns: baseID
+gbase.newBase({alias:'ACME Inc.'},false,cb)
+//cb returns: baseID
 
 ```
 _________
-### newTable
-**newTable(*tableName*, *firstColumnName*)**  
-All arguments are optional. Defaults are:  
-`tableName = 'New Table'`  
-`firstColumnName = 'New Column'`  
-Note: An error will be thrown if the tableName is not unique for the base.
+### newNodeType
+**newNodeType(*nodeTypeConfigObj*, *cb*, *propConfigArr*)**  
+All arguments are optional.  
+**nodeTypeConfigObj**: Config info for the new nodeType you are creating.  
+**cb**: Done cb that will fire with error or the new ID if successful.  
+**propConfigArr**: Array of property configObj's. This will allow you to create properties enmasse if you know what you want them to be.
+
+Note: An error will be thrown if the nodeType is not unique for the base.
+
+For more info on the valid keys and what they do in the configObj [see config](#config).
+
 Example usage:
 ```
 //assume: 'ACME Inc.' has a baseID = "B123"
-gbase.base('ACME Inc.').newTable('Items','Part Number')
-gbase.B123.newTable('Items','Part Number')
-//returns: new table's tval || error object
-//these two call are the same.
+gbase
+  .base('ACME Inc.')
+  .newNodeType({alias:'Items'},cb,[{alias:'Part Number'},{alias: 'Cost'}])
+
+function cb(value){
+  value = Error Object || new ID for this nodeType
+}
 ```
-[baseID, tval? Read here](#gbase-vocab)
+[baseID, configObj? Read here](#gbase-vocab)
+_________
+### newRelation
+**newRelation(*relationConfigObj*, *cb*, *propConfigArr*)**  
+All arguments are optional.  
+**relationConfigObj**: Config info for the new relation you are creating.  
+**cb**: Done cb that will fire with error or the new ID if successful.  
+**propConfigArr**: Array of property configObj's. This will allow you to create properties enmasse if you know what you want them to be.
+
+Note: An error will be thrown if the relation is not unique for the base.
+
+For more info on the valid keys and what they do in the configObj [see config](#config).
+
+Example usage:
+```
+//assume: 'ACME Inc.' has a baseID = "B123"
+gbase
+  .base('ACME Inc.')
+  .relation({alias:'PURCHASED'},cb,[{alias:'Purchase Date',propType: 'date'}])
+
+function cb(value){
+  value = Error Object || new ID for this nodeType
+}
+```
+[configObj? Read here](#gbase-vocab)
+_________
+### addLabel
+**addLabel(*\*labelName*,*cb*)**  
+-cb is optional  
+This is used to index/filter/query your nodeType's given certain tags. You must add them using this API before attempting to add them to individual nodes.
+
+Example usage:
+```
+gbase.base('ACME Inc.').addLabel('Pending',function(id){
+  id = new ID for 'Pending' || Error
+})
+```
+[label, state? Read here](#gbase-vocab)
 _________
 ### addProp
 **addProp(*configObj*,*cb*)**  
@@ -338,8 +433,7 @@ If you give the configObj.id a value, then it must be unique across all IDs
 
 Example usage:
 ```
-//assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "1tk23k"
-gbase.base('ACME Inc.').table('Items').addProp('Vendor',(err,value) =>{
+gbase.base('ACME Inc.').nodeType('Items').addProp({alias:'Cost',dataType:'number'},(err,value) =>{
   if(err){//err will be falsy (undefined || false) if no error
     //value = undefined
     //handle err
@@ -384,6 +478,70 @@ gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
 [rowID, rowAlias? Read here](#gbase-vocab)
 
 _________
+### newFrom
+**newFrom(*dataObj*, *cb*, *opts*)**  
+All arguments are optional  
+`dataObj = {[Column Alias || pval]: value} `  
+`cb = Function(err, value)`  
+`opts = {own,mirror}` see table below.
+
+newFrom API basically creates a node based on data on the nodeID in context (only works with nodeTypes **not** relations). If you specify data in the dataObj then the new node will have that data itself, and then everything not specified will be *inherited* from the context nodeID. So if you give it no dataObj, the two nodes will look exactly the same EXCEPT that every value is inherited from the original. So a change on the original node will also show up in this new node.  
+
+See the example usages for how it works.
+
+Example usage:
+```
+let NODE1 = !base#type$thing
+node @ NODE1 looks like: 
+{Name: 'Anvil', Color: 'Gray', Cost: '$10'}
+
+//inherit (reference data on context node)
+gbase.node(NODE1).newFrom(false,function(newID){
+  gbase.node(NODE1).edit({Cost:'$15'})//change original
+
+  gbase.node(newID).retrieve()// will look like:
+  {Name: 'Anvil', Color: 'Gray', Cost: '$15'}//change shows up in new node
+},false)
+
+//own:true (copy data to new node)
+gbase.node(NODE1).newFrom(false,function(newID){
+  gbase.node(NODE1).edit({Cost:'$15'})//change original
+
+  gbase.node(newID).retrieve()// will look like:
+  {Name: 'Anvil', Color: 'Gray', Cost: '$10'}//change does not effect new node
+},{own:true})
+
+
+
+//MIRROR (parallel vs serial inheritance)
+let NODE2 = !base#type$inherit
+node @ NODE2 looks like: 
+{Name: 'Anvil #2', Color: ${NODE1.Color}, Cost: ${NODE1.Cost}}
+
+//default
+gbase.node(NODE2).newFrom(false,function(newID){
+  gbase.node(NODE1).edit({Cost:'$15'})//change original
+
+  newID will inherit like:
+  {Name: ${NODE2.Name}, Color: ${NODE2.Color}, Cost: ${NODE2.Cost}}
+},false)
+
+//mirror:true
+gbase.node(NODE2).newFrom(false,function(newID){
+  gbase.node(NODE1).edit({Cost:'$15'})//change original
+
+  newID will inherit like:
+  {Name: ${NODE2.Name}, Color: ${NODE1.Color}, Cost: ${NODE1.Cost}}
+},false)
+
+```
+[nodeID? Read here](#gbase-vocab)
+
+_________
+
+
+
+## Getter and Setter API's
 ### edit
 **edit(*\*dataObj* OR *\*value*, *cb*, *opts*)**  
 cb and opts are optional  
@@ -428,6 +586,27 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
 })
 ```
 [nodeID, address? Read here to understand the terminology used.](#gbase-vocab)
+_________
+### relatesTo
+**relatesTo(*\*TRGTnodeID* , *\*relation*, *relationObj* , *cb*)**  
+relationObj and cb are optional  
+`TRGTnodeID = nodeID that will get the relation as an 'incoming'`  
+`relation = 'Relation Alias' || relationID`  
+`relationObj = {Prop Alias || PropID: value}`  
+`cb = Function(done) // done will be Error or the new relationship nodeID`  
+ 
+
+Example usage:
+```
+
+NODE1 = '!B123#1t2o3$abcd' // some 'Customer'
+NODE2 = '!B123#2tdr3$efgh' // some ' Item'
+Relation = 'Purchased'
+
+gbase.node(NODE1).relatesTo(NODE2,Relation,{Purchase Date: Date.now()})
+
+```
+[nodeID? Read here to understand the terminology used.](#gbase-vocab)
 _________
 ### subscribeQuery
 **subscribeQuery(*\*callBack*, *queryArr*, *udSubID*)**  
@@ -488,8 +667,9 @@ callBack is required, others are optional Defaults:
 `callBack = Function(data, colArr) `  
 `opts = {}` See below for options
 
-**WARNING** subscribe is used in **3** ways and the options very for each.
+**WARNING** subscribe is used in **4** ways and the options vary for each.
 * `gbase.base(baseID).nodeType('Items').subscribe()` **[nodeType subscription](#nodeType-subscription)** 
+* `gbase.base(baseID).nodeType('Items').prop('Part Number).subscribe()` **[property subscription](#property-subscription)** 
 * `gbase.node(nodeID).subscribe()` **[node subscription](#node-subscription)** 
 * `gbase.node(address).subscribe()` **[address subscription](#address-subscription)** 
 
@@ -516,6 +696,8 @@ callBack is required, others are optional Defaults:
 | filter | FALSE | string |  '{property} > 3' Will sub {} with actual value | Uses the [function library](function-library) |
 | range | FALSE | object | {from: unix, to:unix} | Many options, see the [query section](#query) |
 
+#### property subscription  
+This is exactly the same as [nodeType subscription](#nodeType-subscription) except that it ignores the `prop` option and only returns the property in context. All other options apply.
 
 #### node subscription
 This is technically a wrapper around the internal gbase address subscription.
@@ -600,7 +782,35 @@ _________
 ### retrieve
 **retrieve(*\*callBack*, *opts*)**  
 This is the same as [subscribe()](#subscribe) except that it only fires the callback one time with the data.
+______
+### kill
+**kill(*\*subID*)**  
+This depends entirely on the context. Not all contexts are the same, there are effectively 4 different contexts to use this API.
 
+Example usage:
+```
+let subID = 'abc'
+
+//configs
+gbase.base().getConfig(cb,{subID:subID})
+gbase.kill(subID) //configs are the only subscriptions without any chain context to kill
+
+//queries (anything that uses subscribeQuery underneath)
+gbase.base().nodeType('Items').subscribe(....{subID:subID})
+gbase.base().nodeType('Items').prop('Part Number').subscribe(....{subID:subID})
+gbase.base().kill(subID)
+
+//nodes
+let subID = gbase.node(nodeID).subscribe()
+gbase.node(nodeID).kill(subID)
+
+//addresses
+let subID = gbase.node(address).subscribe()
+gbase.node(address).kill(subID)
+
+
+```
+______
 
 ## **gbase Chain -Config APIs-**
 ________
@@ -942,6 +1152,7 @@ GBase has many concepts that are referenced in the docs. Here are some definitio
 * **path**: path is similar to we file path /baseID/ThingType/Prop would be equal to !baseID#Thing.Prop using the gbase identifiers. However /baseID/ThingType/Node/Prop would be in a different order (fixed ordering for gbase IDs) !baseID#ThingType.Prop$Node
 * **Source**: This is part of how relationships are conceptualized. `"source"` is the node that is linking **to** another node. Thought of as 'outgoing' relation
 * **Target**: Opposite of 'source'. This has an 'incoming'  relation **from** a 'source' node.
+* **configObj**: Each 'level' to the database has a configuration object that governs how gbase acts and responds to data on that level. The base has a configObj, each nodeType and relation has it's own configObj, and every property has it's own configObj. These are what the `.config()` api operates on.
 
 ### FAQs
 Will fill this out as I receive feedback.

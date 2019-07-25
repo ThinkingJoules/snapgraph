@@ -35,7 +35,7 @@ const newBaseConfig = (config) =>{
     let archived = config.archived || false
     let deleted = config.deleted || false
     let inheritPermissions = config.inheritPermissions || true
-    return {alias, archived, deleted,inheritPermissions}
+    return {alias, archived, deleted, inheritPermissions}
 }
 const newNodeTypeConfig = (config) =>{
     config = config || {}
