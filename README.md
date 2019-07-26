@@ -178,7 +178,7 @@ Nodes can only connect to other nodes by way of relationships. All nodes of the 
 
 
 ------
-Config APIs
+[Config APIs](#config-apis)
 * [config](#config) (not updated)
 * [getConfig](#getConfig)
 -----
@@ -812,8 +812,146 @@ gbase.node(address).kill(subID)
 ```
 ______
 
-## **gbase Chain -Config APIs-**
-________
+## Config APIs
+
+### config
+**config(*\*configObj*, *cb*)**  
+configObj is required. See below for various keys:  
+**Base:** 
+* [alias](#alias)
+* [archived](#archived)
+* [deleted](#deleted)
+
+**NodeTypes:**
+* [alias](#alias)
+* [archived](#archived)
+* [deleted](#deleted)
+* [externalID](#externalID)
+* [humanID](#humanID)
+* [log](#log)
+
+**Relations:** 
+* [alias](#alias)
+* [archived](#archived)
+* [deleted](#deleted)
+
+**NodeType Properties:**
+* [alias](#alias)
+* [allowMultiple](#allowMultiple)
+* [archived](#archived)
+* [autoIncrement](#autoIncrement)
+* [dataType](#dataType)
+* [defaultval](#defaultval)
+* [deleted](#deleted)
+* [enforceUnique](#enforceUnique)
+* [fn](#fn)
+* [format](#format)
+* [hidden](#hidden)
+* [pickOptions](#pickOptions)
+* [propType](#propType)
+* [required](#required)
+* [sortval](#sortval)
+
+**Relation Properties:**
+* [alias](#alias)
+* [allowMultiple](#allowMultiple)
+* [archived](#archived)
+* [dataType](#dataType)
+* [defaultval](#defaultval)
+* [deleted](#deleted)
+* [fn](#fn) //?
+* [format](#format)
+* [hidden](#hidden)
+* [pickOptions](#pickOptions)
+* [propType](#propType)
+* [required](#required)
+* [sortval](#sortval)
+
+
+#### alias
+Type: 'string'  
+Usage: This is basically an alternate (editable) ID for this particular thing.  
+#### allowMultiple
+Type: boolean  
+Usage: Is a flag to know if this property can have multiple pickList options at once (pickOne vs pickMany fromList)
+#### archived
+Type: boolean  
+Usage: If you set this to `true` it will no longer fetch this thing on the default API's.  
+**NOTE**: No data is changed. This is basically only a flag. It will not allow you to edit data on anything that is archived.
+#### autoIncrement
+Type: 'string'  
+Usage: Only for nodeType properties. Syntax is 'Number()ToIncrementOnEachNewNode' with optional .. +','+'Number()ToStartWith'  
+Example: '1' => 0,1,2,.. '1,1000' => 1000,1001,1002... '5,100' => 100,105,110
+#### dataType
+Type 'string'  
+Usage: This is the dataType to restrict this field to. unorderedSet is stored as an object, array is stored as a string.  
+Valid: 'string','number','boolean','unorderedSet','array'  
+**NOTE**: 'array' is simply a JSON.stringify([]). Avoid use as much as possible, as it may give unexpected data mutations on concurrent edits.
+#### defaultval
+Type: 'string' || number || boolean  
+Usage: On node creation, this value will be added to this property if it is not specified.
+#### deleted
+Type: boolean  
+Usage: If set to true, this will no longer load this config, and will not work in the API's.  
+**NOTE**: This will attempt to delete everything 'below' it. So if you delete a nodeType, this will null all values on all nodes. On a property config, this will null this property value on all nodes of this nodeType.    
+**WARNING There is no undo. This will destroy data.**
+#### enforceUnique
+Type: boolean  
+Usage: This will attempt to keep all values on this property unique across all nodes in this nodeType.  
+**NOTE**: This requires reading this value on ALL nodes of this nodeType before writing to the database. So beware this will effect performance depending on the number of nodes of this nodeType.
+#### externalID
+Type: 'string' 
+Usage: This will be the ID of the property that has an imported or specified externalID. This will make the property specified `{enforceUnique:true}`.
+#### fn
+Type: 'string'  
+Usage: This is your function that will derive the value of this property. See [functions for more info](#functions)
+#### format
+Type: 'string'  
+Usage: This is to apply specific formatting to raw data (raw:false in queries; this is default) as it comes out of the database. See [formatting options here.](#formatting)
+#### hidden
+Type: boolean  
+Usage: Only on properties. This is basically saying that it is metaData and should not be retrieved if asking for 'all active' props
+#### humanID
+Type: 'string'  
+Usage: This is similar to externalID except that it does not have to be unique. This can be used to load in some sort of 'human name' on links/relationships that can be used for link making in the app to get you to a view that shows the referenced node.
+#### log
+Type: boolean  
+Usage: Determines whether to log changes to nodes of this nodeType.  
+**NOTE**: Setting this to `true` will considerably increase the size of the database and should not be enabled for anything that gets updated often.
+#### pickOptions
+Type: array  
+Usage: Used in conjunction with propType = 'pickList'
+#### propType
+Type: 'string'  
+Usage: This is what most of the configs are used in conjunction with. Below are the options and what they mean.  
+
+* data  
+This can be any dataType. This is what most properties will be.
+
+* date  
+This is specifically a date type, which means GBase will index all the dates so querying by a date range is very efficient. This will convert all date objects to a unix string and store as a number (dataType will be changed to 'number'). If you supply a number, it will assume that it is the unix time you are wanting to specify.
+* function  
+This is used in conjunction with the 'fn' config. See [functions for more info](#functions)
+* pickList  
+Used in conjunction with 'pickOptions' and 'allowMultiple' to evaluate incoming edits.
+* state  
+This is a special property that GBase adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'STATE'. 
+* labels  
+This is only on nodeTypes (not relations). It is a special property that GBase adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'LABELS'. 
+* source  
+This is only on relations (not nodeTypes). It is a special property that GBase adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'SRC'. 
+* target  
+This is only on relations (not nodeTypes). It is a special property that GBase adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'TRGT'.  
+
+#### required
+Type: boolean   
+Usage: This will validate on node creation to ensure that this property has a value.
+
+#### sortval
+Type: number   
+Usage: This will be the order the properties will be returned in if 'all active' are requested.
+
+_________
 ### getConfig  
 **getConfig(*cb*, *opts*)**  
 cb will fire with the config object for the chain context or for the path provided in opts.
@@ -849,37 +987,7 @@ _________
 
 
 ________
-### config
-**config(*\*configObj*, *backLinkCol*, *cb*)**  
-configObj is required. 
 
-configObj: Base
-```
-//valid keys
-```
-configObj: nodeType
-```
-//valid keys
-```
-configObj: relation
-```
-//valid keys
-```
-configObj: nodeTypeProp
-```
-//valid keys
-```
-configObj: relationProp
-```
-//valid keys
-```
-
-Example usage:
-```
-
-
-```
-_________
 
 ## **gbase chain - Import APIs -**
 ### importNewNodeType
@@ -1152,7 +1260,7 @@ GBase has many concepts that are referenced in the docs. Here are some definitio
 * **path**: path is similar to we file path /baseID/ThingType/Prop would be equal to !baseID#Thing.Prop using the gbase identifiers. However /baseID/ThingType/Node/Prop would be in a different order (fixed ordering for gbase IDs) !baseID#ThingType.Prop$Node
 * **Source**: This is part of how relationships are conceptualized. `"source"` is the node that is linking **to** another node. Thought of as 'outgoing' relation
 * **Target**: Opposite of 'source'. This has an 'incoming'  relation **from** a 'source' node.
-* **configObj**: Each 'level' to the database has a configuration object that governs how gbase acts and responds to data on that level. The base has a configObj, each nodeType and relation has it's own configObj, and every property has it's own configObj. These are what the `.config()` api operates on.
+* **configObj**: Each 'level' to the database has a configuration object that governs how gbase acts and responds to data on that level. The base has a configObj, each nodeType and relation has it's own configObj, and every property has it's own configObj. These are what the [.config()` api](#config) operates on.
 
 ### FAQs
 Will fill this out as I receive feedback.
