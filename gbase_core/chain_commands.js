@@ -100,7 +100,7 @@ const makenewBase = (gun,timeLog) => {
                 },[{alias:'Public Key',id:'PUBKEY'},{alias:'Alias',id:'ALIAS'}])
             }
             setTimeout(putRest,1000)
-            return baseID
+            return b
         }catch(e){
             console.log(e)
             return e
@@ -193,7 +193,7 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => {
                 //using user supplied id
                 delete nextPconfig.id
             }
-            let pconfig = newNodePropConfig(nextPconfig)
+            let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
             let newPpath = makeSoul({b,[relationOrNode]:tid,p:id})
             //console.log(pconfig)
             handleConfigChange(gun,newGB,false,false,false,timeLog,false,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
@@ -690,12 +690,12 @@ const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
     f.help = function(){
         let fromReadMe = 
 `
-
+See Docs for queryArr arguments
 `
         console.log(fromReadMe)
     }
 
-
+    return f
     
 }
 const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
@@ -1155,7 +1155,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
         }
         function done(){
             makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newGB){
-                if(!err){
+                if(!(err instanceof Error)){
                     console.log(newGB)
                     for (const newSoul in result) {
                         let put = result[newSoul]
@@ -1165,8 +1165,8 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
                     } 
                     cb.call(cb,undefined)
                 }else{
-                    console.log(e)
-                    cb.call(cb,e)
+                    console.log(err)
+                    cb.call(cb,err)
                 }
             },newParr.slice())
                     
@@ -1210,9 +1210,23 @@ const makenullValue = (gun) => path => () =>{//TODO
 }
 
 //relationship
-const makerelatesTo = (gun,gb,getCell) => path => {
-    const f = (function(trgt,r,rtProps){//TODO
-        try{
+const makerelatesTo = (gun,gbGet,getCell,timeLog,timeIndex) => path => {
+    const f = (function(trgt,r,rtProps,cb){
+        let deps = makeDeps([DEPS_PUT_DATA(true)])
+        let pathObj = parseSoul(path)
+        let {b} = pathObj
+        let allThings = grabAllIDs(gbGet(),b)
+        let allProps = []
+        for (const typeID in allThings) {
+            allProps.push([typeID,['log','externalID']])
+            const propArr = allThings[typeID];
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
+            }
+        }
+        gbGet(allProps,relatesTo)
+        
+        function relatesTo(gb){//TODO
             cb = (cb instanceof Function && cb) || function(){}
             if(!DATA_INSTANCE_NODE.test(path) || !DATA_INSTANCE_NODE.test(trgt)){
                 throw new Error('Must use a nodeID with a pattern of '+DATA_INSTANCE_NODE.toSting()+' for both `ID` node(ID).relatesTo(ID, relationship)')
@@ -1231,11 +1245,9 @@ const makerelatesTo = (gun,gb,getCell) => path => {
             let newID = makeSoul({b,r,i})
             let opts = {isNew:true}
             let eSoul = makeSoul({b,r,i:true})//state index
-            gun.get(eSoul).get(newID).get(function(msg,eve){
-                let value = msg.put
-                eve.off()
+            gun.get(eSoul).get(newID).once(function(value){
                 if(value === undefined || value === false || value === null){
-                    putData(gun,gb,getCell,cascade,timeLog,timeIndex,newID,rtProps,opts,cb)
+                    putData(gun,gb,getCell,false,timeLog,timeIndex,relationIndex,newID,rtProps,opts,cb)
                 }else{
                     let e = new Error('Relationship already exists!')
                     console.log(e)
@@ -1243,9 +1255,7 @@ const makerelatesTo = (gun,gb,getCell) => path => {
                 }
                 
             })
-        }catch(e){
-            cb.call(this, e)
-            console.log(e)
+       
         }
     })
     f.help = function(){

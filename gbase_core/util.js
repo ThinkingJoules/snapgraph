@@ -472,7 +472,7 @@ function getValue(propertyPath, obj){
 //CHAIN COMMAND THINGS
 function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb){
     let startTime = Date.now()
-    console.log('starting Put')
+    console.log('starting Put',nodeID)
     let IDobj = parseSoul(nodeID) 
     let {own,inherit,isNew,ctx,noRelations,isUnique} = opts
     let deleteThis,archive
@@ -943,6 +943,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let key = '<,'+newRelationSoul
                 addToPut(rtSoul,{[key]:{'#':newRelationSoul}})
             }
+            runNext()
         },
         deleteRelationship: function(relationID){
             //need to have get Node, then null source and target references to this relation
@@ -1592,8 +1593,10 @@ function makeEnq(nodeOrAddress,p){
     return ENQ+soul
 }
 function newDataNodeID(id,unix_ms){
-    let i = id || rand(3)
+    let i = (id !== undefined) ? id : rand(3)
     let t = unix_ms || Date.now()
+    console.log(id,i,unix_ms,t)
+
     return i+'_'+t
 }
 function newRelationID(src,trgt){

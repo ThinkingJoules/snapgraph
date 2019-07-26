@@ -97,8 +97,9 @@ const newRelationshipPropConfig = (config) =>{
     let format = config.format || ""
     let pickOptions = config.pickOptions || JSON.stringify([])
     let allowMultiple = config.allowMultiple || false
+    let sortval = config.sortval || 0
     if(['state'].includes(propType))hidden = true
-    return {alias, archived, deleted, hidden, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
+    return {alias, archived, deleted, hidden,sortval, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
 }
 const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
 const validNodePropTypes = ["data", "date", "pickList", "labels", "state", "function", "file"]
@@ -548,7 +549,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }
             if(pType === 'data')return ['string','number','boolean','unorderedSet','array','file']
             if(pType === 'date')return ['number']
-            if(pType === 'pickList' && allowMultiple)return ['unorderedSet']
+            if((pType === 'pickList' && allowMultiple) || pType === 'labels')return ['unorderedSet']
             if((pType === 'pickList' && !allowMultiple) || pType === 'function')return ['string','number']
             return ['string']
         }

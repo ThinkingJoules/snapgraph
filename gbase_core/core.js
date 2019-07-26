@@ -789,7 +789,7 @@ function baseChainOpt(_path){
         subscribeQuery: performQuery(_path,true), 
         retrieveQuery: performQuery(_path,false), 
         newNodeType: newNodeType(_path,'t'), 
-        newRelationType: newNodeType(_path,'r'), 
+        newRelation: newNodeType(_path,'r'), 
         importNewNodeType: importNewNodeType(_path), 
         newGroup: newGroup(_path),
         setAdmin: setAdmin(_path),
@@ -1322,6 +1322,8 @@ function Query(path,qArr,userCB,sID){
     this.paths = []
     this.pathStrings = {}
 
+    this.relationsTraversed = new Set()
+
     
     //subscription mgmt
     this.addrSubs = {} //{[addr]:{sort:sID,element:{[userVar]:{state:sID,labels:sID,range: sID,filter:sID}},paths:{[pathStr]:{[jval]:sID}}}}
@@ -1377,6 +1379,7 @@ function Query(path,qArr,userCB,sID){
             let userVar = Object.keys(this.elements)[0]//just take first one
             let leftMost = userVar
             let hasLeft = this.elements[userVar].leftThing
+            if(hasLeft === undefined)return leftMost
             while (hasLeft !== null) {
                 hasLeft = this.elements[leftMost].leftThing
                 if(hasLeft !== null)leftMost = hasLeft.userVar
@@ -1404,9 +1407,9 @@ function Query(path,qArr,userCB,sID){
             let order = []
             let curThingVar = this.leftMostThing
             let hasRight
-            while (hasRight !== null) {
+            while (![null].includes(hasRight)) {
                 order.push(this.elements[curThingVar].userVar)
-                hasRight = this.elements[curThingVar].rightThing
+                hasRight = this.elements[curThingVar].rightThing || null
                 curThingVar = hasRight && hasRight.userVar || false
             }
             return order
@@ -1486,8 +1489,7 @@ function Query(path,qArr,userCB,sID){
                     let m = [...str.matchAll(/(?:(\(|\[)([a-zA-Z]+)(?::)?([a-zA-Z0-9:\`|\s]+)?([*.0-9]+)?(\)|\])|(<-|->|-))/g)]
                     //m[i] = ['(allParts)' || (-|->|<-), '('||'['|| undefined, id||undefined, labels||undefined, undefined||undefined||*length')'||']'|| undefined, undefined||(-|->|<-)]
                     for (let i = 0; i < m.length; i+=2) {//every other element, create collector nodes first, then evaluate string
-                        const leftID = m[i-2] && m[i-2][2] || null
-                        const rightID = m[i-2] && m[i+2][2] || null
+                        
                         let [match,left,id,types] = m[i];
                         let isNode = (left === '(')
                         let idx = i/2
@@ -1508,18 +1510,20 @@ function Query(path,qArr,userCB,sID){
                                     }
                                 }
                             }
+                            //TODO MAKE SOME SORT OF SPECIAL '*' ALL INDICATOR
                             if(!typesArr.length)typesArr = getAllActiveNodeTypes(gb,path)//if none specified, can be any
-                            elements[id] = new MatchNode(id,typesArr,labelArr,notLabels, leftID, rightID,idx)
+                            elements[id] = new MatchNode(id,typesArr,labelArr,notLabels,idx)
                             
                         }else{//relation [id:Type|Type]
                             let typesArr
                             if(types){
-                                let a = types.split('|')
-                                typesArr = [a]
+                                typesArr = types.split('|')
                             }else{//could be any 'type' node
-                                typesArr = [getAllActiveRelations(gb,path)]//double array on purpose
+                                //TODO MAKE SOME SORT OF SPECIAL '*' ALL INDICATOR, SO WE CAN TRAVERSE QUICKLY (JUST GRAB LINKS THAT MATCH, DON'T HAVE TO CHECK)
+                                //THAT WAY WE CAN JUST GET THE STATE INDICES INSTEAD OF TRAVERSING THE RELATION SRC/TRGT INDEX GRAPH
+                                typesArr = getAllActiveRelations(gb,path) //double array on purpose?? Was going to AND OR with 2 arrays, took out for now.
                             }
-                            elements[id] = new MatchRelation(id,typesArr, leftID, rightID,idx)
+                            elements[id] = new MatchRelation(id,typesArr,idx)
                         }
                     }
                     //if m.length === 1 simple nodeType query
@@ -1528,12 +1532,20 @@ function Query(path,qArr,userCB,sID){
                     if(m.length > 1){
                         for (let i = 2; i < m.length; i+=4) {//2,6,10,etc.. should be relations
                             let [match,left,id,types,length] = m[i];
+                            const leftID = m[i-2] && m[i-2][2] || null
+                            const rightID = m[i+2] && m[i+2][2] || null
                             let [lSign] = m[i-1]
                             let [rSign] = m[i+1]
                             let directed = (lSign !== rSign) // both '-'?
-                            let thisRel = elements[id]
-                            let leftNode = thisRel.leftThing
-                            let rightNode = thisRel.rightThing
+                            let thisRel = self.elements[id]
+                            self.elements[id].leftThing = self.elements[leftID]
+                            self.elements[id].rightThing = self.elements[rightID]
+                            //set neighbor nodes to point at this node
+                            self.elements[leftID].rightThing = self.elements[id]
+                            self.elements[rightID].leftThing = self.elements[id]
+
+                            let leftNode = self.elements[leftID] || null
+                            let rightNode = self.elements[rightID] || null
                             if(length){
                                 if(i!==2)throw Error('Currently only supports variable length as the first relation: ()-[*n...n]-()-[]..etc. ')
                                 let l = length.match(/\*([0-9]+)?(\.+)?([0-9]+)?/)
@@ -1544,7 +1556,6 @@ function Query(path,qArr,userCB,sID){
                                 if(min && min !== 1)thisRel.pathLength = min
                                 if(dots && max)thisRel.pathLengthRange = max - thisRel.pathLength
                             }
-                            
                             if(!directed){
                                 Object.defineProperties(thisRel,{
                                     srcTypes:{
@@ -1577,7 +1588,7 @@ function Query(path,qArr,userCB,sID){
                                     },
                                     rightTypes:{
                                         get(){
-                                            thisRel.types
+                                            return thisRel.types
                                         },
                                         enumerable:true
                                     }
@@ -1589,7 +1600,7 @@ function Query(path,qArr,userCB,sID){
                                     },
                                     leftTypes:{
                                         get(){
-                                            thisRel.types
+                                            return thisRel.types
                                         },
                                         enumerable:true
                                     }
@@ -2218,7 +2229,7 @@ function Query(path,qArr,userCB,sID){
             //  else if the potential is shorter, update the things.types array with the potentials
     
             for (const userVar in elements) {
-                const {isNode,filter,ranges,props} = elements[userVar];
+                const {isNode,filter,ranges,props,types:curTypes} = elements[userVar];
                 let propRef = /\{(?:`([^`]+)`|([a-z0-9]+))\}/gi
                 let allNames = new Set()
                 if(filter){
@@ -2270,9 +2281,15 @@ function Query(path,qArr,userCB,sID){
                         }
                     }
                 }
-
+                //console.log(allNames)
                 //console.log(elements[userVar].types,self.aliasToID.types([...allNames],isNode),[...allNames])
-                elements[userVar].types = [...intersect(new Set(elements[userVar].types),new Set(self.aliasToID.types([...allNames],isNode)))]
+                let potentials
+                if(!allNames.length){//nothing specified, potential... is.. limitless...
+                    potentials = (isNode) ? getAllActiveNodeTypes(gb,path) : getAllActiveRelations(gb,path)
+                }else{
+                    potentials = [...intersect(new Set(elements[userVar].types),new Set(self.aliasToID.types([...allNames],isNode)))]
+                }
+                elements[userVar].types = (curTypes.length <= potentials.length) ? curTypes : potentials
                 //^^Intersect what is existing, with what is valid
             }
     
@@ -2314,12 +2331,39 @@ function Query(path,qArr,userCB,sID){
                 const obj = elements[thing];
                 obj.scoreCalc()
             }
+            for (const thing in elements) {
+                const obj = elements[thing];
+                obj.leftScore = scoreLeft(obj)
+                obj.rightScore = scoreRight(obj)
+            }
+            function scoreLeft(thing){
+                let l = thing.leftThing || null
+                let score = 0
+                if(l === undefined)return score
+                while (l !== null) {
+                    score += l.score
+                    if([null,undefined].includes(l.leftThing))break
+                    l = l.leftThing
+                }
+                return score
+            }
+            function scoreRight(thing){
+                let r = thing.rightThing || null
+                let score = 0
+                if(r === undefined)return score
+                while (r !== null) {
+                    score += r.score
+                    if([null,undefined].includes(r.rightThing))break
+                    r = r.rightThing
+                }
+                return score
+            }
         }
     }
     
     this.parseQuery(qArr)
     
-    function MatchNode(userVar,types,labelArr,notLabels,lid,rid,mIdx){
+    function MatchNode(userVar,types,labelArr,notLabels,mIdx){
         this.userVar = userVar
         this.isNode = true
         this.types = types || []
@@ -2376,42 +2420,8 @@ function Query(path,qArr,userCB,sID){
         this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
         this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
         this.rawLabels = false//for label prop, it will replace with the alias
-
-        Object.defineProperties(this, {
-            leftThing: {
-                get(){
-                    return self[lid] || null
-                }
-            },
-            rightThing: {
-                get(){
-                    return self[rid] || null
-                }
-            },
-            leftScore: {
-                get(){
-                    let l = this.leftThing
-                    let score = 0
-                    while (l !== null) {
-                        score += l.score
-                        l = l.leftThing
-                    }
-                    return score
-                },
-                enumerable:true
-            },
-            rightScore: {
-                get(){
-                    let r = this.rightThing
-                    let score = 0
-                    while (r !== null) {
-                        score += r.score
-                        r = r.rightThing
-                    }
-                    return score
-                },
-                enumerable:true
-            },
+        let self = this
+        Object.defineProperties(self, {
             scoreCalc: {
                 value: function(){
                     let id=0,filter,range=0,types,labels
@@ -2439,24 +2449,17 @@ function Query(path,qArr,userCB,sID){
                 value: function(leftOrRight){
                     //returns [rIDarr,signsArr] || false
                     let signs,types//if it is either, then it doesn't matter
-                    if(leftOrRight === 'left'){
-                        if(this.leftTypes===undefined)return false
-                        types = this.leftTypes
-                        signs = this.leftSigns
-                        
-                    }else{
-                        if(this.rightTypes===null)return false
-                        types = this.rightTypes
-                        signs = this.rightSigns
-                    }
-                    
+                    let dirThing = this[leftOrRight+'Thing']
+                    if(!dirThing)return false
+                    types = dirThing.types
+                    signs = this[leftOrRight+'Signs']
                     return [types,signs]
                 }
             }
         });
 
     }
-    function MatchRelation(userVar,types,lid,rid,mIdx){
+    function MatchRelation(userVar,types,mIdx){
         this.userVar = userVar
         this.isNode = false
         this.types = types || []
@@ -2492,53 +2495,18 @@ function Query(path,qArr,userCB,sID){
         this.noID = false//on returnAs object> object.ID = NodeID
         this.noAddress = false//object.address = {}||[] if returnAs = {} then>propsByID=false={'Prop Alias': address}||true={pval: address}
         this.raw = false//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
-
         Object.defineProperties(this, {
-            leftThing: {
-                get(){
-                    return self[lid] || null
-                },
-            },
-            rightThing: {
-                get(){
-                    return self[rid] || null
-                },
-            },
-            leftScore: {
-                get(){
-                    let l = this.leftThing
-                    let score = 0
-                    while (l !== null) {
-                        score += l.score
-                        l = l.leftThing
-                    }
-                    return score || null
-                },
-                enumerable:true
-            },
-            rightScore: {
-                get(){
-                    let r = this.rightThing
-                    let score = 0
-                    while (r !== null) {
-                        score += r.score
-                        r = r.rightThing
-                    }
-                    return score || null
-                },
-                enumerable:true
-            },
             scoreCalc: {
                 value: function(){
                     let id=0,filter,range=0,types
-                    if(this.ID)id=1000
+                    if(this.ID.length)id=Infinity
                     filter = this.filterArgs*20
-                    types = Math.round(60/(this.srcTypes.length + this.trgtTypes.length + this.types))
+                    types = Math.round(60/(this.srcTypes.length + this.trgtTypes.length + this.types.length))
                     types = (types === Infinity) ? 0 : types
                     for (const idx of this.ranges) {
                         let {from,to} = idx
                         if(from === -Infinity)from = new Date(-99999,0).getTime()
-                        if(to === Infinity)to = new Date(99999,0).getTime()
+                        if(to === Infinity)to = Date.now()
                         let s = Math.round(((1000*60*60*24)*100)/(to-from))
                         idx.score = s
                         if(s>range)range = s
@@ -2716,16 +2684,6 @@ function Query(path,qArr,userCB,sID){
                         toGet--
                         if(!toGet)self.evaluateNodes()
                     })
-                    // gun.get(s).once(function(node){
-                    //     for (const nodeID in node) {
-                    //         const isActive = node[nodeID];//true = 'active', false = 'archived', null = 'deleted
-                    //         if (DATA_INSTANCE_NODE.test(nodeID) && isActive) {
-                    //             qParams.elements[startVar].toCheck.add(nodeID)
-                    //         }
-                    //     }
-                    //     toGet--
-                    //     if(!toGet)evaluateNodes()
-                    // })
                 }else{
                     let s = makeSoul({b,r:id})//type identifier
                     //if we have a "_CREATED" time range for these nodes, we can narrow further
@@ -2735,7 +2693,7 @@ function Query(path,qArr,userCB,sID){
                             qParams.elements[startVar].toCheck.add(id)
                         }
                         toGet--
-                        if(!toGet)evaluateNodes()
+                        if(!toGet)self.evaluateNodes()
                     },{from,to})
                 }
                 
@@ -2824,7 +2782,7 @@ function Query(path,qArr,userCB,sID){
                 continue
             }
             started = true
-            console.log(toCheck.size)
+            console.log(`Start Nodes to check on "${startVar}":`,toCheck.size)
             for (const nodeID of toCheck) {
                 self.openPaths++
                 setTimeout(self.checkPath,1,false,false,startVar,nodeID)
@@ -2837,7 +2795,7 @@ function Query(path,qArr,userCB,sID){
             console.log('No nodes to evaluate')
         }
     }
-    this.checkPath = function(curPath,pathParams,startVar,startID){
+    this.checkPath = function(curPath,pathParams,startVar,startID,secondPass){
         let qParams = self
         let {paths,pathStrings,elements} = qParams
         curPath = curPath || []
@@ -2864,10 +2822,6 @@ function Query(path,qArr,userCB,sID){
         let {b} = parseSoul(startID)
         let {isNode,nodes} = thing//notDistinct is not yet implemented
         otherDir = (dir === 'right') ? 'left' : 'right'//might already be done, but this way we can check easily
-        if(!isNode && pathParams.rTraversed[startID]){
-            self.openPaths--
-            return
-        }
         if(getValue([startID,'passing'],nodes) === true){ //already evaluated this node, so just traverse
             traverse(true)
         }else{
@@ -2877,7 +2831,6 @@ function Query(path,qArr,userCB,sID){
         function traverse(passing){
             let qParams = self
             let thing = qParams.elements[startVar]
-            let {isNode,nodes} = thing
             if(!passing){
                 self.openPaths--
                 setValue([startID,'match'],null,nodes)
@@ -2889,10 +2842,12 @@ function Query(path,qArr,userCB,sID){
             let {t,i} = parseSoul(startID)
             let nextThing = thing[dir+'Thing']
             let toTraverse = []
-            curPath.push(startID)
+            let op = (dir === 'left') ? 'unshift' : 'push'
+            if(!secondPass)curPath[op](startID)
+            //console.log('POST LOCAL, PRE-TRAVRESE',{curPath:JSON.parse(JSON.stringify(curPath)),dir,curID:startID})
             if(isNode){
                 let [rTypes,signs] = thing.validRelations(dir) || []
-                if(nextThing === null){//must have nextThing === null to consider dirDone
+                if([null,undefined].includes(nextThing)){//must have nextThing === null to consider dirDone
                     dirDone()
                     return
                 }else if(!rTypes){//should have a next, but nothing valid to get (bad query?)
@@ -2907,7 +2862,8 @@ function Query(path,qArr,userCB,sID){
                 let toGet = rTypes.length
                 for (const rid of rTypes) {
                     let linkSoul = makeSoul({b,t,r:rid,i})
-                    get(linkSoul,false,function(linkNode){
+                    gun.get(linkSoul).once(function(linkNode){
+                        //console.log(linkSoul,linkNode)
                         self.counter1++
                         toGet--
                         if(linkNode !== undefined){
@@ -2944,21 +2900,30 @@ function Query(path,qArr,userCB,sID){
                 }
                 setValue([startID,'match'],true,nodes)
                 setValue([startID,'passing'],true,nodes)
+                //console.log('NEXT', nextThing.userVar)
                 pathParams[dir].curVar = nextThing.userVar
-                let copyParams,copyPath
+                let copyParams
                 if(isNode){
                     copyParams = JSON.parse(JSON.stringify(pathParams))
-                    copyPath = JSON.parse(JSON.stringify(curPath))
                 }
                 for (const id of toTraverse) {
                     if(isNode){//currently a node, will be traversing relationships
-                        let newParams = Object.assign({},copyParams,{[dir]:{curID:id}})
-                        self.checkPath(copyPath,newParams)//we branch and create a new path
+                        let newParams = Object.assign({},copyParams,{[dir]:{curID:id,curVar:nextThing.userVar}})
+                        //console.log(newParams,newParams[dir])
+                        self.checkPath(curPath.slice(),newParams)//we branch and create a new path
                         self.openPaths++
                     }else{//should only be a single id in this array, we are on a relationship getting a nodeID
                         pathParams[dir].curID = id //we don't copy anything, because a path can only end on a node.
+                        if(!secondPass && !isNode && self.relationsTraversed.has(startID)){
+                            self.openPaths--
+                            if(!self.openPaths){
+                                self.checkPathState()
+                            }
+                            return
+                        }
+                        self.relationsTraversed.add(startID)//can only traverse a relationID once per query (should prevent circular?)
                         self.checkPath(curPath,pathParams)
-                        thing.rTraversed[id] = true//can only traverse a relationID once per query (should prevent circular?)
+
                         //we also not opening a new path, since we are in the 'middle' of evaluating this one.
                     }
                 }
@@ -2966,6 +2931,7 @@ function Query(path,qArr,userCB,sID){
                 
             }
             function dirDone(){
+                //console.log('DIRDONE',{PARAMS:JSON.parse(JSON.stringify(pathParams)),curPath:curPath.slice()})
                 pathParams[dir].done = true
                 if(pathParams[otherDir].done){
                     self.openPaths--
@@ -2989,7 +2955,7 @@ function Query(path,qArr,userCB,sID){
                 }else{//started in the middle, need to verify other half
                     //we are not starting a new path, as we are continuing the current path
                     pathParams.curDir = otherDir
-                    self.checkPath(curPath,pathParams)
+                    self.checkPath(curPath,pathParams,false,false,true)
 
                 }
             }
@@ -3384,7 +3350,7 @@ function Query(path,qArr,userCB,sID){
         self.result.out.query = cleanQuery.slice() //what user can pass back in/save as a 'saved' query
         let countO = {count:0}
         let thingsToBuild = []
-        for (let i = 0,l = result.length; i < l; i++) {
+        for (let i = 0,l = result.length; i < l; i++) {//i is matching paths
             let pathArr = result[i].pathArr
             let pathO = result[i] //this is the pathInfoO [pathStr].resultRow
             result[i] = result[i].resultRow
@@ -3405,7 +3371,61 @@ function Query(path,qArr,userCB,sID){
                     }
                 }
             }else{
-                thingsToBuild.push(getPathData(pathO,countO))//get args
+                let {resultRow,pathArr} = pathO
+                for (let j = 0,l = returning.length; j < l; j++) {// j is the thing we are returning from the matched path
+                    let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
+                    let nodeID = pathArr[indexInPathArr]
+                    resultRow[j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
+                    let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[returning[j]]
+                    let allPropsToGet = []
+                    for (let k = 0, l = getProps.length; k < l; k++) {// k is the property for [i][j]
+                        const {alias,as:propAs,raw:rawProp} = getProps[k];
+                        let raw = !!allRaw || !!rawProp
+                        let p = qParams.aliasToID.id(nodeID,alias)
+                        if(p!==undefined){
+                            let propKey = returnKeyAs(k,p,alias,propAs)
+                            allPropsToGet.push([nodeID,p,addValue(propKey,p,countO),raw,sID])//getCell arguments
+                            countO.count += 1
+                            //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
+                            let addr = toAddress(nodeID,p)
+                            if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
+                                let subID = subThing(addr,resultSub(resultRow[j],propKey,rawLabels,p),false,{raw})
+                                setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
+                            }
+                        }else{
+                            //what to do? neo returns `null`
+                            console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
+                            addValue(propKey,p)(undefined)
+                        }
+                    }
+                    thingsToBuild.push(allPropsToGet) 
+                        
+                    function returnKeyAs(i,p,alias,propAs){
+                        let property = propAs || (propsByID) ? p : alias
+                        if(returnAsArray){
+                            property = i
+                        }
+                        return property
+                    }
+                    function addValue(property,p,counter){
+                        return function(val){
+                            resultRow[j][property] = val
+                            let fullPath = toAddress(nodeID,p)
+                            if(!noAddress){
+                                resultRow[j].address[property] = fullPath
+                            }
+                            if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
+                                replaceLabelIDs(resultRow[j],property,val)
+                            }
+                            counter.count -=1
+                            if(!counter.count){
+                                self.queryDone(true)
+                            }
+                        }
+                        
+                    }
+                }
+                //get args
             }
         }
         for (let i = 0,l = thingsToBuild.length; i < l; i++) {//have to collect everything, otherwise we don't know the total pending cb's
@@ -3419,13 +3439,64 @@ function Query(path,qArr,userCB,sID){
         if(!thingsToBuild.length)self.queryDone(true)//did not need to get any data, so we must call done manually
         self.resultState = true
         function getPathData(pathO,counter){
+            console.log(pathO,counter)
             let {resultRow,pathArr} = pathO
-            for (let i = 0,l = pathArr.length; i < l; i++) {
-                let indexInPathArr = pathOrderIdxMap.indexOf(returning[i])
+            for (let j = 0,l = resultRow.length; j < l; j++) {
+                let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
+                console.log(indexInPathArr)
                 let nodeID = pathArr[indexInPathArr]
-                resultRow[i] = newThing(returning[i],nodeID) //will return [] || {} w/metadata according to params
+                console.log(nodeID)
+                resultRow[j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
                 //return [resultRow[i],nodeID,returning[i],pathO[0],counter]
-                return findAllPropsNeeded(i,resultRow[i],nodeID,returning[i],pathO[0],counter)
+                //return findAllPropsNeeded(i,resultRow[i],nodeID,returning[i],pathO[0],counter)
+                let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[returning[j]]
+                let allPropsToGet = []
+                for (let k = 0, l = getProps.length; k < l; k++) {
+                    const {alias,as:propAs,raw:rawProp} = getProps[k];
+                    let raw = !!allRaw || !!rawProp
+                    let p = qParams.aliasToID.id(nodeID,alias)
+                    if(p!==undefined){
+                        let propKey = returnKeyAs(k,p,alias,propAs)
+                        allPropsToGet.push([nodeID,p,addValue(propKey,p,counter),raw,sID])//getCell arguments
+                        counter.count += 1
+                        //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
+                        let addr = toAddress(nodeID,p)
+                        if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
+                            let subID = subThing(addr,resultSub(resultRow[j],propKey,rawLabels,p),false,{raw})
+                            setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
+                        }
+                    }else{
+                        //what to do? neo returns `null`
+                        console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
+                        addValue(propKey,p)(undefined)
+                    }
+                }
+                return allPropsToGet
+                    
+                function returnKeyAs(i,p,alias,propAs){
+                    let property = propAs || (propsByID) ? p : alias
+                    if(returnAsArray){
+                        property = i
+                    }
+                    return property
+                }
+                function addValue(property,p,counter){
+                    return function(val){
+                        resultRow[j][property] = val
+                        let fullPath = toAddress(nodeID,p)
+                        if(!noAddress){
+                            resultRow[j].address[property] = fullPath
+                        }
+                        if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
+                            replaceLabelIDs(resultRow[j],property,val)
+                        }
+                        counter.count -=1
+                        if(!counter.count){
+                            self.queryDone(true)
+                        }
+                    }
+                    
+                }
             }
         }
         function newThing(el,id){
