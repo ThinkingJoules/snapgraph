@@ -1328,7 +1328,8 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
                     let curID = makeSoul({b,r,i:h})
                     if(result[curID]){
                         console.warn(result[curID])
-                        throw new Error('Cannot have two relations with the same source and target IDs')
+                        console.warn('Cannot have two relations with the same source and target IDs, IGNORING SECOND MATCH')
+                        continue
                     }
                     result[curID] = thing
                 }

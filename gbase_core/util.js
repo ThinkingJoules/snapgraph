@@ -968,7 +968,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     function initialCheck(){//verifies everything user has entered to ensure it is valid, also finds id's for any alias' used in the obj
         let coercedPutObj = {}
         noRelations = noRelations || []
-        console.log(putObj)
+        //console.log(putObj)
         //check keys in putObj for valid aliases && check values in obj for correct type in schema then store GB pname
         for (const palias in putObj) {
             let pval = findID(props, palias) 
@@ -1595,8 +1595,6 @@ function makeEnq(nodeOrAddress,p){
 function newDataNodeID(id,unix_ms){
     let i = (id !== undefined) ? id : rand(3)
     let t = unix_ms || Date.now()
-    console.log(id,i,unix_ms,t)
-
     return i+'_'+t
 }
 function newRelationID(src,trgt){
