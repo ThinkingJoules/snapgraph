@@ -12,7 +12,6 @@ const{getValue,
     putData,
     newID,
     setValue,
-    NODE_SOUL_PATTERN,
     hash64,
     INSTANCE_OR_ADDRESS,
     DATA_INSTANCE_NODE,
@@ -251,8 +250,8 @@ function cb(value){
     }
     return f
 }
-const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path,cb) =>{
-    const f = (function(configObj){
+const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path) =>{
+    const f = (function(configObj,cb){
         cb = (cb instanceof Function && cb) || function(){}
         let {b,t,r} = parseSoul(path)
         let propConfigArr = (Array.isArray(configObj)) ? configObj : [configObj]
@@ -1065,7 +1064,7 @@ gbase.kill('forUI') //config subs are not namespaced by path. Only subscription 
 }
 
 //import/export
-const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getCell) => (path) => {
+const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
     const f = (function(tsv, configObj,opts, cb){//updated
         //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
         let {b} = parseSoul(path)
@@ -1154,6 +1153,8 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
             return id
         }
         function done(){
+            //console.log({newParr,result})
+            //return
             makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newGB){
                 if(!(err instanceof Error)){
                     console.log(newGB)
@@ -1168,7 +1169,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
                     console.log(err)
                     cb.call(cb,err)
                 }
-            },newParr.slice())
+            },newParr.filter(x=>x.id))
                     
         }
     })
@@ -1179,7 +1180,193 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,triggerConfigUpdate,getC
 **importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
 This api is for importing a new node type in to gbase, building the configs from the data.
 
-tsv || array = should have a single header row for the properties on each node.  Should be 2D `[[headerRow],[dataRow1],[dataRow2],etc]`
+tsv || array = should have a single header row for the properties on each node.  Should be 2D [[headerRow],[dataRow1],[dataRow2],etc]
+configObj = for this nodeType (not any of the properties). For more info see [config options](#config-options).
+opts = {labels: 'Header Name that contains anything that has labels you want to tag the nodes with'}
+cb = function(error||undefined). If there is an error, the cb will fire with an error object, otherwise it will return the new node type id
+
+Usage:
+
+gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
+`
+        console.log(fromReadMe)
+    }
+    return f
+}
+const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) => {
+    const f = (function(tsv, srcArgs,trgtArgs, cb, opts){//updated
+        //gbase.base(baseID).relation(someRelation).importRelationships(rawTSV, SRCargs, TRGTargs, doneCB, opts)
+        let {b,r} = parseSoul(path)
+        cb = (cb instanceof Function && cb) || function(){}
+        let [[srcType, srcHeader]] = Object.entries(srcArgs)
+        let [[trgtType, trgtHeader]] = Object.entries(trgtArgs)
+        let gb = gbGet()
+        srcType = lookupID(gb,srcType,makeSoul({b}))
+        trgtType = lookupID(gb,trgtType,makeSoul({b}))
+        if([srcType,trgtType].includes(undefined))throw new Error('Cannot find src and/or trgt IDs')
+
+        let deps = makeDeps([DEPS_PUT_DATA(false)])
+        let allThings = grabAllIDs(gb,b)
+        let allProps = []
+        for (const typeID in allThings) {
+            allProps.push([typeID,['log','externalID']])
+            const propArr = allThings[typeID];
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
+            }
+        }
+        gbGet(allProps,importRelationships)
+        function importRelationships(gb){
+            let altgb = JSON.parse(JSON.stringify(gb))
+            let dataArr = (Array.isArray(tsv)) ? tsv : tsvJSONgb(tsv) //can give it a pre-parse array.
+            let colHeaders = dataArr[0]
+            let [newParr, aliasLookup] = handleImportColCreation(altgb, path , colHeaders, dataArr[1],{append:true,source:srcHeader,target:trgtHeader})
+            let srcIDidx = colHeaders.indexOf(srcHeader)
+            let trgtIDidx = colHeaders.indexOf(trgtHeader)
+
+            if(srcIDidx === -1 || trgtIDidx === -1)throw new Error('Cannot find the src and/or trgt header value specified')
+            
+            let toGet = 2
+            let sourceIDs,targetIDs,result = {}
+            let {externalID:srcID} = getValue(configPathFromChainPath(makeSoul({b,t:srcType})),altgb)
+            let {externalID:trgtID} = getValue(configPathFromChainPath(makeSoul({b,t:trgtType})),altgb)
+
+            if([undefined,null,''].includes(srcID) || [undefined,null,''].includes(trgtID))throw new Error('Both source and target nodeTypes MUST have externalIDs in order to import relationships')
+            getList(makeSoul({b,t:srcType,p:srcID}),function(data){
+                sourceIDs = data
+                toGet--
+                if(!toGet)buildNodes()
+            })
+            getList(makeSoul({b,t:trgtType,p:trgtID}),function(data){
+                targetIDs = data
+                toGet--
+                if(!toGet)buildNodes()
+            })           
+            //console.log(newPconfigs,result)
+            function getList(listPath,cb){
+                let {b,t,p} = parseSoul(listPath)
+                let stateSoul = makeSoul({b,t,i:true})
+                let soulList = []
+                let toObj = {}
+                gun.get(stateSoul).once(function(data){
+                    if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
+                    for (const soul in data) {
+                        if(!DATA_INSTANCE_NODE.test(soul))continue
+                        if(data[soul] !== null){//not Deleted
+                            //this means `false` will pass through, so archived items can be linked to
+                            soulList.push(soul)
+                        }
+                    }
+                    let toGet = soulList.length
+                    for (const soul of soulList) {
+                        getCell(soul,p,function(val){
+                            toGet--
+                            toObj[val] = soul
+                            if(!toGet){
+                                cb.call(cb,toObj)
+                            }
+    
+                        },true,true)
+                    }
+                })
+
+            }
+            function buildNodes(){
+                let invalidData = {}
+                const isVariant = /\$\{(.+)\}/
+
+                for (let i = 1; i < dataArr.length; i++) {//start at 1, past header
+                    const rowArr = dataArr[i];
+                    let thing = {}
+                    let sid, tid,fail
+                    for (let j = 0; j < rowArr.length; j++) {
+                        let value = rowArr[j];
+                        value = (['',null,undefined].includes(value)) ? null : value
+                        let {dataType} = newParr[j]
+                        let headerPval = aliasLookup[colHeaders[j]]
+                        try {
+                            value = convertValueToType(value,dataType)
+                        } catch (error) {
+                            //need to fail back to a 'string' type on this pval and re-convert all data on final time through
+                            //convert will not throw errors on 'string' everything else will.
+                            invalidData[j] = dataType
+                        }
+                        if(j === srcIDidx){
+                            let lookup = sourceIDs[value]
+                            if(lookup === undefined){
+                                console.warn('Cannot find ID for externalID of: '+value)
+                                fail = true
+                                break
+                            }
+                            sid = lookup
+                            value = lookup
+                        }
+                        if(j === trgtIDidx){
+                            let lookup = targetIDs[value]
+                            if(lookup === undefined){
+                                console.warn('Cannot find ID for externalID of: '+value)
+                                fail = true
+                                break
+                            }
+                            tid = lookup
+                            value = lookup
+                        }
+                        if(typeof value === 'string' && isVariant.test(value)){
+                            value = value.replace(isVariant, function(m,$1){
+                                let soul = ID[$1]
+                                if(!DATA_INSTANCE_NODE.test(soul))return m
+                                let addr = toAddress(soul,p)
+                                return '${'+addr+'}'
+    
+                            })
+                            value = makeEnq(value)
+                        }
+                        thing[headerPval] = value
+                    }
+                    if(fail)continue
+                    let h = hash64(sid+tid)
+                    let curID = makeSoul({b,r,i:h})
+                    if(result[curID]){
+                        console.warn(result[curID])
+                        throw new Error('Cannot have two relations with the same source and target IDs')
+                    }
+                    result[curID] = thing
+                }
+                let typeChange = Object.keys(invalidData)
+                for (const pval of typeChange) {
+                    let exists = getValue(configPathFromChainPath(makeSoul({b,r,p:pval})),gb)
+                    if(exists && exists.dataType !== 'string')throw new Error('Existing property is already set, new data does not conform to that. On property: '+pval)
+                    newParr[pval].dataType = 'string'
+                    newParr[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
+                }
+                done()
+            }
+            function done(){
+                //console.log('DONE',{newParr,result,altgb,aliasLookup})
+                //return
+                for (const propObj of newParr) {
+                    if(propObj.id){//only the new ones should have an id property added
+                        makeaddProp(gun,gb,getCell,false,false,timeLog,timeIndex)(path)(propObj)
+                    }   
+                }
+                for (const newSoul in result) {
+                    let put = result[newSoul]
+                    putData(gun, altgb, getCell, false, timeLog, timeIndex, relationIndex, newSoul, put, {isNew:true,isUnique:true}, function(err){
+                        //console.log('put errors',newSoul,err)
+                    })
+                } 
+                cb.call(cb,undefined)
+            }
+        }
+    })
+
+    f.help = function(){
+        let fromReadMe =
+`
+**importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
+This api is for importing a new node type in to gbase, building the configs from the data.
+
+tsv || array = should have a single header row for the properties on each node.  Should be 2D [[headerRow],[dataRow1],[dataRow2],etc]
 configObj = for this nodeType (not any of the properties). For more info see [config options](#config-options).
 opts = {labels: 'Header Name that contains anything that has labels you want to tag the nodes with'}
 cb = function(error||undefined). If there is an error, the cb will fire with an error object, otherwise it will return the new node type id
@@ -1429,5 +1616,6 @@ module.exports = {
     makeaddressGet,
     makekill,
     makegetConfig,
-    makeaddLabel
+    makeaddLabel,
+    makeimportRelationships
 }

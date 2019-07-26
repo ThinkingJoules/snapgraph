@@ -994,8 +994,9 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
     let targetIDidx = target && colHeaders.indexOf(target)
 
     for (let i = 0; i < colHeaders.length; i++) {
+        let fixedP = (i === labelIDidx && 'LABELS') || (i === sourceIDidx && 'SRC') || (i === targetIDidx && 'TRGT') || false
         let col = colHeaders[i]
-        let p = cols && findID(cols, col)
+        let p = fixedP || cols && findID(cols, col)
         let propType, dataType
         if((cols === undefined || p === undefined) && append){//need to create a new property
             p = newID(altgb,makeSoul({b,t,r,p:true})) 
@@ -1019,18 +1020,23 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
             if(labelIDidx === i){
                 propType = 'labels'
                 dataType = 'unorderedSet'
+                p = 'LABELS'
             }else if(sourceIDidx === i){
                 propType = 'source'
                 dataType = 'string'
+                p = 'SRC'
             }else if(targetIDidx === i){
                 propType = 'target'
                 dataType = 'string'
+                p = 'TRGT'
             }
 
             let pconfig = (t) ? newNodePropConfig({alias: palias, propType, dataType,enforceUnique}) : newRelationshipPropConfig({alias: palias, propType, dataType,enforceUnique})
             pconfig.id = p
             setValue(configPathFromChainPath(makeSoul({b,t,r,p})),pconfig,altgb,true)
             newConfigs.push(pconfig)
+        }else{
+            newConfigs.push(getValue(configPathFromChainPath(makeSoul({b,t,r,p})),altgb))
         }
         aliasLookup[col] = p
     }

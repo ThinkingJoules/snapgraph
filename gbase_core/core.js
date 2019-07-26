@@ -130,12 +130,13 @@ const {makenewBase,
     makeaddressGet,
     makekill,
     makegetConfig,
-    makeaddLabel
+    makeaddLabel,
+    makeimportRelationships
 } = require('./chain_commands')
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importNewNodeType,archive,unarchive,deleteNode,newFrom
 let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
-let typeGet, nodeGet, addressGet, getConfig,addLabel
+let typeGet, nodeGet, addressGet, getConfig,addLabel, importRelationships
 const showgb = makeshowgb(gb)
 const showcache = makeshowcache(cache)
 const showgunsub = makeshowgunsub(gunSubs)
@@ -350,7 +351,8 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     getConfig = makegetConfig(gbGet,configSubs,mountBaseToChain)
     newBase = makenewBase(gun,tLog)
     newNodeType = makenewNodeType(gun,gb,tLog)//new should only need id/alias of current gb
-    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,triggerConfigUpdate,getCell)//new should only need id/alias of current gb
+    importNewNodeType = makeimportNewNodeType(gun,gb,tLog,tIndex,getCell)//new should only need id/alias of current gb
+    importRelationships = makeimportRelationships(gun,gbGet,tLog,tIndex,getCell)
     addProp = makeaddProp(gun,gb,getCell,cascade,solve,tLog,tIndex)//new should only need id/alias of current gb
     addLabel = makeaddLabel(gun,gb)
     
@@ -818,6 +820,10 @@ function nodeTypeChainOpt(_path,isNode){
 
     if(isNode){
         Object.assign(out,{newNode: newNode(_path)})
+    }
+    if(!isNode){
+        Object.assign(out,{importRelationships: importRelationships(_path)})
+        
     }
 
     return out
