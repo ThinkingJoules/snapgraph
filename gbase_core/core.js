@@ -1760,6 +1760,7 @@ function Query(path,qArr,userCB,sID){
                     raw: false,//override setting, set for all props (helpful if props not specified(allActive) but want them as raw)
                     rawLinks:false//for linked columns, it will attempt to replace with the HumanID
                     idOnly: false //for list building.
+                    humanID: false //for getting metaData under a 'human' name based on the human ID config
                     }
                 }]
             */
@@ -1774,7 +1775,7 @@ function Query(path,qArr,userCB,sID){
                 elements[userVar].toReturn = true
                 let args = tArg[userVar]
                 for (const arg in args) {
-                    if(!['returnAsArray','props','propsByID','noID','noAddress','raw'].includes(arg))continue
+                    if(!['returnAsArray','props','propsByID','noID','noAddress','raw','idOnly','humanID'].includes(arg))continue //skip over invalid keys
                     const value = args[arg];
                     if(arg === 'props'){
                         if(!Array.isArray(value))throw new Error('"props" must be an array of values')
@@ -3407,7 +3408,7 @@ function Query(path,qArr,userCB,sID){
 
     this.buildResults = function(){
         let qParams = self
-        let {limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams       
+        let {limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly:allIDonly,pathOrderIdxMap,elements} = qParams       
         //need to build all paths that are within the skip and limit
         //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
 
@@ -3435,81 +3436,78 @@ function Query(path,qArr,userCB,sID){
             let pathArr = result[i].pathArr
             let pathO = result[i] //this is the pathInfoO [pathStr].resultRow
             result[i] = result[i].resultRow
-            //if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
-            if(idOnly){
-                for (let j = 0,l = pathArr.length; j < l; j++) {
-                    let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
-                    let nodeID = pathArr[indexInPathArr]
-                    let nodeThing = [nodeID]
-                    Object.defineProperty(nodeThing,'id',{value: nodeID})
-                    Object.defineProperty(nodeThing,'address',{value: []})
-                    result[i][j] = nodeThing
-                    let {props:getProps} = elements[returning[j]]
-                    for (let k = 0; k < getProps.length; k++) {
-                        let {alias} = getProps[k]
-                        let p = qParams.aliasToID.id(nodeID,alias)
-                        nodeThing.address[k] = toAddress(nodeID,p)
+            if(result[i].length == returning.length)continue//assume that we ran all code below once on a previous query
+            for (let j = 0,l = returning.length; j < l; j++) {// j is the thing we are returning from the matched path
+                let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
+                let nodeID = pathArr[indexInPathArr]
+                result[i][j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
+                let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels,idOnly,humanID} = elements[returning[j]]
+                let allPropsToGet = []
+                if(humanID && (idOnly || allIDonly)){
+                    countO.count += 1
+                    let {humanID:hidP} = getValue(configPathFromChainPath(nodeID),gb) || {}
+                    thingsToBuild.push([[nodeID,hidP,addValue(0,hidP,countO,true),true,sID]])//getCell arguments
+                    let addr = toAddress(nodeID,hidP)
+                    if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
+                        let subID = subThing(addr,resultSub(result[i][j],0,rawLabels,hidP),false,{raw:true})
+                        setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
                     }
                 }
-            }else{
-                if(result[i].length == returning.length)continue//assume that we ran all code below once on a previous query
-                //console.log('ADDING TO RESULT ROW',result[i].length,returning.length,{i,resRow:result[i],returning})
-                for (let j = 0,l = returning.length; j < l; j++) {// j is the thing we are returning from the matched path
-                    let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
-                    let nodeID = pathArr[indexInPathArr]
-                    result[i][j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
-                    let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[returning[j]]
-                    let allPropsToGet = []
-                    for (let k = 0, l = getProps.length; k < l; k++) {// k is the property for [i][j]
-                        const {alias,as:propAs,raw:rawProp} = getProps[k];
-                        let raw = !!allRaw || !!rawProp
-                        let p = qParams.aliasToID.id(nodeID,alias)
-                        if(p!==undefined){
-                            let propKey = returnKeyAs(k,p,alias,propAs)
-                            allPropsToGet.push([nodeID,p,addValue(propKey,p,countO),raw,sID])//getCell arguments
-                            countO.count += 1
-                            //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
-                            let addr = toAddress(nodeID,p)
-                            if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
-                                let subID = subThing(addr,resultSub(result[i][j],propKey,rawLabels,p),false,{raw})
-                                setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
-                            }
-                        }else{
-                            //what to do? neo returns `null`
-                            console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
-                            addValue(propKey,p)(undefined)
+                if(!getProps.length)continue
+                for (let k = 0, l = getProps.length; k < l; k++) {// k is the property for [i][j]
+                    const {alias,as:propAs,raw:rawProp} = getProps[k];
+                    let raw = !!allRaw || !!rawProp
+                    let p = qParams.aliasToID.id(nodeID,alias)
+                    if(p!==undefined){
+                        let addr = toAddress(nodeID,p)
+                        if(idOnly || allIDonly){
+                            result[i][j].address[k] = addr
+                            continue //don't run rest of code in the loop
                         }
-                    }
-                    thingsToBuild.push(allPropsToGet) 
-                        
-                    function returnKeyAs(i,p,alias,propAs){
-                        let property = propAs || (propsByID) ? p : alias
-                        if(returnAsArray){
-                            property = i
+                        let propKey = returnKeyAs(k,p,alias,propAs)
+                        allPropsToGet.push([nodeID,p,addValue(propKey,p,countO),raw,sID])//getCell arguments
+                        countO.count += 1
+                        //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
+                        if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
+                            let subID = subThing(addr,resultSub(result[i][j],propKey,rawLabels,p),false,{raw})
+                            setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
                         }
-                        return property
-                    }
-                    function addValue(property,p,counter){
-                        return function(val){
-                            result[i][j][property] = val
-                            let fullPath = toAddress(nodeID,p)
-                            if(!noAddress){
-                                result[i][j].address[property] = fullPath
-                            }
-                            if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
-                                replaceLabelIDs(result[i][j],property,val)
-                            }
-                            counter.count -=1
-                            if(!counter.count){
-                                self.queryDone(true)
-                            }
-                        }
-                        
+                    }else{
+                        //what to do? neo returns `null`
+                        console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
+                        addValue(propKey,p)(undefined)
                     }
                 }
-                //get args
+                if(allPropsToGet.length)thingsToBuild.push(allPropsToGet) 
+                    
+                function returnKeyAs(i,p,alias,propAs){
+                    let property = propAs || (propsByID) ? p : alias
+                    if(returnAsArray){
+                        property = i
+                    }
+                    return property
+                }
+                function addValue(property,p,counter,forHumanID){
+                    return function(val){
+                        result[i][j][property] = val
+                        let fullPath = toAddress(nodeID,p)
+                        if(!noAddress && !forHumanID){
+                            result[i][j].address[property] = fullPath
+                        }
+                        if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
+                            replaceLabelIDs(result[i][j],property,val)
+                        }
+                        counter.count -=1
+                        if(!counter.count){
+                            self.queryDone(true)
+                        }
+                    }
+                    
+                }
             }
+            //get args
         }
+        console.log(thingsToBuild)
         for (let i = 0,l = thingsToBuild.length; i < l; i++) {//have to collect everything, otherwise we don't know the total pending cb's
             let nodeArr = thingsToBuild[i]
             for (let j = 0, lj=nodeArr.length; j < lj; j++) {
@@ -3521,11 +3519,13 @@ function Query(path,qArr,userCB,sID){
         if(!thingsToBuild.length)self.queryDone(true)//did not need to get any data, so we must call done manually
         self.resultState = true
         function newThing(el,id){
-            let {props,returnAsArray,noID,noAddress} = elements[el]
+            let {props,returnAsArray,noID,noAddress,idOnly,humanID} = elements[el]
             let nodeObj
-            if(returnAsArray){
+            if((idOnly || allIDonly) && !humanID){
+                nodeObj = [id]
+            }else if(returnAsArray || humanID){
                 nodeObj = []
-                nodeObj.length = props.length
+                if(!idOnly && !allIDonly)nodeObj.length = props.length
             }else{
                 nodeObj = {}
             }
@@ -3600,14 +3600,14 @@ function Query(path,qArr,userCB,sID){
             }
         }
     }
-    function resultSub(obj,j,rawLabels,p){
+    function resultSub(obj,k,rawLabels,p){
         //obj = [] || {}  j = pval || arrIdx
         return function(newVal){
             //was failing but now could be passing, or was passing and may be failing (the single null value just set)
             if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
-                replaceLabelIDs(obj,j,newVal)
+                replaceLabelIDs(obj,k,newVal)
             }else{
-                obj[j] = newVal
+                obj[k] = newVal
             }
             if(self.state !== 'pending'){
                 //even if this is 'running' it will schedule another run through.

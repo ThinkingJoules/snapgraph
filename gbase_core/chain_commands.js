@@ -668,6 +668,7 @@ const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
         let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
         for (const typeID in allThings) {
             const propArr = allThings[typeID];
+            allProps.push([typeID,['humanID']])
             for (const pPath of propArr) {
                 allProps.push([pPath,deps])
             }
@@ -702,6 +703,7 @@ const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
         cb = (cb instanceof Function && cb) || function(){}
         let allProps = grabThingPropPaths(gbGet(),path)
         let deps = makeDeps([DEPS_GET_CELL,DEPS_ACTIVE_PROPS])
+        allProps.push([path,['humanID']])
         allProps = allProps.map(x => [x,deps])
         let {b,t,r,p} = parseSoul(path)
         let type = t || r

@@ -504,6 +504,11 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 if(isID === undefined)throw new Error('Cannot locate the property specified for the externalID')
                 configObj.externalID = isID
             }
+            if(configObj.humanID && configObj.humanID !== '' && !isNew){
+                let isID = findID(gb,configObj.humanID,makeSoul({b,t,r,p:configObj.humanID}))
+                if(isID === undefined)throw new Error('Cannot locate the property specified for the externalID')
+                configObj.humanID = isID
+            }
             return
         } //rest is for properties
         handleSortval()

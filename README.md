@@ -680,7 +680,7 @@ callBack is required, others are optional Defaults:
 * returns array with same structure as [subscribeQuery](#subscribeQuery)
 
 | Opts[key] | default | typeof | usage | Notes |
-|---------------|-----------------------------------|----------------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+|---------------|-----------------------------------|----------------|-----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | sortBy | FALSE | array | [('prop Alias'|| propID),('ASC' || 'DESC')] | You can specify multiple sort columns, will sort from left to right in array to break ties. |
 | skip | 0 | number | skip first 'x' results |  |
 | limit | Infinity | number | limit total results to 'x' |  |
@@ -695,9 +695,10 @@ callBack is required, others are optional Defaults:
 | labels | FALSE | array | subset of nodes that have these tags | will implement not tags as well. |
 | filter | FALSE | string |  '{property} > 3' Will sub {} with actual value | Uses the [function library](function-library) |
 | range | FALSE | object | {from: unix, to:unix} | Many options, see the [query section](#query) |
+| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the gbase ID |  |
 
 #### property subscription  
-This is exactly the same as [nodeType subscription](#nodeType-subscription) except that it ignores the `prop` option and only returns the property in context. All other options apply.
+This is exactly the same as [nodeType subscription](#nodeType-subscription) except that it ignores the `props` option and only returns the property in context. All other options apply.
 
 #### node subscription
 This is technically a wrapper around the internal gbase address subscription.
@@ -913,7 +914,7 @@ Type: boolean
 Usage: Only on properties. This is basically saying that it is metaData and should not be retrieved if asking for 'all active' props
 #### humanID
 Type: 'string'  
-Usage: This is similar to externalID except that it does not have to be unique. This can be used to load in some sort of 'human name' on links/relationships that can be used for link making in the app to get you to a view that shows the referenced node.
+Usage: This is similar to externalID except that it does not have to be unique. This can be used to load in some sort of 'human name' on nodes that can be used for link making in the app to get you to a view that shows the referenced node.
 #### log
 Type: boolean  
 Usage: Determines whether to log changes to nodes of this nodeType.  
@@ -1090,6 +1091,7 @@ Will take the shape of `{[elementName]: configs}` Below is the options for the '
 | raw | FALSE | boolean | Apply formatting per the configs.format | See [format options](#format-options) |
 | idOnly | FALSE | boolean | Don't return properties, but only the ID for this particular element | You can specify properties, and it will generate addresses for them in the metaData |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
+| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the gbase ID |  |
 
 Full Cypher argument:
 ```
