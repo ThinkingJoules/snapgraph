@@ -1439,6 +1439,13 @@ function Query(path,qArr,userCB,sID){
     let elements = this.elements
 
     this.parseQuery = function(qArr){
+        this.sortBy = false // || ['userVar',{alias,dir}, {alias,dir},...]
+        this.limit = Infinity
+        this.prevLimit = Infinity
+        this.skip = 0
+        this.prevSkip = 0
+        this.idOnly = false
+        this.returning = []
         if(!this.queryChange)parseCypher()
         parseReturn()
         if(!this.queryChange)parseExpand()
@@ -1823,6 +1830,7 @@ function Query(path,qArr,userCB,sID){
             }
             function parseProps(userVar,userArg){
                 //can be [alias1, alias2] or options [{alias1:{as:'Different Name',raw:true}}]
+                elements[userVar].props = []
                 for (const arg of userArg) {
                     if(typeof arg === 'string'){
                         elements[userVar].props.push({alias:arg})
@@ -2025,6 +2033,7 @@ function Query(path,qArr,userCB,sID){
                 let [userVar,ranges] = obj.RANGE
                 //ranges is an object with keys of index's (props || _CREATED) and value of object with params
                 if(!elements[userVar])throw new Error('Variable referenced was not declared in the MATCH statement')
+                elements[userVar].ranges = []
                 for (const index in ranges) {
                     const params = ranges[index];
                     let {to,from} = calcToFrom(params)
@@ -2553,6 +2562,7 @@ function Query(path,qArr,userCB,sID){
         let {observedStates,expand,checkNodes} = qParams
         self.requery = (self.runs > 1) ? true : false
         self.bufferTrigger = false
+        self.limitHit = false
         if(checkNodes){//checkNodes can only come from the stateBuffer
             if(expand){
                 //if a new relation comes in, then we need to get it's src & trgt to see if either of them are in the 'active' list
@@ -2603,7 +2613,7 @@ function Query(path,qArr,userCB,sID){
                     //all ID's are unique across a base, so only need to see if any nodes have them
                     for (const userVar of qParams.elementRank) {
                         const {validStates,types} = qParams.elements[userVar];
-                        qParams.elements[userVar].toCheck.clear()
+                        //qParams.elements[userVar].toCheck.clear()
                         if(observedStates[nodeID] === undefined && (types.includes(t) || types.includes(r))){//add it to the highest scoring match.
                             if(validStates.includes(state)){//check to see if it has the correct state
                                 qParams.elements[userVar].toCheck.add(nodeID)
@@ -2628,8 +2638,9 @@ function Query(path,qArr,userCB,sID){
         if(self.expand)self.expandNodes()//expand starts over regardless of if it has been run before
         else if(self.bufferTrigger){console.log('Evaluating incoming nodes with state changes');self.evaluateNodes()}
         else if(self.requery){
-            if(!self.filterState){
-                console.log('Requery, checking changed nodes to see if they pass')
+            if(!self.filterState || (!self.sortBy && self.limit !== Infinity)){
+                if(!self.filterState)console.log('Requery, checking changed nodes to see if they pass')
+                else console.log('Requery, getting new skip and/or limit return')
                 self.evaluateNodes()
             }else if(!self.sortState){
                 console.log('Requery, sort has changed')
@@ -2762,9 +2773,61 @@ function Query(path,qArr,userCB,sID){
             }
         }
     }
-    this.evaluateNodes = function (){
-        let qParams = self
+    this.evaluateNodes = function(){
         self.metrics.addTimeSplit('getIndex')
+        if(self.sortBy === false && self.limit !== Infinity){
+            self.checkNextStartNode()
+        }else{
+            self.findAllPaths()
+        }
+
+    }
+    this.checkNextStartNode = function(){
+        let qParams = self
+        
+
+        //this is only for match pattern w/ normal return
+
+        //could have some nodes to test in any of the userVar's if this is a requery
+        //otherwise there will only be one userVar that has toCheck
+        //either way, our runner needs to be able to start anywhere in the match statement
+        //will need to make a little query object to pass around 
+        let varsToCheck = qParams.elementRank
+        //console.log(varsToCheck)
+
+        if(!varsToCheck.length){
+            self.queryDone(!bufferTrigger)
+            return
+        }//nothing matched the query, return the result
+        self.openPaths = 0
+        let started = false
+        let needed = (self.skip+self.limit-self.paths.length)*1.25 //need extra so some that fail can still give use enough so we are batching larger
+        let pathsInitiated = 0
+
+        for (const startVar of varsToCheck) {
+            let thing = qParams.elements[startVar];
+            const {toCheck} = thing
+            if(!toCheck.size){
+                continue
+            }
+            console.log('things left',toCheck.size, 'currently getting:',needed)
+            for (const nodeID of toCheck) {
+                pathsInitiated++
+                if(pathsInitiated > needed)break
+                self.openPaths++
+                setTimeout(self.checkPath,1,false,false,startVar,nodeID)
+                started = true
+
+            }
+        }
+
+        if(!started){//ran out of nodes to start new paths from proceed with rest of query
+            self.checkPathState()
+        }
+    }
+    this.findAllPaths = function (){
+        let qParams = self
+        
 
         //this is only for match pattern w/ normal return
 
@@ -2838,11 +2901,8 @@ function Query(path,qArr,userCB,sID){
             let qParams = self
             let thing = qParams.elements[startVar]
             if(!passing){
-                self.openPaths--
                 setValue([startID,'match'],null,nodes)
-                if(!self.openPaths){
-                    self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
-                }
+                pathComplete()
                 return
             }
             let {t,i} = parseSoul(startID)
@@ -2858,10 +2918,7 @@ function Query(path,qArr,userCB,sID){
                     return
                 }else if(!rTypes){//should have a next, but nothing valid to get (bad query?)
                     setValue([startID,'match'],false,nodes)
-                    self.openPaths--
-                    if(!self.openPaths){
-                        self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
-                    }
+                    pathComplete()
                     return
                 }
 
@@ -2897,11 +2954,9 @@ function Query(path,qArr,userCB,sID){
             }
             function attemptTraversal(){
                 if(!toTraverse.length){
-                    self.openPaths--//should have had more links to get, which means this doesn't match the pattern
+                    //should have had more links to get, which means this doesn't match the pattern
                     setValue([startID,'match'],false,nodes)
-                    if(!self.openPaths){
-                        self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
-                    }
+                    pathComplete()
                     return
                 }
                 setValue([startID,'match'],true,nodes)
@@ -2921,10 +2976,7 @@ function Query(path,qArr,userCB,sID){
                     }else{//should only be a single id in this array, we are on a relationship getting a nodeID
                         pathParams[dir].curID = id //we don't copy anything, because a path can only end on a node.
                         if(!secondPass && !isNode && self.relationsTraversed.has(startID)){
-                            self.openPaths--
-                            if(!self.openPaths){
-                                self.checkPathState()
-                            }
+                            pathComplete()
                             return
                         }
                         self.relationsTraversed.add(startID)//can only traverse a relationID once per query (should prevent circular?)
@@ -2940,7 +2992,7 @@ function Query(path,qArr,userCB,sID){
                 //console.log('DIRDONE',{PARAMS:JSON.parse(JSON.stringify(pathParams)),curPath:curPath.slice()})
                 pathParams[dir].done = true
                 if(pathParams[otherDir].done){
-                    self.openPaths--
+                    //self.openPaths--
                     //add to paths array that we will be using to assembleOutput
                     //need to make sure the path is unique..., or atleast does not duplicate a path in the output
                     let pStr = JSON.stringify(curPath)
@@ -2955,9 +3007,7 @@ function Query(path,qArr,userCB,sID){
                         pathStrings[pStr] = paths.lengths-1 //since we pushed it, it should be in the last position
                     }//else already part of the result, and is still part of it
 
-                    if(!self.openPaths){
-                        self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
-                    }
+                    pathComplete()
                 }else{//started in the middle, need to verify other half
                     //we are not starting a new path, as we are continuing the current path
                     pathParams.curDir = otherDir
@@ -2965,6 +3015,24 @@ function Query(path,qArr,userCB,sID){
 
                 }
             }
+        }
+        function pathComplete(){
+            self.openPaths--
+            let {startVar,startID} = pathParams
+            self.elements[startVar].toCheck.delete(startID)
+            //console.log(self.sortBy,self.paths.length,self.skip+self.limit,self.openPaths)
+            if(!self.sortBy && self.paths.length < self.skip+self.limit && self.limit !== Infinity && !self.openPaths){
+                //we are not sorting, there is a non-infinite limit, and we do not have as many paths as skip/limit specify and there are no pending paths
+                self.checkNextStartNode()
+                return
+            }
+
+            if((!self.sortBy && self.paths.length > self.skip+self.limit && !self.limitHit) || !self.openPaths && !self.limitHit){ //not sure if I can combine these two..
+                self.limitHit = true //could have n number of paths that are in proccess that will exceed limit, we only want to fire the next step once.
+
+                self.checkPathState()//Everything has been checked, all possible paths have been evaluated (given the starting)
+            }
+
         }
     }
     this.checkLocal = function(el,nodeID,cb){
@@ -3332,7 +3400,7 @@ function Query(path,qArr,userCB,sID){
 
     this.buildResults = function(){
         let qParams = self
-        let {sortBy,limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams       
+        let {limit,skip,prevLimit,prevSkip,returning,sID,cleanQuery,idOnly,pathOrderIdxMap,elements} = qParams       
         //need to build all paths that are within the skip and limit
         //with whatever list we have at this point, we need to getCell on all props,apply/skip formatting,put in array/object/optionally attach ids/addresses
 
@@ -3360,7 +3428,7 @@ function Query(path,qArr,userCB,sID){
             let pathArr = result[i].pathArr
             let pathO = result[i] //this is the pathInfoO [pathStr].resultRow
             result[i] = result[i].resultRow
-            if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
+            //if(result[i].length !== 0) continue //only get data for paths that are in result, but are empty
             if(idOnly){
                 for (let j = 0,l = pathArr.length; j < l; j++) {
                     let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
@@ -3377,11 +3445,12 @@ function Query(path,qArr,userCB,sID){
                     }
                 }
             }else{
-                let {resultRow,pathArr} = pathO
+                if(result[i].length == returning.length)continue//assume that we ran all code below once on a previous query
+                //console.log('ADDING TO RESULT ROW',result[i].length,returning.length,{i,resRow:result[i],returning})
                 for (let j = 0,l = returning.length; j < l; j++) {// j is the thing we are returning from the matched path
                     let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
                     let nodeID = pathArr[indexInPathArr]
-                    resultRow[j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
+                    result[i][j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
                     let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[returning[j]]
                     let allPropsToGet = []
                     for (let k = 0, l = getProps.length; k < l; k++) {// k is the property for [i][j]
@@ -3395,7 +3464,7 @@ function Query(path,qArr,userCB,sID){
                             //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
                             let addr = toAddress(nodeID,p)
                             if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
-                                let subID = subThing(addr,resultSub(resultRow[j],propKey,rawLabels,p),false,{raw})
+                                let subID = subThing(addr,resultSub(result[i][j],propKey,rawLabels,p),false,{raw})
                                 setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
                             }
                         }else{
@@ -3415,13 +3484,13 @@ function Query(path,qArr,userCB,sID){
                     }
                     function addValue(property,p,counter){
                         return function(val){
-                            resultRow[j][property] = val
+                            result[i][j][property] = val
                             let fullPath = toAddress(nodeID,p)
                             if(!noAddress){
-                                resultRow[j].address[property] = fullPath
+                                result[i][j].address[property] = fullPath
                             }
                             if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
-                                replaceLabelIDs(resultRow[j],property,val)
+                                replaceLabelIDs(result[i][j],property,val)
                             }
                             counter.count -=1
                             if(!counter.count){

@@ -505,7 +505,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             throw new Error('Invalid NodeID specified for linking new node to its parent')
         }
     }
-    const get = gunGet(gun)
     const put = gunPut(gun)
     initialCheck()
     //console.log(JSON.parse(JSON.stringify(putObj)))
@@ -589,7 +588,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let {b,t} = parseSoul(soul)
             let toGet = pvals.length
             for (const p of pvals) {
-                let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,p})),gb)
+                let {dataType} = getValue(configPathFromChainPath(makeSoul({b,t,r,p})),gb)
                 gun.get(soul).get(p).once(function(val){
                     if(dataType === 'array'){
                         try {
@@ -961,7 +960,22 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             putObj[stateP] = state
             let stateSoul = makeSoul({b,t,r,i:true})
             addToPut(stateSoul,{[nodeID]:!archiving})
-            runNext()
+            if(!isNode){
+                let toGet = 2
+                getCell(nodeID,'SRC',function(val){
+                    toGet--
+                    putObj.SRC = val
+                    if(!toGet)runNext()
+                })
+                getCell(nodeID,'TRGT',function(val){
+                    toGet--
+                    putObj.TRGT = val
+                    if(!toGet)runNext()
+                })
+
+            }else{
+                runNext()
+            }
         }
     }
     runNext()
