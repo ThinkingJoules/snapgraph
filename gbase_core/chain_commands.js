@@ -1133,7 +1133,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
                 let v = node[p]
                 if(typeof v === 'string' && isVariant.test(v)){
                     v = v.replace(isVariant, function(m,$1){
-                        let soul = ID[$1]
+                        let soul = IDs[$1]
                         if(!DATA_INSTANCE_NODE.test(soul))return m
                         let addr = toAddress(soul,p)
                         return '${'+addr+'}'

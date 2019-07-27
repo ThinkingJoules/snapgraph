@@ -457,7 +457,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
     }
     //start logic
 
-    console.log(JSON.stringify(run))
+    //console.log(JSON.stringify(run))
     runNext()
 
     
@@ -524,7 +524,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
 
         //determine what needs to change
         if(dType !== thisConfig.dataType){//need to change the dataType
-            console.warn('setting dataType to:',dType)
+            //console.warn('setting dataType to:',dType)
             convertData = dType
             getData = true
         }else if((enforceUnique && !thisConfig.enforceUnique) || configObj.externalID){//turning on enforceUnique, dataType is already correct
@@ -565,10 +565,10 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             let copyConfig = JSON.parse(JSON.stringify(configObj))
             if(isNew && (copyConfig.sortval === undefined || copyConfig.sortval === 0))copyConfig.sortval = Infinity
             copyProps[p] = copyConfig
-            console.log(p,copyProps[p])
+            //console.log(p,copyProps[p])
             let things = Object.entries(copyProps)
             things.sort((a,b)=>a[1].sortval-b[1].sortval)
-            console.log(things.map(x=>[x[0],x[1].sortval]))
+            //console.log(things.map(x=>[x[0],x[1].sortval]))
             for (let i = 0; i < things.length; i++) {
                 const [pval] = things[i];
                 let normalized = (i+1)*10
