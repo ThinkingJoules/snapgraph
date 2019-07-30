@@ -659,6 +659,44 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
 }
 
 //subscription/getters
+const makeperformExpand = (gbGet,setupQuery) => (path,isSub) =>{
+    const f = (function(nodeArr, cb, expandArgs,subID){
+        if(!nodeArr || (nodeArr && !Array.isArray(nodeArr)))throw new Error('Must supply an array of nodeIDs as the first argument')
+        let {b} = parseSoul(path) //just need the base, grabbing from the first node
+        let allThings = grabAllIDs(gbGet(),b)
+        let allProps = []
+        let deps = makeDeps([DEPS_GET_CELL])
+        for (const typeID in allThings) {
+            const propArr = allThings[typeID];
+            allProps.push([typeID,['humanID']])
+            for (const pPath of propArr) {
+                allProps.push([pPath,deps])
+            }
+        }
+        if(isSub && !subID)subID = Symbol()
+        //soryBy = [pval,ASC|DESC,pval2,ASC|DESC,...etc]
+        gbGet(allProps,performQuery)//preload gb, as Query will need this things to parse
+        return subID
+        function performQuery(gb){
+            try{
+                let queryArr = [{EXPAND:[nodeArr,expandArgs]}]
+                setupQuery(path,queryArr,cb,true,subID)
+            }catch(e){
+                console.warn(e)
+            }
+        }
+    })
+    f.help = function(){
+        let fromReadMe = 
+`
+See Docs for queryArr arguments
+gbase.performExpand(arrayOfNodeIDs,cb,opts,subID)
+`
+        console.log(fromReadMe)
+    }
+
+    return f
+}
 const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
     
     const f = (function(cb, queryArr,subID){
@@ -1620,5 +1658,6 @@ module.exports = {
     makekill,
     makegetConfig,
     makeaddLabel,
-    makeimportRelationships
+    makeimportRelationships,
+    makeperformExpand
 }
