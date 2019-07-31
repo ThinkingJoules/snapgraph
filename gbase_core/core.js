@@ -8,7 +8,7 @@ if(typeof window !== "undefined"){
     isNode = true
 }
 if (!Gun)
-throw new Error("gundb-gbase: Gun was not found globally!");
+throw new Error("snapgraph: Gun was not found globally!");
 let Radisk
 let Radix
 let radata
@@ -20,7 +20,7 @@ if(typeof window === "undefined"){//if this is running on a server
     radata = Radisk({store: RFS})
 }
 let gun
-const gbase = {}
+const snap = {}
 const gb = {}
 const gsubs = {}
 const gunSubs = {}
@@ -33,7 +33,7 @@ let gbChainState = true
 const cache = new Map()
 const upDeps = {}
 const downDeps = {}
-const addrSubs = {} //{[addr]:{sID:{cb,raw}}} //when new data is received gbase will for loop (+Symbol() loop) over object and fire each cb with the new value
+const addrSubs = {} //{[addr]:{sID:{cb,raw}}} //when new data is received snap will for loop (+Symbol() loop) over object and fire each cb with the new value
 const nodeSubs = {} //{[nodeID]:{sID: {cb, addrSubs,props,raw,partial}}}//this could be a user cb or it might be for a query?
 
 const configSubs = {}
@@ -337,7 +337,7 @@ function processValue(addr,subs){
 
 
 
-const gunToGbase = (gunInstance,opts,doneCB) =>{
+const gunToSnap = (gunInstance,opts,doneCB) =>{
     gun = gunInstance
     let {bases,full} = opts
     if(bases !== undefined && !Array.isArray(bases))bases = [bases]//assume the passed a single baseID as a string
@@ -391,15 +391,15 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
     chp = makechp(gun)
 
 
-    gbase.newBase = newBase
-    gbase.ti = tIndex
-    gbase.tl = tLog
-    gbase.qi = qIndex
+    snap.newBase = newBase
+    snap.ti = tIndex
+    snap.tl = tLog
+    snap.qi = qIndex
     
     gun._.on('put',incomingPutMsg)
     //gun._.on('in',function(msg){console.assert(!(msg && msg['@']),msg)})
 
-    Object.assign(gbase,gbaseChainOpt())
+    Object.assign(snap,snapChainOpt())
     //random test command to fire after start
     // const testPut = ()=>{
     //     gunInstance.get('test').put({data:true})
@@ -434,7 +434,7 @@ const gunToGbase = (gunInstance,opts,doneCB) =>{
 
 
 }
-//GBASE INITIALIZATION
+//snap INITIALIZATION
 /*
 ---GUN SOULS---
 see ./util soulSchema
@@ -448,7 +448,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
     //would make first calls slower, but would make initial page loads more seamless. Otherwise chain can break and through errors, breaking the page.
     //propLoader would be a stripped down and simplified version of the data query buildResult part.
 
-    //need to have this function be like `enableBaseID` so everytime it fires, it will try to get all the aliases so gbase chain can navigate mutlitple baseIDs
+    //need to have this function be like `enableBaseID` so everytime it fires, it will try to get all the aliases so snap chain can navigate mutlitple baseIDs
     cb = (cb instanceof Function && cb) || function(){}
     gbBases.push(baseID)
     const get = gunGet(gun)
@@ -719,7 +719,7 @@ const prop = (path) =>{
         let newPath = makeSoul(Object.assign(pathO,{p:id}))
         if(!i){
             out = propChainOpt(newPath)
-        }else{//called prop from gbase.node(ID).prop(name)
+        }else{//called prop from snap.node(ID).prop(name)
             out = nodeValueOpt(newPath)
         }
         return out
@@ -775,7 +775,7 @@ const node = (path) =>{
 }
 
 //STATIC CHAIN OPTS
-function gbaseChainOpt(){
+function snapChainOpt(){
     return {newBase, 
         showgb, 
         showcache, 
@@ -4025,7 +4025,7 @@ function Query(path,userCB,sID){
         if(['string','number','symbol'].includes(typeof self.sID) && self.sID && self.runs === 1){//is valid type, truthy
             console.log('Setting up query: '+ sID)
             let kType = typeof self.sID === 'string' && `'${self.sID}'` || `${self.sID}`
-            console.log(`To remove this query: gbase.base('${self.b}').kill(${kType})`)
+            console.log(`To remove this query: snap.base('${self.b}').kill(${kType})`)
             setValue([self.b,self.sID],qParams,querySubs)
         }
         qParams.state = ''
@@ -4722,10 +4722,6 @@ function testRequest(root, request, testSoul){
 
 
 //NON CHAIN STUFF
-function loadGBaseConfig(cb){
-    reactConfigCB = cb
-
-}
 const {makegetAlias,makegetProps} = require('../util/util')
 const getAlias = makegetAlias(gb)
 const getProps = makegetProps(gb)
@@ -4872,11 +4868,9 @@ function treeReduceRight(startNodeID, method, acc, max){
 
 
 module.exports = {
-    loadGBaseConfig,
-    gbase,
-    gunToGbase,
+    snap,
+    gunToSnap,
     formatQueryResults,
-    addHeader,
     verifyPermissions,
     clientAuth,
     verifyClientConn,

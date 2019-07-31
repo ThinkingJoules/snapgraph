@@ -1,11 +1,7 @@
 "use strict";
 const {
-        buildRoutes,
-        loadGBaseConfig,
-        gbase,
-        gunToGbase,
-        formatQueryResults,
-        addHeader,
+        snap,
+        gunToSnap,
         verifyPermissions,
         clientAuth,
         verifyClientConn,
@@ -19,13 +15,9 @@ const { fnHelp }=require('./function_lib/functions')
 
 
 module.exports = {
-    buildRoutes,
-    loadGBaseConfig,
-    gbase,
+    snap,
     fnHelp,
-    formatQueryResults,
-    gunToGbase,
-    addHeader,
+    gunToSnap,
     verifyPermissions,
     clientAuth,
     verifyClientConn,

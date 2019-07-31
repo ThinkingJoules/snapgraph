@@ -1,12 +1,12 @@
-# gundb-gbase
-gundb-gbase is a wrapper around Gun(^0.2019.612)
+# snapgraph
+snapgraph is a wrapper around Gun(^0.2019.612)
 
-This is sort of a command line (or console if you expose gbase to window) tool to help organize and connect nodes in graph. It echoes of Neo4j, but approaches lables/node typing differently. This is currently a WIP so beware. Everything will change and data on disk will break.
+This is sort of a command line (or console if you expose snapgraph to window) tool to help organize and connect nodes in graph. It echoes of Neo4j, but approaches lables/node typing differently. This is currently a WIP so beware. Everything will change and data on disk will break.
 
 **[CLICK HERE TO GO DIRECTLY TO THE API DOCS!!](#api-docs)**
 
 # Features
-* Define nodeTypes with properties that gbase will enforce such as uniqueness*, data type, incrementing*, etc,
+* Define nodeTypes with properties that snapgraph will enforce such as uniqueness*, data type, incrementing*, etc,
 * Indexing nodes by adding 'Labels'
 * Relating nodes with a relationship
 * Basic queries and graph traversal (API works, but is messy)
@@ -24,10 +24,10 @@ ____
 TODO MAKE README INTO STARTUP GUIDE  
 MOVE ALL APIs INFO TO SEPERATE DOCS??
 
-## Loading gun instance in to gbase
+## Loading gun instance in to snapgraph
 ```
 import Gun from 'gun/gun';
-import {gunToGbase, gbase} from 'gundb-gbase'
+import {gunToSnap, snap} from 'snapgraph'
 
 
 let opt = {}
@@ -36,19 +36,19 @@ let gun = Gun(opt);
 
 let bases = ['someID']
 let full = true //default false, if true it will load ALL configs for the baseID supplied
-gunToGbase(gun,{bases,full},()=>{console.log('gbase chain.api ready!)});
+gunToSnap(gun,{bases,full},()=>{console.log('snap chain.api ready!)});
 ```
 ## Creating a new Base
 SEE [.newBase() API](#newBase)
 
-## gbase chain
+## snap chain
 This is slightly different than the gun.chain api, but the general point is the same. The chain commands change as you traverse the api, for example:
 ```
-//using gbase identifiers
-gbase.base('B123456abcdef').nodeType('1tso3').node('!B123456abcdef#1tso3$so3d_239432').subscribe(data => console.log(data))
+//using snap identifiers
+snap.base('B123456abcdef').nodeType('1tso3').node('!B123456abcdef#1tso3$so3d_239432').subscribe(data => console.log(data))
 
 //using the aliases the user specified
-gbase.base('Cool Database').nodeType('People').node('!B123456abcdef#1tso3$so3d_239432').subscribe(data => console.log(data))
+snap.base('Cool Database').nodeType('People').node('!B123456abcdef#1tso3$so3d_239432').subscribe(data => console.log(data))
 
 
 ```
@@ -56,9 +56,9 @@ gbase.base('Cool Database').nodeType('People').node('!B123456abcdef#1tso3$so3d_2
 ### Change Base/NodeType/Property Name
 .config(Obj) will change the configuration settings of the current chain head.
 ```
-gbase.base(BaseID).config({alias: 'New Name'})//Base Name
-gbase.base(BaseID).nodeType(type).config({alias: 'New Type Name'})//NodeType Name
-gbase.base(BaseID).nodeType(tval).prop(pval).config({alias: 'New Property Name'})//Table Name
+snap.base(BaseID).config({alias: 'New Name'})//Base Name
+snap.base(BaseID).nodeType(type).config({alias: 'New Type Name'})//NodeType Name
+snap.base(BaseID).nodeType(tval).prop(pval).config({alias: 'New Property Name'})//Table Name
 ```
 
 ## Adding NodeType(or Relations)/Properties/Nodes
@@ -71,11 +71,11 @@ SEE [.importNewNodeType() API](#importNewNodeType)
 
 # Functions
 ## and derived data (out of date, but intent is to make something like this)
-GBase supports functions that can pull data from one layer down (or above) and do math and put the result in the column specified with the function.
+Snap supports functions that can pull data from one layer down (or above) and do math and put the result in the column specified with the function.
 ```
 let BaseID = b123
 let userFN = 'SUM({b123/t3/p2},{b123/t3/p4}) * {b123/t3/p6.b123/t5/p1}'
-gbase.base(BaseID).table('t3').column('p5').config({GBtype: 'function', fn: userFN})
+snap.base(BaseID).table('t3').column('p5').config({propType: 'function', fn: userFN})
 
 let b123/t3/r8 = {p0: 'Row 8', p2: 2, p4: 2 p6:[b123/t5/r13]}
 let b123/t5/r13 = {p0: 'Row 13', p1:3}
@@ -110,7 +110,7 @@ Functions are completed in this order:
 #### Functions (helper)
 ```
 //in your function config component
-import {fnOptions, fnHelp} from 'gundb-gbase'
+import {fnOptions, fnHelp} from 'snapgraph'
 
 
 //You only need to know the baseID and the table tVal to determine what other tables/columns you can use in your a fn.
@@ -140,7 +140,7 @@ fnHelp(SUM) => [first element will be describing the aruments for that function,
 ____________________________________________
 
 ## **Key Concepts**
-There are 2 types of nodes in gbase.
+There are 2 types of nodes in snapgraph.
 * nodeTypes (Things) - These are the nodes in the graph
 * Relationships - These are the edges  
 
@@ -196,26 +196,26 @@ Non-chain helper APIs
 
 
 
-# **gbase Chain -Basic APIs-**
+# **snap Chain -Basic APIs-**
 There are `.ls()` and `.help()` functions you can try to access in console to help understand the api chain
 ```
-gbase.help() //show you your current options and commands to pick from
+snap.help() //show you your current options and commands to pick from
 
-gbase.ls() //should give you all available bases that will work in `.base()` api.
+snap.ls() //should give you all available bases that will work in `.base()` api.
 
 commands themselves should (or will) have a `.help()` log as well like:
-gbase.node.help()
+snap.node.help()
 
 ```
-**You should only really need to know the baseID (basically namespace) you want to look at on the graph, gbase will get everything below it for you and help you through it with the `.ls()` command**
+**You should only really need to know the baseID (basically namespace) you want to look at on the graph, snap will get everything below it for you and help you through it with the `.ls()` command**
 ________
 ## Chain Constructors
-### gbase
-**gbase**  
+### snap
+**snap**  
 This is the chain origination
 Example usage:
 ```
-gbase
+snap
 ```
 chain options:  
 [.base()](#base)  
@@ -229,19 +229,19 @@ chain options:
 ________
 ### base
 **base(*\*baseName*)**  
-Arugment is optional **IF** you only have loaded a single base config to your current gbase chain  
+Arugment is optional **IF** you only have loaded a single base config to your current snap chain  
 `baseName = 'Base Alias' || 'baseID`  
-**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+**NOTE**: There is a list function that can be accessed like: `snap.base().ls()`  
 It will give you all valid options that this api will accept.
 
 Example usage:
 ```
 let baseID = B123 //alias of 'ACME Inc.'
 
-gbase.base('ACME Inc.')
+snap.base('ACME Inc.')
 
-gbase.base() //if on startup you specified {bases:[baseID]} (only 1 base)
-//OR only specified one after startup with gbase.getConfig('!'+baseID)
+snap.base() //if on startup you specified {bases:[baseID]} (only 1 base)
+//OR only specified one after startup with snap.getConfig('!'+baseID)
 
 
 ```
@@ -259,12 +259,12 @@ ________
 **nodeType( *\*type* )**  
 Argument is required  
 `type = 'Type Alias' || 'typeID`  
-**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+**NOTE**: There is a list function that can be accessed like: `snap.base().ls()`  
 It will give you all api options to go down in to the next level.
 
 Example usage:
 ```
-gbase.base('ACME Inc.').nodeType('Items')
+snap.base('ACME Inc.').nodeType('Items')
 
 ```
 chain options:  
@@ -283,12 +283,12 @@ ________
 **relation( *\*type* )**  
 Argument is required  
 `type = 'Type Alias' || 'typeID`  
-**NOTE**: There is a list function that can be accessed like: `gbase.base().ls()`  
+**NOTE**: There is a list function that can be accessed like: `snap.base().ls()`  
 It will give you all api options to go down in to the next level.
 
 Example usage:
 ```
-gbase.base('ACME Inc.').relation('PURCHASED')
+snap.base('ACME Inc.').relation('PURCHASED')
 
 ```
 chain options:  
@@ -306,11 +306,11 @@ Argument is required
 
 **WARNING** *`.prop()` api is used in two different contexts!! First is in the context of the nodeType or relation (What these docs show). The other returns the same chain options as [.node(address)](#node) see that api for usage*  
 
-**NOTE**: There is a list function that can be accessed like: `gbase.base().nodeType(typeID).ls()`  
+**NOTE**: There is a list function that can be accessed like: `snap.base().nodeType(typeID).ls()`  
 It will give you all valid options that this api will accept.
 Example usage:
 ```
-gbase.base('ACME Inc.').nodeType('Items').prop('Part Number')
+snap.base('ACME Inc.').nodeType('Items').prop('Part Number')
 
 ```
 chain options for **nodeType** context:  
@@ -333,11 +333,11 @@ Example usage (all of these calls do the **exact** same thing):
 let nodeID = '!baseID#typeID$instanceID'
 let address = '!baseID#typeID.propID$instanceID' // propID is for 'Cost'
 
-gbase.base('ACME Inc.').nodeType('Items').node(nodeID).edit({Cost: '$10'})
-gbase.node(nodeID).edit({Cost: '$10'})
-gbase.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Cost').edit('$10')
-gbase.node(nodeID).prop('Cost').edit('$10')
-gbase.node(address).edit('$10')
+snap.base('ACME Inc.').nodeType('Items').node(nodeID).edit({Cost: '$10'})
+snap.node(nodeID).edit({Cost: '$10'})
+snap.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Cost').edit('$10')
+snap.node(nodeID).prop('Cost').edit('$10')
+snap.node(address).edit('$10')
 
 ```
 chain options for **nodeID** context:  
@@ -370,7 +370,7 @@ The alias of the base is **NOT** unique. The namespacing is the baseID, and sinc
 
 Example usage:
 ```
-gbase.newBase({alias:'ACME Inc.'},false,cb)
+snap.newBase({alias:'ACME Inc.'},false,cb)
 //cb returns: baseID
 
 ```
@@ -391,7 +391,7 @@ For more info on the valid keys and what they do in the configObj [see config](#
 Example usage:
 ```
 //assume: 'ACME Inc.' has a baseID = "B123"
-gbase
+snap
   .base('ACME Inc.')
   .newNodeType({alias:'Items'},cb,[{alias:'Part Number'},{alias: 'Cost'}])
 
@@ -399,7 +399,7 @@ function cb(value){
   value = Error Object || new ID for this nodeType
 }
 ```
-[baseID, configObj? Read here](#gbase-vocab)  
+[baseID, configObj? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -417,7 +417,7 @@ For more info on the valid keys and what they do in the configObj [see config](#
 Example usage:
 ```
 //assume: 'ACME Inc.' has a baseID = "B123"
-gbase
+snap
   .base('ACME Inc.')
   .relation({alias:'PURCHASED'},cb,[{alias:'Purchase Date',propType: 'date'}])
 
@@ -425,7 +425,7 @@ function cb(value){
   value = Error Object || new ID for this nodeType
 }
 ```
-[configObj? Read here](#gbase-vocab)  
+[configObj? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -436,11 +436,11 @@ This is used to index/filter/query your nodeType's given certain tags. You must 
 
 Example usage:
 ```
-gbase.base('ACME Inc.').addLabel('Pending',function(id){
+snap.base('ACME Inc.').addLabel('Pending',function(id){
   id = new ID for 'Pending' || Error
 })
 ```
-[label, state? Read here](#gbase-vocab)  
+[label, state? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -453,7 +453,7 @@ If you give the configObj.id a value, then it must be unique across all IDs
 
 Example usage:
 ```
-gbase.base('ACME Inc.').nodeType('Items').addProp({alias:'Cost',dataType:'number'},(err,value) =>{
+snap.base('ACME Inc.').nodeType('Items').addProp({alias:'Cost',dataType:'number'},(err,value) =>{
   if(err){//err will be falsy (undefined || false) if no error
     //value = undefined
     //handle err
@@ -463,7 +463,7 @@ gbase.base('ACME Inc.').nodeType('Items').addProp({alias:'Cost',dataType:'number
   }
 })
 ```
-[baseID, t0, pval? Read here](#gbase-vocab)  
+[baseID, t0, pval? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -476,18 +476,18 @@ Note: A null node will be created if no dataObj provided
 Example usage:
 ```
 //assume: 'ACME Inc.' has a baseID = "B123" and "Items" = "1t3ds2"
-gbase.base('ACME Inc.').nodeType('Items').newNode({name:'Anvil'})
+snap.base('ACME Inc.').nodeType('Items').newNode({name:'Anvil'})
 (can use the current alias for conveinence)
 
 OR
 (Preffered method)
-gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'})
+snap.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'})
 This will always work (if an alias changes the first method will fail)
 
 
 
 --With Data and CB--
-gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
+snap.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
   if(err){//err will be falsy (undefined || false) if no error
     //value = undefined
     //handle err
@@ -497,7 +497,7 @@ gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
   }
 })
 ```
-[rowID, rowAlias? Read here](#gbase-vocab)  
+[rowID, rowAlias? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -519,18 +519,18 @@ node @ NODE1 looks like:
 {Name: 'Anvil', Color: 'Gray', Cost: '$10'}
 
 //inherit (reference data on context node)
-gbase.node(NODE1).newFrom(false,function(newID){
-  gbase.node(NODE1).edit({Cost:'$15'})//change original
+snap.node(NODE1).newFrom(false,function(newID){
+  snap.node(NODE1).edit({Cost:'$15'})//change original
 
-  gbase.node(newID).retrieve()// will look like:
+  snap.node(newID).retrieve()// will look like:
   {Name: 'Anvil', Color: 'Gray', Cost: '$15'}//change shows up in new node
 },false)
 
 //own:true (copy data to new node)
-gbase.node(NODE1).newFrom(false,function(newID){
-  gbase.node(NODE1).edit({Cost:'$15'})//change original
+snap.node(NODE1).newFrom(false,function(newID){
+  snap.node(NODE1).edit({Cost:'$15'})//change original
 
-  gbase.node(newID).retrieve()// will look like:
+  snap.node(newID).retrieve()// will look like:
   {Name: 'Anvil', Color: 'Gray', Cost: '$10'}//change does not effect new node
 },{own:true})
 
@@ -542,23 +542,23 @@ node @ NODE2 looks like:
 {Name: 'Anvil #2', Color: ${NODE1.Color}, Cost: ${NODE1.Cost}}
 
 //default
-gbase.node(NODE2).newFrom(false,function(newID){
-  gbase.node(NODE1).edit({Cost:'$15'})//change original
+snap.node(NODE2).newFrom(false,function(newID){
+  snap.node(NODE1).edit({Cost:'$15'})//change original
 
   newID will inherit like:
   {Name: ${NODE2.Name}, Color: ${NODE2.Color}, Cost: ${NODE2.Cost}}
 },false)
 
 //mirror:true
-gbase.node(NODE2).newFrom(false,function(newID){
-  gbase.node(NODE1).edit({Cost:'$15'})//change original
+snap.node(NODE2).newFrom(false,function(newID){
+  snap.node(NODE1).edit({Cost:'$15'})//change original
 
   newID will inherit like:
   {Name: ${NODE2.Name}, Color: ${NODE1.Color}, Cost: ${NODE1.Cost}}
 },false)
 
 ```
-[nodeID? Read here](#gbase-vocab)  
+[nodeID? Read here](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -585,21 +585,21 @@ nodeID = '!B123#1t2o3$abcd'
 address = '!B123#1t2o3.3p3kd$abcd'
 
 //because the nodeID or address contains all context, we can skip the middle bits
-gbase.node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
-gbase.node(address).edit("Anvils 'r us")
+snap.node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+snap.node(address).edit("Anvils 'r us")
 
 
 //However, the long api is still valid
-gbase.base('ACME Inc.').nodeType('Items').node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
+snap.base('ACME Inc.').nodeType('Items').node(nodeID).edit({'Vendor': 'Anvils 'r Us'})
 
-gbase.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Vendor').edit("Anvils 'r us")
+snap.base('ACME Inc.').nodeType('Items').node(nodeID).prop('Vendor').edit("Anvils 'r us")
 
-gbase.base('ACME Inc.').nodeType('Items').node(address).edit("Anvils 'r us")
+snap.base('ACME Inc.').nodeType('Items').node(address).edit("Anvils 'r us")
 
 
 
 --With Data and CB--
-gbase.node(address).edit("Anvils 'r us", (err,value) =>{
+snap.node(address).edit("Anvils 'r us", (err,value) =>{
   if(err){//err will be falsy (undefined || false) if no error
     //value = undefined
     //handle err
@@ -609,7 +609,7 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
   }
 })
 ```
-[nodeID, address? Read here to understand the terminology used.](#gbase-vocab)  
+[nodeID, address? Read here to understand the terminology used.](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -629,10 +629,10 @@ NODE1 = '!B123#1t2o3$abcd' // some 'Customer'
 NODE2 = '!B123#2tdr3$efgh' // some ' Item'
 Relation = 'Purchased'
 
-gbase.node(NODE1).relatesTo(NODE2,Relation,{Purchase Date: Date.now()})
+snap.node(NODE1).relatesTo(NODE2,Relation,{Purchase Date: Date.now()})
 
 ```
-[nodeID? Read here to understand the terminology used.](#gbase-vocab)  
+[nodeID? Read here to understand the terminology used.](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -644,14 +644,14 @@ callBack and queryArr is required, others are optional Defaults:
 `udSubID = Symbol()` If you give it a subID, then be sure it is unique across all of your subscription
 
 Subscribe will fire the callback with the **entire** data set that matches that query on every change.  
-**\*Because gbase caches the data, the node objects themselves will be the same objects, so be sure to not to mutate them!**
+**\*Because snap caches the data, the node objects themselves will be the same objects, so be sure to not to mutate them!**
 
 * **resultArr** - depends on queryArr options, but default is: `[[{}]]`   
 `resultArr[0] = [{},{},{}]` This is the first matching 'path' (based on your match and return statements)
 `resultArr[0][0] = {prop1: value, prop2: value}`
 `resultArr[0][0].prop1 = value`
 
-The *`udSubID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows gbase to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
+The *`udSubID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows snap to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
 
 Data loading and the callBack: Depending on the state of the database and how much data is already loaded the callBack will fire immediately if it has all the data in memory.
 
@@ -671,7 +671,7 @@ let RETURN = [
   {x:{props:['Vendor','Part Number']}}
   ]
 let queryArr = [{CYPHER},{RETURN}]
-let sub = gbase.base('ACME Inc.').subscribeQuery(function(data){
+let sub = snap.base('ACME Inc.').subscribeQuery(function(data){
   if(!Array.isArray(data))handleErr(data)
   else //success
   //data = [
@@ -679,7 +679,7 @@ let sub = gbase.base('ACME Inc.').subscribeQuery(function(data){
     [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
 }, queryArr,'forUIView')
 ```
-[Read here to understand the terminology used.](#gbase-vocab)  
+[Read here to understand the terminology used.](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -710,7 +710,7 @@ Subscribe will fire the callback with the **entire** data set that matches that 
 The results will be sorted first based on the nodeArr order and if there are multiple paths for that node, it will then sort by the length of the 'path'.  
 **NOTE** If you 'returnAs: nodes' you will get the last element in the 'path' array. 'returnAs: relationships' will give you all the odd elements in the 'path' array.  
 
-The *`subID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows gbase to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
+The *`subID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows snap to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
 
 Data loading and the callBack: Depending on the state of the database and how much data is already loaded the callBack will fire immediately if it has all the data in memory.  
 
@@ -743,7 +743,7 @@ Example usage:
 nodeID = '!B123#1t2o3$abcd' //could have been from another query.
 
 let expandParams = {limit:10, relationshipFilter:['FRIENDS_WITH']}
-let sub = gbase.base('ACME Inc.').subscribeExpand([nodeID],function(data){
+let sub = snap.base('ACME Inc.').subscribeExpand([nodeID],function(data){
   if(!Array.isArray(data))handleErr(data)
   else //success
   //data = [
@@ -751,7 +751,7 @@ let sub = gbase.base('ACME Inc.').subscribeExpand([nodeID],function(data){
     [nodeID2]]
 }, expandParams,'forUIView')
 ```
-[Read here to understand the terminology used.](#gbase-vocab)  
+[Read here to understand the terminology used.](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 _________
@@ -772,10 +772,10 @@ callBack is required, others are optional Defaults:
 `opts = {}` See below for options
 
 **WARNING** subscribe is used in **4** ways and the options vary for each.
-* `gbase.base(baseID).nodeType('Items').subscribe()` **[nodeType subscription](#nodeType-subscription)** 
-* `gbase.base(baseID).nodeType('Items').prop('Part Number).subscribe()` **[property subscription](#property-subscription)** 
-* `gbase.node(nodeID).subscribe()` **[node subscription](#node-subscription)** 
-* `gbase.node(address).subscribe()` **[address subscription](#address-subscription)** 
+* `snap.base(baseID).nodeType('Items').subscribe()` **[nodeType subscription](#nodeType-subscription)** 
+* `snap.base(baseID).nodeType('Items').prop('Part Number).subscribe()` **[property subscription](#property-subscription)** 
+* `snap.node(nodeID).subscribe()` **[node subscription](#node-subscription)** 
+* `snap.node(address).subscribe()` **[address subscription](#address-subscription)** 
 
 #### nodeType subscription  
 **This is just a wrapper around [subscribeQuery](#subscribeQuery)**
@@ -790,23 +790,23 @@ callBack is required, others are optional Defaults:
 | limit | Infinity | number | limit total results to 'x' |  |
 | idOnly | FALSE | boolean | Don't return properties, but perform full query returning only the id's | You can specify properties, and it will generate addresses for them in the metaData |
 | returnAsArray | FALSE | boolean | {prop1:value1} or [value1] | For building tables easier |
-| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead |  |
+| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the snap id for that prop instead |  |
 | noID | FALSE | boolean | On the nodeObj there is a non-enumerable '.id' property, this omits it. |  |
 | noAddress | FALSE | boolean | same as 'noID', but for the '.address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
 | noInherit | FALSE | boolean | On the nodeObj there is a non-enumerable '.inherit' property, this omits it.|  |
 | raw | FALSE | boolean | Apply formatting per the configs.format |  |
-| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in snap. | Should be sufficiently unique |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
 | labels | FALSE | array | subset of nodes that have these tags | will implement not tags as well. |
 | filter | FALSE | string |  '{property} > 3' Will sub {} with actual value | Uses the [function library](function-library) |
 | range | FALSE | object | {from: unix, to:unix} | Many options, see the [query section](#query) |
-| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the gbase ID |  |
+| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the snap ID |  |
 
 #### property subscription  
 This is exactly the same as [nodeType subscription](#nodeType-subscription) except that it ignores the `props` option and only returns the property in context. All other options apply.
 
 #### node subscription
-This is technically a wrapper around the internal gbase address subscription.
+This is technically a wrapper around the internal snap address subscription.
 Returns either an array or an object, depending on options (below).
 
 **This caches the object, so each return is the SAME object, be careful not to mutate!**
@@ -816,11 +816,11 @@ Only the last two opts are different than the [nodeType subscription](#nodeType-
 | Opts[key] | default | typeof | usage | Notes |
 |---------------|-----------------------------------|----------------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | returnAsArray | FALSE | boolean | {prop1:value1} or [value1] | For building tables easier |
-| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead |  |
+| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the snap id for that prop instead |  |
 | noID | FALSE | boolean | On the nodeObj there is a non-enumerable |  |
 | noAddress | FALSE | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
 | raw | FALSE | boolean | Apply formatting per the configs.format |  |
-| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in snap. | Should be sufficiently unique |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
 | propAs | FALSE | object | A temporarily different alias for the prop | Current alias or ID as key, value as value for this subscription. **DIFFERENT FORMAT FROM propAs in subscribeQuery** |
 | partial | FALSE | boolean | If true and returnAsArray = false, will give partial updates | Will always return a single {key:value} per fire of callback |
@@ -831,7 +831,7 @@ Fires callback with new value on change and second arg as what address the value
 | Opts[key] | default | typeof | usage | Notes |
 |-----------|----------|----------------|------------------------------------------------------------------|-------------------------------|
 | raw | FALSE | boolean | Apply formatting per the configs.format |  |
-| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
+| subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in snap. | Should be sufficiently unique |
 
 Example usage:
 ```
@@ -845,7 +845,7 @@ address = '!B123#1t2o3.3p3kd$abcd'
 
 //nodeType subscribe
 let opts = {sortBy: ['Vendor','DESC'], limit: 10, props: ['Vendor','Part Number']}
-let sub = gbase.base('ACME Inc.').nodeType('Items').subscribe(function(data){
+let sub = snap.base('ACME Inc.').nodeType('Items').subscribe(function(data){
   if(!Array.isArray(data))handleErr(data)
   else //success
   //data = [
@@ -853,32 +853,32 @@ let sub = gbase.base('ACME Inc.').nodeType('Items').subscribe(function(data){
     [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
 }, opts)
 ...
-gbase.base('ACME Inc.').nodeType('Items').kill(sub)
+snap.base('ACME Inc.').nodeType('Items').kill(sub)
 
 
 //node subscribe
 let opts = {props: ['Vendor','Part Number']}
-let sub = gbase.node(nodeID).subscribe(function(data){
+let sub = snap.node(nodeID).subscribe(function(data){
   if(data instanceof Error)handleErr(data)
   else //success
   //data = {Vendor: "Anvils 'r Us", 'Part Number': 'A123'}
 }, opts)
 ...
-gbase.node(nodeID).kill(sub)
+snap.node(nodeID).kill(sub)
 
 
 //address subscribe
 let opts = {subID: 'watchMe', raw:true}
-let sub = gbase.node(address).subscribe(function(data,fromAddr){
+let sub = snap.node(address).subscribe(function(data,fromAddr){
   if(data instanceof Error)handleErr(data)
   else //success
   //data = {Vendor: "Anvils 'r Us", 'Part Number': 'A123'}
   //fromAddr === address then value is not inherited
 }, opts)
 ...
-gbase.node(address).kill(sub)
+snap.node(address).kill(sub)
 ```
-[Read here to understand the terminology used.](#gbase-vocab)  
+[Read here to understand the terminology used.](#snap-vocab)  
 
 [BACK TO API LIST](#api-docs)
 
@@ -897,21 +897,21 @@ Example usage:
 let subID = 'abc'
 
 //configs
-gbase.base().getConfig(cb,{subID:subID})
-gbase.kill(subID) //configs are the only subscriptions without any chain context to kill
+snap.base().getConfig(cb,{subID:subID})
+snap.kill(subID) //configs are the only subscriptions without any chain context to kill
 
 //queries (anything that uses subscribeQuery underneath)
-gbase.base().nodeType('Items').subscribe(....{subID:subID})
-gbase.base().nodeType('Items').prop('Part Number').subscribe(....{subID:subID})
-gbase.base().kill(subID)
+snap.base().nodeType('Items').subscribe(....{subID:subID})
+snap.base().nodeType('Items').prop('Part Number').subscribe(....{subID:subID})
+snap.base().kill(subID)
 
 //nodes
-let subID = gbase.node(nodeID).subscribe()
-gbase.node(nodeID).kill(subID)
+let subID = snap.node(nodeID).subscribe()
+snap.node(nodeID).kill(subID)
 
 //addresses
-let subID = gbase.node(address).subscribe()
-gbase.node(address).kill(subID)
+let subID = snap.node(address).subscribe()
+snap.node(address).kill(subID)
 ```  
 [BACK TO API LIST](#api-docs)
 ______
@@ -1033,19 +1033,19 @@ Usage: This is what most of the configs are used in conjunction with. Below are 
 This can be any dataType. This is what most properties will be.
 
 * date  
-This is specifically a date type, which means GBase will index all the dates so querying by a date range is very efficient. This will convert all date objects to a unix string and store as a number (dataType will be changed to 'number'). If you supply a number, it will assume that it is the unix time you are wanting to specify.
+This is specifically a date type, which means Snap will index all the dates so querying by a date range is very efficient. This will convert all date objects to a unix string and store as a number (dataType will be changed to 'number'). If you supply a number, it will assume that it is the unix time you are wanting to specify.
 * function  
 This is used in conjunction with the 'fn' config. See [functions for more info](#functions)
 * pickList  
 Used in conjunction with 'pickOptions' and 'allowMultiple' to evaluate incoming edits.
 * state  
-This is a special property that GBase adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'STATE'. 
+This is a special property that Snap adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'STATE'. 
 * labels  
-This is only on nodeTypes (not relations). It is a special property that GBase adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'LABELS'. 
+This is only on nodeTypes (not relations). It is a special property that Snap adds to all nodes. The default is 'hidden:true' so it is not returned in queries unless specified. It's ID will be 'LABELS'. 
 * source  
-This is only on relations (not nodeTypes). It is a special property that GBase adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'SRC'. 
+This is only on relations (not nodeTypes). It is a special property that Snap adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'SRC'. 
 * target  
-This is only on relations (not nodeTypes). It is a special property that GBase adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'TRGT'.  
+This is only on relations (not nodeTypes). It is a special property that Snap adds to all nodes. The default is 'hidden:false' so it **is** returned in queries requesting 'all active' props. It's ID will be 'TRGT'.  
 
 #### required
 Type: boolean   
@@ -1063,7 +1063,7 @@ cb will fire with the config object for the chain context or for the path provid
 
 ```
 opts = {
-  path: '!'+baseID (for adding a new base to this gbase chain) || nodeID(for that type config) || address(for that property config)
+  path: '!'+baseID (for adding a new base to this snap chain) || nodeID(for that type config) || address(for that property config)
 
   subID: If provided, will subscribe and fire callback with full config object at each change
 
@@ -1075,23 +1075,23 @@ Example usage:
 There are a couple ways to use.
 ```
 //To add a new base to the api chain:
-gbase.getConfig(cb,{path:'!B123'}) // if B123 was already mounted to this chain, it would return it't configs
+snap.getConfig(cb,{path:'!B123'}) // if B123 was already mounted to this chain, it would return it't configs
 
 //To get by context
-gbase.base('B123').nodeType('Items').getConfig(cb)
+snap.base('B123').nodeType('Items').getConfig(cb)
 
 //To get by path
 nodeID = '!B123#1t2o3$abcd'
-gbase.getConfig(cb,{path: nodeID, subID: 'forUI'}) //Will subscribe the nodeType config object
+snap.getConfig(cb,{path: nodeID, subID: 'forUI'}) //Will subscribe the nodeType config object
 ...
-gbase.kill('forUI') //config subs are not namespaced by path. It is the only subscription that can killed without context.
+snap.kill('forUI') //config subs are not namespaced by path. It is the only subscription that can killed without context.
 
 ```
 ________
-## **gbase chain - Import APIs -**
+## **snap chain - Import APIs -**
 ### importNewNodeType
 **importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
-This api is for importing a new node type in to gbase, building the configs from the data.
+This api is for importing a new node type in to snap, building the configs from the data.
 
 tsv || array = should have a single header row for the properties on each node.  Should be 2D `[[headerRow],[dataRow1],[dataRow2],etc]`
 configObj = for this nodeType (not any of the properties). For more info see [config options](#config-options).
@@ -1101,7 +1101,7 @@ cb = function(error||undefined). If there is an error, the cb will fire with an 
 Usage:
 
 ```
-gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
+snap.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
 ```
 [BACK TO API LIST](#api-docs)
 __________
@@ -1122,7 +1122,7 @@ Usage:
 
 ```
 //data = [['User','hasFriend','since'],[userID,otherUserID,2003]]
-gbase.base(baseID).relation('FRIENDS_WITH').importRelationships(data,{People: 'User'},{People: 'hasFriend'}false,console.log)
+snap.base(baseID).relation('FRIENDS_WITH').importRelationships(data,{People: 'User'},{People: 'hasFriend'}false,console.log)
 ```
 **NOTE** In example above, the 'since' property will be created if it is not found on the 'FRIENDS_WITH' relationship type.  
 
@@ -1130,17 +1130,17 @@ gbase.base(baseID).relation('FRIENDS_WITH').importRelationships(data,{People: 'U
 __________
 
 
-## GBase Helper Functions
+## Snap Helper Functions
 
 # Query
-Currently query is really messy. This may change and will probably be the most fragile part of the gbase api.
-**Below are the arguments for `subscribeQuery(cb,**queryArr**)`, however `gbase.base().nodeType().subscribe()` uses these same arguments, they are formatted in a more conveient object to pass in.**
+Currently query is really messy. This may change and will probably be the most fragile part of the snap api.
+**Below are the arguments for `subscribeQuery(cb,**queryArr**)`, however `snap.base().nodeType().subscribe()` uses these same arguments, they are formatted in a more conveient object to pass in.**
 
 Currently all queries need to have at least a single [CYPHER](#cypher) statement and a single [RETURN](#return) statement. The other arguments [STATE](#state), [RANGE](#range), [FILTER](#filter) are optional.
 
 Below we will be creating a single query thoughout all of the examples here is the data they are searching through:  
 
-Note: 'Joined' is a gbase propType = 'date', is actually a unix number.
+Note: 'Joined' is a snap propType = 'date', is actually a unix number.
 (a:Person {Name: 'Alice', Age: 34, Joined: 8/15/18})  
 (b:Person {Name: 'Bob',   Age: 35, Joined: 1/18/19})  
 (c:Person {Name: 'Carol', Age: 33, Joined: 4/26/19})  
@@ -1208,14 +1208,14 @@ Will take the shape of `{[elementName]: configs}` Below is the options for the '
 | configs[key] | default | typeof | usage | Notes |
 |---------------|-----------------------------------|---------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
 | returnAsArray | FALSE | boolean | {prop1:value1} or [value1] | For building tables easier |
-| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead | {Name: 'Bob'} vs {2p2j3: 'Bob'} (latter is how it is stored in the database) |
+| propsByID | FALSE | boolean | Default is to return using the current alias, can return using the snap id for that prop instead | {Name: 'Bob'} vs {2p2j3: 'Bob'} (latter is how it is stored in the database) |
 | noID | FALSE | boolean | On the nodeObj there is an 'id' non-enumerable property with the nodeID | data[0][0] = {Name: 'Bob'}  data[0][0].id = '!baseID#1t3k$10d_3993' |
 | noAddress | FALSE | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
 | noInherit | FALSE | boolean | On the nodeObj there is a non-enumerable '.inherit' property, this omits it.|  |
 | raw | FALSE | boolean | Apply formatting per the configs.format | See [format options](#format-options) |
 | idOnly | FALSE | boolean | Don't return properties, but only the ID for this particular element | You can specify properties, and it will generate addresses for them in the metaData |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
-| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the gbase ID |  |
+| humanID | FALSE | boolean | If idOnly:true and humanID:true then it will return the humanID in an array instead of the snap ID |  |
 
 Full Cypher argument:
 ```
@@ -1230,7 +1230,7 @@ let returnArg = {RETURN:
 }
 queryArr.push(returnArg)
 
-gbase.base(baseID).subscribeQuery(function(data){
+snap.base(baseID).subscribeQuery(function(data){
   data = [
   [{Name: 'Alice', Age: 34}],
   [{Name: 'Bob', Age: 35}],
@@ -1289,7 +1289,7 @@ queryArr.push(returnArg)
 let range = {RANGE:['p',{Joined:{from:new Date(1/1/19).getTime()}}]}
 queryArr.push(range)
 
-gbase.base(baseID).subscribeQuery(function(data){
+snap.base(baseID).subscribeQuery(function(data){
   data = [
   [{Name: 'Bob', Age: 35}],
   [{Name: 'Carol', Age: 33}]
@@ -1323,7 +1323,7 @@ queryArr.push(range)
 let filter = {FILTER:['{Age} > 33']}
 queryArr.push(filter)
 
-gbase.base(baseID).subscribeQuery(function(data){
+snap.base(baseID).subscribeQuery(function(data){
   data = [
   [{Name: 'Bob', Age: 35}]
   ]
@@ -1365,7 +1365,7 @@ let state = {STATE: {p:['active','archived']}}
 queryArr.push(state)
 
 
-gbase.base(baseID).subscribeQuery(function(data){
+snap.base(baseID).subscribeQuery(function(data){
   data = [
   [{Name: 'Bob', Age: 35}]
   ]
@@ -1375,16 +1375,16 @@ gbase.base(baseID).subscribeQuery(function(data){
 _________
 
 
-# GBase Vocab
-GBase has many concepts that are referenced in the docs. Here are some definitions:
+# snap Vocab
+Snap has many concepts that are referenced in the docs. Here are some definitions:
 * **baseID**: The uuid/identifier of the base
-* **nodeID**: In gbase, this ID reference a **whole** node. ID will contain the following symbol identifiers !#$ for nodes !-$ for relations
-* **address**: In gbase, this ID reference a **single** property on a node. ID will contain the following symbol identifiers !#.$ for nodes !-.$ for relations. This is the level that gbase operates on.
-* **externalID**: This is the property that we are keeping values unique on as a secondary identifer to the gbase ID.
-* **path**: path is similar to we file path /baseID/ThingType/Prop would be equal to !baseID#Thing.Prop using the gbase identifiers. However /baseID/ThingType/Node/Prop would be in a different order (fixed ordering for gbase IDs) !baseID#ThingType.Prop$Node
+* **nodeID**: In snap, this ID reference a **whole** node. ID will contain the following symbol identifiers !#$ for nodes !-$ for relations
+* **address**: In snap, this ID reference a **single** property on a node. ID will contain the following symbol identifiers !#.$ for nodes !-.$ for relations. This is the level that snap operates on.
+* **externalID**: This is the property that we are keeping values unique on as a secondary identifer to the snap ID.
+* **path**: path is similar to we file path /baseID/ThingType/Prop would be equal to !baseID#Thing.Prop using the snap identifiers. However /baseID/ThingType/Node/Prop would be in a different order (fixed ordering for snap IDs) !baseID#ThingType.Prop$Node
 * **Source**: This is part of how relationships are conceptualized. `"source"` is the node that is linking **to** another node. Thought of as 'outgoing' relation
 * **Target**: Opposite of 'source'. This has an 'incoming'  relation **from** a 'source' node.
-* **configObj**: Each 'level' to the database has a configuration object that governs how gbase acts and responds to data on that level. The base has a configObj, each nodeType and relation has it's own configObj, and every property has it's own configObj. These are what the [.config()` api](#config) operates on.
+* **configObj**: Each 'level' to the database has a configuration object that governs how snap acts and responds to data on that level. The base has a configObj, each nodeType and relation has it's own configObj, and every property has it's own configObj. These are what the [.config()` api](#config) operates on.
 
 ### FAQs
 Will fill this out as I receive feedback.

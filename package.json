@@ -1,14 +1,14 @@
 {
-  "name": "gundb-gbase",
+  "name": "snapgraph",
   "version": "0.2.1",
-  "description": "Used to help organize and define node types and their relations in GBase.",
+  "description": "Used to help organize and create a traversable graph structure.",
   "main": "index.js",
   "scripts": {
     "test": "\"echo \\\"Error: no test specified\\\" && exit 1\""
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ThinkingJoules/gundb-gbase.git"
+    "url": "git+https://github.com/ThinkingJoules/snapgraph.git"
   },
   "keywords": [
     "gun",
@@ -20,12 +20,10 @@
   "author": "ThinkingJoules",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ThinkingJoules/gundb-gbase/issues"
+    "url": "https://github.com/ThinkingJoules/snapgraph/issues"
   },
-  "homepage": "https://github.com/ThinkingJoules/gundb-gbase#readme",
+  "homepage": "https://github.com/ThinkingJoules/snapgraph#readme",
   "dependencies": {
-    "babel-preset-es2015": "^6.24.1",
-    "babel-preset-react": "^6.24.1",
     "gun": "^0.2019.413"
   }
 }
