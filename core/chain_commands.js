@@ -26,7 +26,8 @@ const{getValue,
     grabAllIDs,
     StringCMD,
     BASE,
-    lookupID
+    lookupID,
+    throwError
 
 } = require('./util')
 
@@ -161,7 +162,9 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => {
             let forGB = Object.assign({},configPuts[tCsoul],{props:{}})
             setValue(configPathFromChainPath(newPath),forGB,newGB)
             makeProp()
-        }},throwError)
+        }},function giveErr(errmsg){
+            if(errmsg)err = throwError(cb,errmsg)
+        })
 
         function handlePropCreation(o){
             propConfigArr.shift()
@@ -195,7 +198,9 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => {
             let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
             let newPpath = makeSoul({b,[relationOrNode]:tid,p:id})
             //console.log(pconfig)
-            handleConfigChange(gun,newGB,false,false,false,timeLog,false,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+            handleConfigChange(gun,newGB,false,false,false,timeLog,false,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},function (errmsg){
+                if(errmsg)err = throwError(cb,errmsg)
+            })
 
         }
         function done(){
@@ -209,14 +214,9 @@ const makenewNodeType = (gun, gb, timeLog) => (path,relationOrNode) => {
                 }
                 gun.get(csoul).put(cObj)
             }
-            cb.call(cb,tid,newGB)
+            cb.call(cb,false,tid,newGB)
         }
-        function throwError(errmsg){
-            let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-            err = error
-            console.log(error)
-            cb.call(cb,error)
-        }
+        
         function addToPut(soul,putObj){
             if(!toPut[soul])toPut[soul] = putObj
             else Object.assign(toPut[soul],putObj)
@@ -290,7 +290,9 @@ const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path) =
             ID=id
             let pconfig = (isNode) ? newNodePropConfig(nextPconfig) : newRelationshipPropConfig(nextPconfig)
             let newPpath = makeSoul({b,t,r,p:id})
-            handleConfigChange(gun,newGB,getCell,cascade,solve,timeLog,timeIndex,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},throwError)
+            handleConfigChange(gun,newGB,getCell,cascade,solve,timeLog,timeIndex,pconfig,newPpath,{isNew:true,internalCB:handlePropCreation},function (errmsg){
+                if(errmsg)err = throwError(cb,errmsg)
+            })
     
         }
         function done(){
@@ -303,13 +305,7 @@ const makeaddProp = (gun,gb,getCell,cascade,solve,timeLog,timeIndex) => (path) =
                 }
                 gun.get(csoul).put(cObj)
             }
-            cb.call(cb,undefined,ID)
-        }
-        function throwError(errmsg){
-            let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-            err = error
-            console.log(error)
-            cb.call(cb,error)
+            cb.call(cb,false,ID)
         }
         function addToPut(soul,putObj){
             if(!toPut[soul])toPut[soul] = putObj
@@ -517,19 +513,25 @@ gbase.node(NODE2).newFrom(false,function(newID){
 
 const makeaddLabel = (gun,gb) => (path)=>{
     const f = (function(labelName,cb){
-        cb = (cb instanceof Function && cb) || function(){}
-        let {b} = parseSoul(path)
-        let {labels} = getValue(configPathFromChainPath(path),gb)
-        let all = Object.entries(labels)
-        for (let i = 0; i < all.length; i++) {
-            const values = all[i];
-            if(values.includes(labelName))throw new Error(`Name already taken. ID: ${values[0]}`)
+        try {
+            cb = (cb instanceof Function && cb) || function(){}
+            let {b} = parseSoul(path)
+            let {labels} = getValue(configPathFromChainPath(path),gb)
+            let all = Object.entries(labels)
+            for (let i = 0; i < all.length; i++) {
+                const values = all[i];
+                if(values.includes(labelName))throw new Error(`Name already taken. ID: ${values[0]}`)
+            }
+            let idx = makeSoul({b,l:true})
+            let id = newID(gb,idx)
+            gun.get(idx).put({[id]:labelName},function(ack){
+                cb.call(cb,false,id)
+            })
+            
+        } catch (error) {
+            cb.call(cb,error)
         }
-        let idx = makeSoul({b,l:true})
-        let id = newID(gb,idx)
-        gun.get(idx).put({[id]:labelName},function(ack){
-            cb.call(cb,id)
-        })
+        
     })
     f.help = function(){
         let msg = 
@@ -572,7 +574,6 @@ const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
             try{
                 cb = (cb instanceof Function && cb) || function(){}
                 let {own} = opt || {}
-                let stateP = 'STATE'
                 if(p){
                     let {dataType} = getValue(configPathFromChainPath(path),gb)
                     let [nodeID,p] = removeP(path)
@@ -596,7 +597,7 @@ const makeedit = (gun,gbGet,getCell,cascade,timeLog,timeIndex) => (path) => {
                     console.log(e)
                     cb.call(cb,e) 
                 }
-                getCell(path,stateP,checkForState,true)
+                getCell(path,'STATE',checkForState,true)
             }catch(e){
                 console.log(e)
                 cb.call(this, e)
@@ -683,6 +684,7 @@ const makeperformExpand = (gbGet,setupQuery) => (path,isSub) =>{
                 setupQuery(path,queryArr,cb,true,subID)
             }catch(e){
                 console.warn(e)
+                cb.call(cb,e)
             }
         }
     })
@@ -722,6 +724,7 @@ const makeperformQuery = (gbGet,setupQuery) => (path,isSub) => {
                 setupQuery(path,queryArr,cb,true,subID)
             }catch(e){
                 console.warn(e)
+                cb.call(cb,e)
             }
         }
     })
@@ -802,7 +805,7 @@ const maketypeGet = (gbGet,setupQuery) => (path,isSub) => {
                 setupQuery(path,queryArr,cb,!!isSub,isSub && subID)
             }catch(e){
                 console.warn(e)
-                return e
+                cb.call(cb,e)
             }
         }
     })
@@ -860,7 +863,7 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
                 setValue([path,subID],{kill:function(){allSubs.map(x => x.kill())}},nodeSubs)
             }catch(e){
                 console.warn(e)
-                return e
+                cb.call(cb,e)
             }
         }
         
@@ -919,6 +922,7 @@ const makeaddressGet = (gbGet,getCell,subThing) => (path,isSub) =>{
                 subThing(path,cb,false,{raw})
             }catch(e){
                 console.warn(e)
+                cb.call(cb,e)
             }
         }
     })
@@ -1112,6 +1116,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
     const f = (function(tsv, configObj,opts, cb){//updated
         //gbase.base(baseID).importNewTable(rawTSV, 'New Table Alias')
         let {b} = parseSoul(path)
+        let err
         cb = (cb instanceof Function && cb) || function(){}
         let {labels} = opts
         let t = (typeof configObj === 'object') ? configObj.id : undefined
@@ -1129,7 +1134,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
         let colHeaders = dataArr[0]
         let [newParr, aliasLookup] = handleImportColCreation(altgb, path , colHeaders, dataArr[1],{externalID,labels, append:true})
         let externalIDidx = colHeaders.indexOf(externalID)
-        if(externalIDidx === -1 && externalID)throw new Error('Cannot find the external IDs specified')
+        if(externalIDidx === -1 && externalID)err = throwError(cb,'Cannot find the external IDs specified')
         if(externalIDidx !== -1){
             configObj.externalID = aliasLookup[externalID] //change externalID in config from the alias to the new pval
         }
@@ -1164,7 +1169,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
         let typeChange = Object.keys(invalidData)
         for (const pval of typeChange) {
             let {propType} = newParr[pval]
-            if(propType === 'labels')throw new Error('Cannot convert your label field to an array. Please check your data to make sure it can be converted to an array.')
+            if(propType === 'labels')err = throwError(cb,'Cannot convert your label field to an array. Please check your data to make sure it can be converted to an array.')
             newParr[pval].dataType = 'string'
             newParr[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
         }
@@ -1199,8 +1204,9 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
         function done(){
             //console.log({newParr,result})
             //return
-            makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newGB){
-                if(!(err instanceof Error)){
+            if(err)return
+            makenewNodeType(gun,gb,timeLog)(path,'t')(configObj,function(err,newID,newGB){
+                if(!err){
                     console.log(newGB)
                     for (const newSoul in result) {
                         let put = result[newSoul]
@@ -1208,7 +1214,7 @@ const makeimportNewNodeType = (gun,gb,timeLog,timeIndex,getCell) => (path) => {
                             //console.log('put errors',newSoul,err)
                         })
                     } 
-                    cb.call(cb,undefined)
+                    cb.call(cb,false)
                 }else{
                     console.log(err)
                     cb.call(cb,err)
@@ -1245,6 +1251,7 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
         let [[srcType, srcHeader]] = Object.entries(srcArgs)
         let [[trgtType, trgtHeader]] = Object.entries(trgtArgs)
         let gb = gbGet()
+        let err
         srcType = lookupID(gb,srcType,makeSoul({b}))
         trgtType = lookupID(gb,trgtType,makeSoul({b}))
         if([srcType,trgtType].includes(undefined))throw new Error('Cannot find src and/or trgt IDs')
@@ -1275,7 +1282,7 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
             let {externalID:srcID} = getValue(configPathFromChainPath(makeSoul({b,t:srcType})),altgb)
             let {externalID:trgtID} = getValue(configPathFromChainPath(makeSoul({b,t:trgtType})),altgb)
 
-            if([undefined,null,''].includes(srcID) || [undefined,null,''].includes(trgtID))throw new Error('Both source and target nodeTypes MUST have externalIDs in order to import relationships')
+            if([undefined,null,''].includes(srcID) || [undefined,null,''].includes(trgtID))err = throwError(cb,'Both source and target nodeTypes MUST have externalIDs in order to import relationships')
             getList(makeSoul({b,t:srcType,p:srcID}),function(data){
                 sourceIDs = data
                 toGet--
@@ -1380,7 +1387,7 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
                 let typeChange = Object.keys(invalidData)
                 for (const pval of typeChange) {
                     let exists = getValue(configPathFromChainPath(makeSoul({b,r,p:pval})),gb)
-                    if(exists && exists.dataType !== 'string')throw new Error('Existing property is already set, new data does not conform to that. On property: '+pval)
+                    if(exists && exists.dataType !== 'string')err = throwError(cb,'Existing property is already set, new data does not conform to that. On property: '+pval)
                     newParr[pval].dataType = 'string'
                     newParr[pval].propType = 'data' //probably already is, but could be 'date' and 'number'
                 }
@@ -1389,6 +1396,7 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
             function done(){
                 //console.log('DONE',{newParr,result,altgb,aliasLookup})
                 //return
+                if(err)return
                 for (const propObj of newParr) {
                     if(propObj.id){//only the new ones should have an id property added
                         makeaddProp(gun,gb,getCell,false,false,timeLog,timeIndex)(path)(propObj)
@@ -1400,7 +1408,7 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
                         //console.log('put errors',newSoul,err)
                     })
                 } 
-                cb.call(cb,undefined)
+                cb.call(cb,false)
             }
         }
     })
@@ -1466,7 +1474,7 @@ const makerelatesTo = (gun,gbGet,getCell,timeLog,timeIndex) => path => {
         }
         gbGet(allProps,relatesTo)
         
-        function relatesTo(gb){//TODO
+        function relatesTo(gb){
             cb = (cb instanceof Function && cb) || function(){}
             if(!DATA_INSTANCE_NODE.test(path) || !DATA_INSTANCE_NODE.test(trgt)){
                 throw new Error('Must use a nodeID with a pattern of '+DATA_INSTANCE_NODE.toSting()+' for both `ID` node(ID).relatesTo(ID, relationship)')
@@ -1484,17 +1492,27 @@ const makerelatesTo = (gun,gbGet,getCell,timeLog,timeIndex) => path => {
             let i = hash64(hashStr)//should never have two relation nodes (of same r id) with same src+trgt
             let newID = makeSoul({b,r,i})
             let opts = {isNew:true}
-            let eSoul = makeSoul({b,r,i:true})//state index
-            gun.get(eSoul).get(newID).once(function(value){
-                if(value === undefined || value === false || value === null){
+            getCell(newID,'STATE',function(value){
+                if(value === undefined || value === 'deleted' || value === null){
                     putData(gun,gb,getCell,false,timeLog,timeIndex,relationIndex,newID,rtProps,opts,cb)
                 }else{
                     let e = new Error('Relationship already exists!')
                     console.log(e)
                     cb.call(cb,e) 
                 }
-                
             })
+            //using getcell instead and looking for the node property directly. Not sure if that is better or worse..
+            //let eSoul = makeSoul({b,r,i:true})//state index           
+            // gun.get(eSoul).get(newID).once(function(value){
+            //     if(value === undefined || value === false || value === null){
+            //         putData(gun,gb,getCell,false,timeLog,timeIndex,relationIndex,newID,rtProps,opts,cb)
+            //     }else{
+            //         let e = new Error('Relationship already exists!')
+            //         console.log(e)
+            //         cb.call(cb,e) 
+            //     }
+                
+            // })
        
         }
     })

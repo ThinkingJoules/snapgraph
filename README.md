@@ -381,7 +381,7 @@ _________
 **newNodeType(*nodeTypeConfigObj*, *cb*, *propConfigArr*)**  
 All arguments are optional.  
 **nodeTypeConfigObj**: Config info for the new nodeType you are creating.  
-**cb**: Done cb that will fire with error or the new ID if successful.  
+**cb**: function(err,newID,mutatedConfigs) will fire with error or the new ID if successful.  
 **propConfigArr**: Array of property configObj's. This will allow you to create properties enmasse if you know what you want them to be.
 
 Note: An error will be thrown if the nodeType is not unique for the base.
@@ -407,7 +407,7 @@ _________
 **newRelation(*relationConfigObj*, *cb*, *propConfigArr*)**  
 All arguments are optional.  
 **relationConfigObj**: Config info for the new relation you are creating.  
-**cb**: Done cb that will fire with error or the new ID if successful.  
+**cb**: function(err,newID,mutatedConfigs) will fire with error or the new ID if successful.  
 **propConfigArr**: Array of property configObj's. This will allow you to create properties enmasse if you know what you want them to be.
 
 Note: An error will be thrown if the relation is not unique for the base.

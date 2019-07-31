@@ -23,7 +23,8 @@ const {convertValueToType,
     CONFIG_SOUL,
     toAddress,
     removeP,
-    lookupID
+    lookupID,
+    throwError
 } = require('../core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
@@ -213,7 +214,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             let toSingle = (configObj.allowMultiple === false && thisConfig.allowMultiple === true) ? true : false
             if(['unorderedSet','array'].includes(from) && !['unorderedSet','string','array'].includes(toType)){
                 //would not be running this call if from === to
-                throwErr('Can only change unorderedSet to: "array" or "string". Can only change an array to: "unorderedSet" or "string"')
+                err = throwError(cb,'Can only change unorderedSet to: "array" or "string". Can only change an array to: "unorderedSet" or "string"')
                 return
             }
             getList(function(list){
@@ -221,7 +222,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 for (const idOnList in list) {
                     const value = list[idOnList];
                     if(Array.isArray(value) && toSingle && value.length > 1){
-                        throwErr('Too many values in Array for {allowMultiple: false} setting. nodeID:', idOnList)
+                        err = throwError(cb,'Too many values in Array for {allowMultiple: false} setting. nodeID:'+ idOnList)
                         return
                     }
                     try {
@@ -230,9 +231,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                         addToPut(idOnList,{[p]:v},toPut)//might be overwritten later, but if not, this is the only time it is added to the output
                     } catch (error) {
                         if(pType === 'date'){
-                            throwErr('Cannot parse values into a date.')
+                            err = throwError(cb,'Cannot parse values into a date.')
                         }else{
-                            throwErr(error)
+                            err = throwError(cb,error)
                         }
                         return
                     }
@@ -288,7 +289,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                         }
                     }
                     let conflictSouls = Object.values(same).filter(x=>Array.isArray(x)).reduce((p,c)=>{p.concat(c)})
-                    throwErr('Non-Unique values already exist on souls: '+conflictSouls.join(', '))
+                    err = throwError(cb,'Non-Unique values already exist on souls: '+conflictSouls.join(', '))
                 }
                 runNext()
             })
@@ -332,19 +333,19 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             //new stuff
             if (pType === 'function'){//parse equation and store
                 let fn = configObj.fn
-                if(!fn){throwErr('Must specify a function');return}
+                if(!fn){err = throwError(cb,'Must specify a function');return}
                 //check equation for valididty? balanced () and only one comparison per comma block?
                 try {
                     basicFNvalidity(fn)
                 } catch (error) {
-                    throwErr(error)
+                    err = throwError(cb,error)
                     return
                 }
                 //handleFNColumn(path, configObj, cb) //initial change to fn column
                 run.unshift(['handleFN',[configObj]])
             }else if (pType === 'pickList'){//make sure it is an array
                 let opts = configObj.pickOptions
-                if(!opts || !Array.isArray(opts)){throwErr('Must specify an array of options for {pickOptions: ["option 1","option 2"]}');return}
+                if(!opts || !Array.isArray(opts)){err = throwError(cb,'Must specify an array of options for {pickOptions: ["option 1","option 2"]}');return}
                 cPut.pickOptions = opts
             }else if (pType === 'date'){
                 //don't really need to do anything more? maybe something with format?
@@ -353,7 +354,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }else if (pType === 'data'){
                 //don't really need to do anything more? maybe something with format if coming from a certain type? Maybe just '' the format field?
             }else{
-                throwErr('propType specified is not editable')//Should never run because checkConfig verifies it's valid (only 'source' and 'target' could get here)
+                err = throwError(cb,'propType specified is not editable')//Should never run because checkConfig verifies it's valid (only 'source' and 'target' could get here)
             }
             cPut.propType = pType
             runNext()
@@ -365,7 +366,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             try {
                 verifyLinksAndFNs(gb,path,fn)
             } catch (error) {
-                throwErr(error)
+                err = throwError(cb,error)
                 return
             }
             let allLinkPattern = new RegExp(ALL_LINKS_PATTERN)
@@ -437,7 +438,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             //generate soul, and list soul
             //list soul needs special put (no log)
 
-            if(pathType === 'base')throwErr(new Error('Cannot create new base through the config api'))
+            if(pathType === 'base')err = throwError(cb,new Error('Cannot create new base through the config api'))
             if(['nodeType','relationType'].includes(pathType)){
                 let list
                 if(pathType === 'nodeType'){//cannot set these vals on creation, forcing to default
@@ -470,7 +471,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }
         }
         if(!Object.keys(configObj).length){
-            throwErr(new Error('New config matches old config, nothing changed.'))
+            err = throwError(cb,new Error('New config matches old config, nothing changed.'))
         }
         
         let validConfig
@@ -560,7 +561,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
         }
         function checkName(){
             let aliasNotUnique = (configObj.alias) ? lookupID(gb,configObj.alias,path) : false
-            if(aliasNotUnique)throwErr(new Error('`alias` is not unique'))
+            if(aliasNotUnique)err = throwError(cb,new Error('`alias` is not unique'))
         }
         function handleSortval(){
             let {sortval} = configObj
@@ -605,7 +606,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             checkFormat()
             deDupAndCheckTypes()
         } catch (error) {
-            throwErr(error)
+            err = throwError(cb,error)
             return
         }
         done()
@@ -622,9 +623,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 console.log('Data changed from config: ',toPut)
                 for (const nodeID in toPut) {//data soul = dataID, (!#$ || !-$) or it is lookupNexts !#$[lookup
                     const putObj = toPut[nodeID];
-                    putData(gun, gb, getCell, cascade, timeLog, timeIndex, false, nodeID, putObj, {own:true}, function(err){
-                        if(err){
-                            throwErr(err)
+                    putData(gun, gb, getCell, cascade, timeLog, timeIndex, false, nodeID, putObj, {own:true}, function(e){
+                        if(e){
+                            err = throwError(cb,err)
                             return
                         }
                         dataToPut--
@@ -645,7 +646,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 setValue(cpath,cObj,gb,true)
                 gun.get(csoul).put(cObj)
             }
-            cb.call(cb,undefined)
+            cb.call(cb,false)
         }
     }
     function checkFormat(){
@@ -693,12 +694,6 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             }
                 
         }
-    }
-    function throwErr(errmsg){
-        errmsg = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = errmsg
-        cb.call(cb,errmsg)
-        console.log(errmsg)
     }
     function addToPut(soul,putObj,collector){
         if(!collector[soul]){

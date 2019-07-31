@@ -468,6 +468,14 @@ function getValue(propertyPath, obj){
     }
 }
 
+//error handling
+function throwError(cb,errmsg){
+    let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
+    console.log(error)
+    cb.call(cb,error)
+    return error
+}
+
 
 //CHAIN COMMAND THINGS
 function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb){
@@ -803,7 +811,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                             && defaultval === null 
                             && !autoIncrement){//must have a value or autoIncrement enabled
                             let e = new Error('Required field missing: '+ alias)
-                            throwError(e)
+                            err = throwError(cb,e)
                             return
                         }
                         if(input === undefined && defaultval !== null){
@@ -834,7 +842,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             try {
                 putVal = (inc) ? putObj[pval] : convertValueToType(putObj[pval],dataType)
             } catch (error) {
-                throwError(error)
+                err = throwError(cb,error)
             }
             getList(listID,function(list){
                 list = list || {}
@@ -853,7 +861,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                         && value == putVal 
                         && addrOnList != thisAddr){//other value found on a different soul
                         err = new Error('Non-unique value on property: '+ alias)
-                        throwError(err)
+                        throwError(cb,err)
                         break
                     }
                 }
@@ -911,12 +919,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
 
             if(!DATA_INSTANCE_NODE.test(source)){
                 let e = new Error('Invalid Source')
-                throwError(e)
+                err = throwError(cb,e)
                 return
             }
             if(!DATA_INSTANCE_NODE.test(target)){
                 let e = new Error('Invalid Target')
-                throwError(e)
+                err = throwError(cb,e)
                 return
             }
             let newRelationSoul = makeSoul({b,r,i:newRelationID(source,target)})
@@ -1034,7 +1042,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             }else if(propType === 'pickList' && dataType !== 'unorderedSet'){
                 if(!pickOptions.includes(cVal)){
                     let e = new Error('Invalid pick list option. Pick one of: '+pickOptions.join(', '))
-                    throwError(e)
+                    err = throwError(cb,e)
                     return
                 }
             }
@@ -1085,7 +1093,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let specials =  ['function']//["source", "target", "parent", "child", "lookup", "function"]//propTypes that can't be changed through the edit API
     
             if(propType === undefined || dataType === undefined){
-                throwError('Cannot find prop types for property: '+ alias +' ['+ pval+'].')
+                err = throwError(cb,new Error('Cannot find prop types for property: '+ alias +' ['+ pval+'].'))
                 return
             }
             if(propType === 'date'){
@@ -1187,24 +1195,18 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             timeLog(nodeIDtoLog,logObj)
         }
         console.log(Date.now()-startTime+'ms to process put request')
-        cb.call(cb, undefined, nodeID)
-    }
-    function throwError(errmsg){
-        let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
-        err = error
-        console.log(error)
-        cb.call(cb,error)
+        cb.call(cb, false, nodeID)
     }
     function changeEnq(add,parentAddr,childAddr){
         //verify parent and child are of the same nodeType
         if(!DATA_ADDRESS.test(parentAddr) && !isEnq(parentAddr)){
-            let err = 'Invalid parent ID referenced for an inheritance'
-            throwError(err)
+            let e = 'Invalid parent ID referenced for an inheritance'
+            err = throwError(cb,e)
             return
         }
         if(!DATA_ADDRESS.test(childAddr) && !isEnq(childAddr)){
-            let err = 'Invalid child ID referenced for an inheritance'
-            throwError(err)
+            let e = 'Invalid child ID referenced for an inheritance'
+            err = throwError(cb,e)
             return
         }
         let cSoulObj = parseSoul(childAddr)
@@ -1815,5 +1817,6 @@ module.exports = {
     StringCMD,
     BASE,
     CONFIG_SOUL,
-    TIME_INDEX_PROP
+    TIME_INDEX_PROP,
+    throwError
 }
