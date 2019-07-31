@@ -1,6 +1,6 @@
 {
   "name": "snapgraph",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Used to help organize and create a traversable graph structure.",
   "main": "index.js",
   "scripts": {

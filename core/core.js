@@ -468,7 +468,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
         return
     }}
     get(baseconfig,false,function(gundata){
-        if(gundata === undefined){
+        if([undefined,null].includes(gundata)){
             toGet.got()
             return
         }
@@ -483,7 +483,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
     })
     let baseLabels = makeSoul({b:baseID,l:true})
     get(baseLabels,false,function(gundata){
-        if(gundata === undefined){
+        if([undefined,null].includes(gundata)){
             toGet.got()
             return
         }        
@@ -496,7 +496,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
 
     let tlist = makeSoul({b:baseID})
     get(tlist,false,function(data){//should have both relations and nodeTypes on this soul
-        if(data === undefined){
+        if([undefined,null].includes(data)){
             toGet.got()
             return
         }  
@@ -520,7 +520,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
         return function(gundata){
             //will be type config or prop config 
             let configpath = configPathFromChainPath(subSoul)
-            if(gundata === undefined){
+            if([undefined,null].includes(gundata)){
                 setValue(configpath,{},gbMerge)
             }else{
                 let data = JSON.parse(JSON.stringify(gundata))
@@ -539,7 +539,7 @@ function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so th
         let {b,t,r} = parseSoul(tpath)
         let pIdx = makeSoul({b,t,r})
         get(pIdx,false,function(data){
-            if(data === undefined){
+            if([undefined,null].includes(data)){
                 toGet.got()
                 return
             }  
