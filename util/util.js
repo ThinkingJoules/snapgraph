@@ -1,118 +1,56 @@
-function gunGet(gun, getString){
-    return new Promise( (resolve, reject) => {
-        let lookup = gun.get(getString).then()
-        resolve(lookup)
-    })
-}
-
-function gunGetGet(gun, getNode, getProp){
-    return new Promise( (resolve, reject) => {
-        let lookup = gun.get(getNode).get(getProp).then()
-        resolve(lookup)
-    })
-}
-
-function gunGetList(gun, setNode){
-
-    return gunGet(gun, setNode).then(res => {
-        return new Promise((resolve, reject) => { 
-            let filtered = []
-            for (const key in res) {
-                const value = res[key];
-                if (value !== null && key !== '_'){
-                    filtered.push(key)
-                }
+const {parseSoul,makeSoul,configPathFromChainPath,ALL_ADDRESSES,getValue,findID,findConfigFromID} = require('../core/util')
+const makegetAlias = (gb) => (baseOrAddress,pval)=>{
+    if(ALL_ADDRESSES.test(baseOrAddress)){
+        let {alias} = getValue(configPathFromChainPath(baseOrAddress), gb) || {}
+        return alias
+    }else{
+        let b
+        for (const baseID in gb) {
+            const {alias} = gb[baseID];
+            if(String(baseID) === base || String(alias) === base){
+                b = baseID
+                break
             }
-            resolve(filtered);
-        });
-    })
+        }
+        if(!b)throw new Error('Cannot find the base you specified')
+        let {alias} = findConfigFromID(gb,makeSoul({b}),pval) || {}
+        return alias
+    }
 }
-function gunGetListNodes(gun, setNode){
-
-    return gunGetList(gun,setNode).then(refs =>{
-        return Promise.all(refs.map(key =>{
-            return gunGet(gun,key)
-        }))
-    })        
-}
-function gunFilteredNodes(gun, setNode, filterProp, exist){
-    let nodes = gunGetListNodes(gun, setNode)
-    return Promise.resolve(nodes).then(data =>{ 
-            console.log(data)
-            let filtered = []
-            for (let i = 0; i < data.length; i++) {
-                const node = data[i];
-                if (exist){
-                    if(node && node[filterProp] && (node[filterProp].length || typeof node[filterProp] === 'number')){
-                        filtered.push(node)
-                    }
-                }else{
-                    if(!node[filterProp] || node[filterProp].length == 0){
-                        filtered.push(node)
-                    }
-                }
-                
-            }
-            return filtered
-        
-    })
-}
-
-function gunGetListProp(gun, setNode, prop){
-
-    return gunGetList(gun,setNode).then(refs =>{
-        return Promise.all(refs.map(key =>{
-            return gunGetGet(gun,key,prop)
-        }))
-    })        
-}
-
-function getKeyByValue(object, value) {
-    return Object.keys(object).find(key => object[key] === value);
-}
-function nextIndex(object, value) {
-    let max = 0
-    for (const key in object) {
-        let test = value + "\\d+"
-        let re = new RegExp(test)
-        let found = key.match(re)
-        let prop = /p/i.test(found)
-        if(found !== null && !prop){
-            let idx = Number(found[0].slice(1))
-            if(max < idx){
-                max = idx
-            }
-        }else{
-            let idx = Number(found[0].slice(found[0].lastIndexOf('p')+1))
-            if(max < idx){
-                max = idx
-            } 
+const makegetProps = (gb) => (base,type,opts) => {
+    //base can be either baseID or baseAlias
+    //type can be either typeID or the alias
+    //need to figure out if type is a t or r
+    //use a string object w/meta, then call toString()??
+    let b
+    for (const baseID in gb) {
+        const {alias} = gb[baseID];
+        if(String(baseID) === base || String(alias) === base){
+            b = baseID
+            break
         }
     }
-    max++
-    let nextKey = value + max.toString()
-    return nextKey
-}
-function hashCode(string) {
-    var hash = 0;
-    if (string.length == 0) {
-        return hash;
+    if(!b)throw new Error('Cannot find the base you specified')
+    let typeID
+    let isT = findID(gb,type,makeSoul({b,t:true}))
+    let isR = findID(gb,type,makeSoul({b,r:true}))
+    typeID = isT || isR
+    if(!typeID)throw new Error('Cannot find the type of thing you specified')
+    let {hidden,archived} = opts || {}
+    hidden = !!hidden
+    archived = !!archived
+    let {props} = findConfigFromID(gb,makeSoul({b}),typeID)
+    let out = []
+    for (const p in props) {
+        const {hidden:h,archived:a,deleted,sortval} = props[p];
+        if ((h && hidden || !h) && (a && archived || !a) && !deleted) {
+            out[sortval] = p
+        }
     }
-    for (var i = 0; i < string.length; i++) {
-        var char = string.charCodeAt(i);
-        hash = ((hash<<5)-hash)+char;
-        hash = hash & hash; // Convert to 32bit integer
-    }
-    return hash;
+    return out.filter(n => n!==undefined)
 }
+
 module.exports = {
-    gunGet,
-    gunGetGet,
-    gunGetList,
-    getKeyByValue,
-    gunGetListNodes,
-    gunGetListProp,
-    gunFilteredNodes,
-    nextIndex,
-    hashCode
+    makegetAlias,
+    makegetProps
 }

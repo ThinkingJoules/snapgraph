@@ -27,7 +27,8 @@ const fnArgHelpText = {
     NOT:        'T/F Expression',
     T:          'value',
     CONCAT:     '"Strings ", "to ", "concatenate.",...',
-    JOIN:       '"quoted seperation character", "string 1". "string 2", ..."string n"'
+    JOIN:       '"quoted seperation character", "string 1". "string 2", ..."string n"',
+    TEST:       '"quoted string to test", javascript regex literal'
 }
 const fnExamples = {
     IF:         ['IF(2<3, "A is less than B", "B is greater than or equal to A") => "A is less than B"'],
@@ -49,12 +50,13 @@ const fnExamples = {
     OR:         ['OR(2+10 < 5, 2 = 3, 3 != 3) => FALSE()', 'OR(2+10 < 5, 2 = 3, 3 != 2) => TRUE()'],
     COUNT:      ['COUNT("string", "another string") => 2', 'COUNT("string", "") => 1', 'COUNT(0,1,2,3) => 4'],
     COUNTALL:   ['COUNTALL("string", "another string") => 2', 'COUNTALL("string", "") => 2', 'COUNTALL(0,1,2,3) => 4'],
-    TRUE:       ['TRUE()'],
-    FALSE:      ['FALSE()'],
-    NOT:        ['NOT(2+2 < 5) => FALSE()', 'NOT(8 < 5) => TRUE()'],
-    T:          ['T("String") => "STRING"', 'T(123) => ""'],
+    TRUE:       ['TRUE() => true'],
+    FALSE:      ['FALSE() => false'],
+    NOT:        ['NOT(2+2 < 5) => FALSE()', 'NOT(8 < 5) => TRUE()', 'NOT(FALSE()) => TRUE()'],
+    T:          ['T("String") => "String"', 'T(123) => ""'],
     CONCAT:     ['CONCAT("Strings ", "to ", "concatenate.") => "Strings to concatenate"', 'CONCAT("Quoted", "Spaces ", "are", "Preserved  .") => "QuotedSpaces arePreserved  ."'],
-    JOIN:       ['JOIN(", ", "A", "B", "C") => "A, B, C"', 'JOIN(" ","Quoted", "Spaces ", "are", "Preserved  .") => "Quoted Spaces  are Preserved  ."']
+    JOIN:       ['JOIN(", ", "A", "B", "C") => "A, B, C"', 'JOIN(" ","Quoted", "Spaces ", "are", "Preserved  .") => "Quoted Spaces  are Preserved  ."'],
+    TEST:       ['TEST("Some String",/Some/) => TRUE()', 'TEST("Some String",/some/) => FALSE()', 'TEST("Some String",/some/i) => TRUE()']
 }
 function fnHelp(fn){
     let out = []
@@ -70,18 +72,12 @@ function IF(args){
     if(args.length !== 3){
         throw new Error('Must pass three arguments for IF()')
     }
-    let torf = findTruth(args[0])
-    if(torf){
-        let out = args[1]
-        return out
-    }else{
-        let out = args[2]
-        return out
-    }
+    if(findTruth(args[0]))return args[1]
+    return args[2]
 }
 function IFERROR(args){
     if(args.length !== 2){
-        throw new Error('Must pass three arguments for IF()')
+        throw new Error('Must pass two arguments for IFERROR()')
     }
     let out
     try{
@@ -99,23 +95,8 @@ function SWITCH(args){
         Default = args[argslen-1]
     }
     let test = args[0] //add type checking and Case type coersion?
-    let testType = typeof args[0]
-    for (let i = 1; i < args.length; i++) {
-        let arg = args[i];
-        let value = false
-        if(i%2){//odd args
-            if(!Default){
-                value = arg
-            }else if(Default && i !== argslen-1){
-                value = arg
-            }
-            if(value){
-                args[i] = convertValueToType(value,testType, "SWITCH CASE")
-            }
-        }
-        
-    }
-    let Case = args.indexOf(test,1)
+    //do we need to evaluate test?
+    let Case = args.indexOf(test,1)//what if the Case+1 === another case that test might find?
     if(Case !== -1){//is a match
         out = args[Case+1]
     }else if(Default){
@@ -230,7 +211,7 @@ function FLOOR(args){
 }
 function ROUND(args){
     //args[0]=  Number() <-- Value to round
-    //args[1]= Number() <-- precision, optiona;: default = 2
+    //args[1]= Number() <-- precision, optional: default = 2
     //args[2]= 'UP' || 'DOWN'
     //round up and down work the same as Math.round(), instead of Math.floor/ceil rounding w/negatives
     if(args.length < 1){
@@ -327,31 +308,22 @@ function AND(args){
     let out = true
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        let containsCompareChars = /[()+\-*/<>=!]/g.test(arg)
-        if(out){//if not already false, test
-            if(!arg){//catch straight up falsy values
-                out = false
-            }else if(containsCompareChars){//needs comparison done
-                out = findTruth(arg)
-            }
-        }       
+        if(!arg){//catch straight up falsy values
+            out = false
+            break
+        }
     }
     return out
 }
 function OR(args){
     //One must be truthy
     let out = false
-    let falsy = [0,"",null,false,undefined]
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        let containsCompareChars = /[()+\-*/<>=!]/g.test(arg)
-        if(!out){//if not already true, test
-            if(!containsCompareCharsarg && falsy.indexOf(arg) === -1){//catch straight up truthy values
-                out = true
-            }else if(containsCompareChars){//needs comparison done
-                out = findTruth(arg)
-            }
-        }       
+        if(arg){//catch straight up truthy values
+            out = true
+            break
+        }    
     }
     return out
 }
@@ -386,16 +358,12 @@ function NOT(args){
 function T(args){
     //Returns the argument if it is text and blank otherwise.
     if(args.length !== 1){
-        throw new Error('ABS() can only receive one value')
+        throw new Error('T() can only receive one value')
     }
     let arg = args[0]
     let out
-    if(typeof arg === 'string'){
-        if(!isNaN(arg*1)){
-            out = arg
-        }else{
-            out = ""
-        }
+    if(typeof arg === 'string' && !isNaN(arg*1)){
+        out = arg
     }else{
         out = ""
     }
@@ -409,11 +377,19 @@ function CONCAT(args){
 function JOIN(args){
     //args[0] = seperator
     //args[1-n]= values to join
-    let seperator = args[0]
-    let other = args.slice(1)
+    let [seperator,...other] = args
     let out = other.reduce((prev,cur) => prev + seperator + cur)
     return out
 
+}
+function TEST(args){
+    if(args.length !== 2)throw new Error('TEST expects two arugments. Value to test, and a regex string "/regExStuffHere/gi"')
+    let [value,regexStr] = args
+    console.log(value,regexStr)
+    let [match,regex,flags] = regexStr.match(/(\/[^\n\r]+\/)([gimuy]+)?/) || []
+    if(!match)throw new Error('Regex string was not valid. Should be "/regExStuffHere/gi"')
+    let r = new RegExp(eval(regex),flags)
+    return r.test(value)
 }
 module.exports = {
     IFERROR,
@@ -441,5 +417,6 @@ module.exports = {
     JOIN,
     ROUND,
     INT,
+    TEST,
     fnHelp
 }
