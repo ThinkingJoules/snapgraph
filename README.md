@@ -19,10 +19,10 @@ ____
 * Permissions enforced by super peer (group based)
 
 *To the best effort given the limits of how Gun operates underneath
-# Example Usage (out of date)
+# Example Usage (some of this is out of date)
 
 TODO MAKE README INTO STARTUP GUIDE  
-MOVE ALL APIs INFO TO SEPERATE DOCS
+MOVE ALL APIs INFO TO SEPERATE DOCS??
 
 ## Loading gun instance in to gbase
 ```
@@ -172,6 +172,8 @@ Nodes can only connect to other nodes by way of relationships. All nodes of the 
 * [relatesTo](#relatesTo) (not updated)
 * [subscribeQuery](#subscribeQuery)
 * [retrieveQuery](#retrieveQuery)
+* [subscribeExpand](#subscribeExpand)
+* [retrieveExpand](#retrieveExpand)
 * [subscribe](#subscribe)
 * [retrieve](#retrieve)
 * [kill](#kill) (for removing subscriptions)
@@ -179,12 +181,12 @@ Nodes can only connect to other nodes by way of relationships. All nodes of the 
 
 ------
 [Config APIs](#config-apis)
-* [config](#config) (not updated)
+* [config](#config)
 * [getConfig](#getConfig)
 -----
 Import APIs
 * [importNewNodeType](#importNewNodeType)
-* [importRelations](#importRelations) (not updated)
+* [importRelationships](#importRelationships)
 -----
 Non-chain helper APIs
 
@@ -221,6 +223,9 @@ chain options:
 [.node()](#item)  
 [.getConfig()](#getConfig)  
 [.kill()](#kill)  
+
+
+[BACK TO API LIST](#api-docs)
 ________
 ### base
 **base(*\*baseName*)**  
@@ -248,6 +253,7 @@ next chain options:
 [.config()](#config)  
 [.kill()](#kill)  
 
+[BACK TO API LIST](#api-docs)
 ________
 ### nodeType
 **nodeType( *\*type* )**  
@@ -270,6 +276,8 @@ chain options:
 [.retrieve()](#retrieve)  
 [.getConfig()](#getConfig)  
 [.config()](#config)  
+
+[BACK TO API LIST](#api-docs)
 ________
 ### relation
 **relation( *\*type* )**  
@@ -310,6 +318,8 @@ chain options for **nodeType** context:
 [.retrieve()](#retrieve)  
 [.getConfig()](#getConfig)  
 [.config()](#config)  
+
+[BACK TO API LIST](#api-docs)
 __________
 ### node
 **node(*\*ID*)**  
@@ -345,6 +355,8 @@ chain options for **address** context:
 [.kill()](#kill)  
 [.retrieve()](#retrieve)  
 [.getConfig()](#getConfig)  (gives you the property configObj)  
+
+[BACK TO API LIST](#api-docs)
 __________
 
 
@@ -362,6 +374,8 @@ gbase.newBase({alias:'ACME Inc.'},false,cb)
 //cb returns: baseID
 
 ```
+
+[BACK TO API LIST](#api-docs)
 _________
 ### newNodeType
 **newNodeType(*nodeTypeConfigObj*, *cb*, *propConfigArr*)**  
@@ -385,7 +399,9 @@ function cb(value){
   value = Error Object || new ID for this nodeType
 }
 ```
-[baseID, configObj? Read here](#gbase-vocab)
+[baseID, configObj? Read here](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### newRelation
 **newRelation(*relationConfigObj*, *cb*, *propConfigArr*)**  
@@ -409,7 +425,9 @@ function cb(value){
   value = Error Object || new ID for this nodeType
 }
 ```
-[configObj? Read here](#gbase-vocab)
+[configObj? Read here](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### addLabel
 **addLabel(*\*labelName*,*cb*)**  
@@ -422,7 +440,9 @@ gbase.base('ACME Inc.').addLabel('Pending',function(id){
   id = new ID for 'Pending' || Error
 })
 ```
-[label, state? Read here](#gbase-vocab)
+[label, state? Read here](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### addProp
 **addProp(*configObj*,*cb*)**  
@@ -443,7 +463,9 @@ gbase.base('ACME Inc.').nodeType('Items').addProp({alias:'Cost',dataType:'number
   }
 })
 ```
-[baseID, t0, pval? Read here](#gbase-vocab)
+[baseID, t0, pval? Read here](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### newNode
 **newNode(*dataObj*, *cb*)**  
@@ -475,8 +497,9 @@ gbase.base("B123").nodeType("1t3ds2").newNode({name:'Anvil'}, (err,value) =>{
   }
 })
 ```
-[rowID, rowAlias? Read here](#gbase-vocab)
+[rowID, rowAlias? Read here](#gbase-vocab)  
 
+[BACK TO API LIST](#api-docs)
 _________
 ### newFrom
 **newFrom(*dataObj*, *cb*, *opts*)**  
@@ -535,8 +558,9 @@ gbase.node(NODE2).newFrom(false,function(newID){
 },false)
 
 ```
-[nodeID? Read here](#gbase-vocab)
+[nodeID? Read here](#gbase-vocab)  
 
+[BACK TO API LIST](#api-docs)
 _________
 
 
@@ -585,7 +609,9 @@ gbase.node(address).edit("Anvils 'r us", (err,value) =>{
   }
 })
 ```
-[nodeID, address? Read here to understand the terminology used.](#gbase-vocab)
+[nodeID, address? Read here to understand the terminology used.](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### relatesTo
 **relatesTo(*\*TRGTnodeID* , *\*relation*, *relationObj* , *cb*)**  
@@ -606,7 +632,9 @@ Relation = 'Purchased'
 gbase.node(NODE1).relatesTo(NODE2,Relation,{Purchase Date: Date.now()})
 
 ```
-[nodeID? Read here to understand the terminology used.](#gbase-vocab)
+[nodeID? Read here to understand the terminology used.](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### subscribeQuery
 **subscribeQuery(*\*callBack*, *queryArr*, *udSubID*)**  
@@ -651,15 +679,91 @@ let sub = gbase.base('ACME Inc.').subscribeQuery(function(data){
     [{Vendor: 'Rockets Galore', 'Part Number: 'BIG-BOOM'}]]
 }, queryArr,'forUIView')
 ```
-[Read here to understand the terminology used.](#gbase-vocab)
+[Read here to understand the terminology used.](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
 _________
 ### retrieveQuery
-**subscribeQuery(*\*callBack*, *queryArr*)**  
+**retrieveQuery(*\*callBack*, *queryArr*)**  
 callBack and queryArr is required, others are optional Defaults:  
 `callBack = Function(resultArr) `  
 `queryArr = [queryArr]` [More info here](#query)    
 
-Exactly the same as `subscribeQuery` except it only fires the callBack once.
+Exactly the same as `subscribeQuery` except it only fires the callBack once.  
+
+[BACK TO API LIST](#api-docs)
+_________
+### subscribeExpand
+**subscribeExpand(*\*nodeArr*, *\*callBack*, *expandParams*, *subID*)**  
+callBack and queryArr is required, others are optional Defaults:  
+`nodeArr = [nodeID,nodeID,nodeID,...]`
+`callBack = Function(resultArr) `  
+`expandParams = {expandParams}` See table below.
+`subID = Symbol()` If you give it a subID, then be sure it is unique across all of your subscription
+
+Subscribe will fire the callback with the **entire** data set that matches that query on every change.
+
+* **resultArr** - depends on options, but a 'returnAs: paths' look like below: 
+`resultArr[0] = [nodeID,[relation],nodeID]` This is the first matching 'path' (based on your match and return statements)
+`resultArr[0][1] = [relationID]` has named properties of .SRC and .TRGT that have values of which nodeID is which (so you can determine direction if needed)
+`resultArr[0][1].SRC = nodeID`  
+The results will be sorted first based on the nodeArr order and if there are multiple paths for that node, it will then sort by the length of the 'path'.  
+**NOTE** If you 'returnAs: nodes' you will get the last element in the 'path' array. 'returnAs: relationships' will give you all the odd elements in the 'path' array.  
+
+The *`subID`* (user-defined Subscription ID) was added to allow you to fire the `subscribe()` code itself multiple times without setting up multiple subscriptions. If you specify the same subID twice with two different `callBacks`, then the last fired `subscribe()` callBack will be the only callBack that fires (old callBack is replaced). This allows gbase to cache the query result and keep it up to date even if the callback is not currently being used in a UI component.
+
+Data loading and the callBack: Depending on the state of the database and how much data is already loaded the callBack will fire immediately if it has all the data in memory.  
+
+This api is sort of intended to be used in conjunction with a [subscribeQuery](#subscribeQuery) or [subscribe](#subscribe)(nodeType subscription) with option `idOnly:true`. That way you can build a list based on filtering/sorting/etc and then (flatten the array) and use it as the first argument in expand.  
+
+
+**expandParams**
+| ExpandParams[key] | default | typeof | usage | Notes |
+|----------------------|---------------|---------|-----------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| returnAs | "nodes" | string | nodes = end node of expansion, relationships = just relationships, paths = full expansion path |  |
+| states | ['active'] | array | What can nodes/relations be in paths to be valid | Valid = one or more of 'active', 'archived' |
+| skip | 0 | number | used with limit for pagination |  |
+| limit | Infinity | number | limit results |  |
+| minLevel | 1 | number | Min # of degrees of relations to return paths within |  |
+| maxLevel | 1 | number | Max # of degrees of relations to return paths within |  |
+| uniqueness | "NODE_GLOBAL" | string | To apply uniqueness to nodes/paths/etc.. | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_optional |
+| beginSequenceAtStart | TRUE | boolean | For supplying a sequence to match during expansion | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_starting_the_sequence_at_one_off_from_the_start_node |
+| filterStartNode | FALSE | boolean | Filter startNode based on labels | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_start_node_and_label_filters |
+| labelFilter | FALSE | array | Label filter argument | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_label_filter_2 |
+| relationshipFilter | FALSE | array | default = ['*'] (if no label/relation/sequence filters are given | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_relationship_filter_2 |
+| sequence | FALSE | array | Sequence to match | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_sequences_2 |
+| endNodes | FALSE | array | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_node_filters |  |
+| terminatorNodes | FALSE | array | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_node_filters |  |
+| blacklistNodes | FALSE | array | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_node_filters |  |
+| whitelistNodes | FALSE | array | https://neo4j-contrib.github.io/neo4j-apoc-procedures/3.4/path-finding/path-expander/#_node_filters |  |
+
+
+Example usage:
+```
+nodeID = '!B123#1t2o3$abcd' //could have been from another query.
+
+let expandParams = {limit:10, relationshipFilter:['FRIENDS_WITH']}
+let sub = gbase.base('ACME Inc.').subscribeExpand([nodeID],function(data){
+  if(!Array.isArray(data))handleErr(data)
+  else //success
+  //data = [
+    [nodeID1],
+    [nodeID2]]
+}, expandParams,'forUIView')
+```
+[Read here to understand the terminology used.](#gbase-vocab)  
+
+[BACK TO API LIST](#api-docs)
+_________
+### retrieveExpand
+**retrieveExpand(*\*nodeArr*, *\*callBack*, *expandParams*)**  
+callBack and queryArr is required, others are optional Defaults:  
+`nodeArr = [nodeID,nodeID,nodeID,...]`
+`callBack = Function(resultArr) `  
+`expandParams = {expandParams}` See table below.
+
+Exactly the same as `subscribeExpand` except it only fires the callBack once.  
+[BACK TO API LIST](#api-docs)
 _________
 ### subscribe
 **subscribe(*\*callBack*, *opts*)**  
@@ -681,14 +785,15 @@ callBack is required, others are optional Defaults:
 
 | Opts[key] | default | typeof | usage | Notes |
 |---------------|-----------------------------------|----------------|-----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
-| sortBy | FALSE | array | [('prop Alias'|| propID),('ASC' || 'DESC')] | You can specify multiple sort columns, will sort from left to right in array to break ties. |
+| sortBy | FALSE | array | [('prop Alias' OR propID),('ASC' OR 'DESC')] | You can specify multiple sort columns, will sort from left to right in array to break ties. |
 | skip | 0 | number | skip first 'x' results |  |
 | limit | Infinity | number | limit total results to 'x' |  |
 | idOnly | FALSE | boolean | Don't return properties, but perform full query returning only the id's | You can specify properties, and it will generate addresses for them in the metaData |
 | returnAsArray | FALSE | boolean | {prop1:value1} or [value1] | For building tables easier |
 | propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead |  |
-| noID | FALSE | boolean | On the nodeObj there is a non-enumerable |  |
-| noAddress | FALSE | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
+| noID | FALSE | boolean | On the nodeObj there is a non-enumerable '.id' property, this omits it. |  |
+| noAddress | FALSE | boolean | same as 'noID', but for the '.address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
+| noInherit | FALSE | boolean | On the nodeObj there is a non-enumerable '.inherit' property, this omits it.|  |
 | raw | FALSE | boolean | Apply formatting per the configs.format |  |
 | subID | Symbol() | string, Symbol | Will be used as the key in the subscription management in gbase. | Should be sufficiently unique |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
@@ -721,7 +826,7 @@ Only the last two opts are different than the [nodeType subscription](#nodeType-
 | partial | FALSE | boolean | If true and returnAsArray = false, will give partial updates | Will always return a single {key:value} per fire of callback |
 
 #### address subscription
-Fires callback with new value on change.
+Fires callback with new value on change and second arg as what address the value came from (for knowing if it was inherited).
 
 | Opts[key] | default | typeof | usage | Notes |
 |-----------|----------|----------------|------------------------------------------------------------------|-------------------------------|
@@ -764,25 +869,24 @@ gbase.node(nodeID).kill(sub)
 
 //address subscribe
 let opts = {subID: 'watchMe', raw:true}
-let sub = gbase.node(address).subscribe(function(data){
+let sub = gbase.node(address).subscribe(function(data,fromAddr){
   if(data instanceof Error)handleErr(data)
   else //success
   //data = {Vendor: "Anvils 'r Us", 'Part Number': 'A123'}
+  //fromAddr === address then value is not inherited
 }, opts)
 ...
 gbase.node(address).kill(sub)
 ```
+[Read here to understand the terminology used.](#gbase-vocab)  
 
-When you want to remove this subscription:
-```
-gbase.node(address).kill(sub)
-```
-[Read here to understand the terminology used.](#gbase-vocab)
+[BACK TO API LIST](#api-docs)
 
 _________
 ### retrieve
 **retrieve(*\*callBack*, *opts*)**  
-This is the same as [subscribe()](#subscribe) except that it only fires the callback one time with the data.
+This is the same as [subscribe()](#subscribe) except that it only fires the callback one time with the data.  
+[BACK TO API LIST](#api-docs)
 ______
 ### kill
 **kill(*\*subID*)**  
@@ -808,9 +912,8 @@ gbase.node(nodeID).kill(subID)
 //addresses
 let subID = gbase.node(address).subscribe()
 gbase.node(address).kill(subID)
-
-
-```
+```  
+[BACK TO API LIST](#api-docs)
 ______
 
 ## Config APIs
@@ -950,8 +1053,9 @@ Usage: This will validate on node creation to ensure that this property has a va
 
 #### sortval
 Type: number   
-Usage: This will be the order the properties will be returned in if 'all active' are requested.
+Usage: This will be the order the properties will be returned in if 'all active' are requested.  
 
+[BACK TO API LIST](#api-docs)
 _________
 ### getConfig  
 **getConfig(*cb*, *opts*)**  
@@ -983,13 +1087,7 @@ gbase.getConfig(cb,{path: nodeID, subID: 'forUI'}) //Will subscribe the nodeType
 gbase.kill('forUI') //config subs are not namespaced by path. It is the only subscription that can killed without context.
 
 ```
-_________
-
-
-
 ________
-
-
 ## **gbase chain - Import APIs -**
 ### importNewNodeType
 **importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
@@ -1005,6 +1103,31 @@ Usage:
 ```
 gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
 ```
+[BACK TO API LIST](#api-docs)
+__________
+### importRelationships
+**importRelationships(*\*(tsv || array)*, *srcArg*, *trgtArg*, *cb*)**
+This api is for importing relationships to an **existing** relation in the databse.  
+Requirements for this api to work:
+* Source and Target nodeTypes MUST have externalID's
+* The imported file/array must have all the same nodeTypes for the 'Source' column
+* The imported file/array must have all the same nodeTypes for the 'Target' column (can be same or different from the source column)
+
+tsv || array = should have a single header row for the properties on each node.  Should be 2D `[[headerRow],[dataRow1],[dataRow2],etc]`
+srcArg = {[src nodeType ID or alias]: 'Header value for the sources'}
+trgtArg = {[trgt nodeType ID or alias]: 'Header value for the targets'}
+cb = function(error||undefined). If there is an error, the cb will fire with an error object, otherwise it will return the new node type id
+
+Usage:
+
+```
+//data = [['User','hasFriend','since'],[userID,otherUserID,2003]]
+gbase.base(baseID).relation('FRIENDS_WITH').importRelationships(data,{People: 'User'},{People: 'hasFriend'}false,console.log)
+```
+**NOTE** In example above, the 'since' property will be created if it is not found on the 'FRIENDS_WITH' relationship type.  
+
+[BACK TO API LIST](#api-docs)
+__________
 
 
 ## GBase Helper Functions
@@ -1088,6 +1211,7 @@ Will take the shape of `{[elementName]: configs}` Below is the options for the '
 | propsByID | FALSE | boolean | Default is to return using the current alias, can return using the gbase id for that prop instead | {Name: 'Bob'} vs {2p2j3: 'Bob'} (latter is how it is stored in the database) |
 | noID | FALSE | boolean | On the nodeObj there is an 'id' non-enumerable property with the nodeID | data[0][0] = {Name: 'Bob'}  data[0][0].id = '!baseID#1t3k$10d_3993' |
 | noAddress | FALSE | boolean | same as 'noID', but for the 'address' non-enumerable property on the nodeObj | Useful for subscribing specific UI components directly to a particular callback on a property. |
+| noInherit | FALSE | boolean | On the nodeObj there is a non-enumerable '.inherit' property, this omits it.|  |
 | raw | FALSE | boolean | Apply formatting per the configs.format | See [format options](#format-options) |
 | idOnly | FALSE | boolean | Don't return properties, but only the ID for this particular element | You can specify properties, and it will generate addresses for them in the metaData |
 | props | all active props on this nodeType | array | If you don't specify any, it will get everything that is not hidden, archived, or deleted |  |
@@ -1122,9 +1246,7 @@ gbase.base(baseID).subscribeQuery(function(data){
 
 ```
 Further filtering and refinement of the query will be specified in the other arguments we add to queryArr
-_________
-
-_________
+__________
 ## RANGE
 **{RANGE: [*\*element*, *configObj*]}**
 

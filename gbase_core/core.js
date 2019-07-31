@@ -223,7 +223,7 @@ function incomingPutMsg(msg){//wire listener should get all emitted puts (either
                     if(subs === undefined)continue //no current subscription for this addr
                     
                     if(isEnq(v) || isSet)getCell(soul,p,processValue(addr,subs),true,true)//has subs, but value isEnq, get referenced value, then process subs
-                    else processValue(addr,subs)(v)//value is a value to return, process subs with value available
+                    else processValue(addr,subs)(v,addr)//value is a value to return, process subs with value available
                 }
             }else if(ALL_ADDRESSES.test(soul)){//this is an unorderedSet, soul is the address
                 let cVal = cache.get(soul)
@@ -242,7 +242,7 @@ function incomingPutMsg(msg){//wire listener should get all emitted puts (either
                 sendToCache(s,p,v)//value changed, update cache; sendToCache will handle Enq dependencies
                 let subs = addrSubs[soul]
                 if(subs === undefined)return //no current subscription for this addr
-                processValue(soul,subs)(v)//value is a value to return, process subs with value available
+                processValue(soul,subs)(v,soul)//value is a value to return, process subs with value available
             }
             
         }else if(/\/UP$/.test(soul) && !TIME_INDEX_PROP.test(soul) && ALL_ADDRESSES.test(soul) && !msg['@']){//UP looking inheritance dependencies
@@ -306,7 +306,7 @@ function incomingPutMsg(msg){//wire listener should get all emitted puts (either
     }
 }
 function processValue(addr,subs){
-    return function(val){
+    return function(val,from){
         let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
         if(dataType === 'array'){
             try{
@@ -327,7 +327,7 @@ function processValue(addr,subs){
                 val = formatData(format,propType,dataType,val)
             }
             //console.log('firing sub with value:',val)
-            cb.call(cb,val)
+            cb.call(cb,val,from)
         }
     }
 }
@@ -1275,18 +1275,20 @@ function setupQuery(path,queryArr,cb,isSub,sVal){
     if(isSub){
         let {b} = parseSoul(path)
         let qParams = getValue([b,sVal],querySubs)
-        let validMatch = (qParams && !qParams.expand
+        let validMatch = !!(qParams && !qParams.expand
             && qParams.originalReturnElements === findReturnElements(queryArr)
             && qParams.originalMatch === JSON.stringify(queryArr.filter(x => x.CYPHER)[0]))
-        let validExpand = (qParams && qParams.expand && qParams.originalExpand === findStaticExpandElements(queryArr))
+        let validExpand = !!(qParams && qParams.expand && qParams.originalExpand === findStaticExpandElements(queryArr))
         if(validMatch || validExpand){
             //these queries have not changed since last call in a manner that will invalidate the return array structure
             //this should allow for sortBy, limit, skip, & filter changes without building a new query from scratch
             //SOME OF THE ELEMENT OPTIONS BREAK YET, NEED TO CHECK FOR MORE OPTIONS TO KNOW STUCTURE HASN'T CHANGED
             //FOR EXAMPLE anything to do with how the node structure is returned (returnAsArray, noID, noAddress, idOnly, etc..)
             qParameters = qParams
+            console.log('Requery, using previously cached results as a starting point.')
             
             if(qParameters.originalQueryArr !== JSON.stringify(queryArr) || qParameters.expand){
+                console.log('Updating query parameters on previous query')
                 parseQuery(path,qParameters,queryArr,true)
                 qParameters.resultState = false //through a requery at this point, can only effect the result shape
             }
@@ -1302,7 +1304,7 @@ function findReturnElements(qArr){
     return JSON.stringify(rest.map(x => Object.keys(x)[0]))
 }
 function findStaticExpandElements(qArr){
-    let {state,minLevel,maxLevel,uniqueness,beginSequenceAtStart,filterStartNode,labelFilter,relationshipFilter,sequence,endNodes,terminatorNodes,blacklistNodes,whitelistNodes} = (qArr.filter(x => x.EXPAND)[0] || {}).EXPAND || {}
+    let {state,minLevel,maxLevel,uniqueness,beginSequenceAtStart,filterStartNode,labelFilter,relationshipFilter,sequence,endNodes,terminatorNodes,blacklistNodes,whitelistNodes} = ((qArr.filter(x => x.EXPAND)[0] || {}).EXPAND || [])[1] || {}
     return JSON.stringify({state,minLevel,maxLevel,uniqueness,beginSequenceAtStart,filterStartNode,labelFilter,relationshipFilter,sequence,endNodes,terminatorNodes,blacklistNodes,whitelistNodes})
 }
 function parseQuery(path,qParams,qArr,queryChange){
@@ -1316,7 +1318,7 @@ function parseQuery(path,qParams,qArr,queryChange){
     qParams.returning = []
     qParams.originalQueryArr = JSON.stringify(qArr)
     let elements = qParams.elements
-    if(!queryChange)parseExpand()
+    parseExpand()
     if(!queryChange)parseCypher()
     parseReturn()
     parseFilters()
@@ -1608,9 +1610,9 @@ function parseQuery(path,qParams,qArr,queryChange){
     function parseReturn(){
         let obj = qArr.filter(x => x.RETURN)[0]
         let expand = qArr.filter(x => x.EXPAND)[0]
+        let args = obj && obj.RETURN || []
         if((!obj || (args.length < 2 && !expand)) && !qParams.expand)throw new Error('Must specify at least one element from "MATCH" to return')
         else if(!obj && qParams.expand)return
-        let args = obj.RETURN
 
         /* 
             args = //[{whole return Config},{userVar1:{configs}},...{userVarN:{configs}}]
@@ -1645,7 +1647,7 @@ function parseQuery(path,qParams,qArr,queryChange){
             elements[userVar].toReturn = true
             let args = tArg[userVar]
             for (const arg in args) {
-                if(!['returnAsArray','props','propsByID','noID','noAddress','raw','idOnly','humanID'].includes(arg))continue //skip over invalid keys
+                if(!['returnAsArray','props','propsByID','noID','noAddress','noInherit','raw','idOnly','humanID'].includes(arg))continue //skip over invalid keys
                 const value = args[arg];
                 if(arg === 'props'){
                     if(!Array.isArray(value))throw new Error('"props" must be an array of values')
@@ -2760,6 +2762,7 @@ function Query(path,userCB,sID){
         for (const id of needsPathRemoved) {//should be diff between sets
             self.invalidatePath(id)//remove things that are in previousStarts, and not in startNodes
         }
+        console.log([...startNodesChecked],[...self.elements.EXPAND.toCheck],[...needsPathRemoved])
         self.removePaths()
         self.startExpand()
     }
@@ -2771,26 +2774,31 @@ function Query(path,userCB,sID){
         self.openPaths = 0
         let needed = self.skip+self.limit-self.paths.length //not getting extra, because this will *probably* spawn more paths than requested
 
-        console.log('things left',toCheck.size, 'currently getting:',needed)
+        //console.log('things left',toCheck.size, 'currently getting:',needed)
         for (const nodeID of toCheck) {
             if(self.openPaths > needed)break
             self.openPaths++
             setTimeout(self.expandNode,1,new Path(thing,nodeID))
         }
         if(!self.openPaths){
-            self.sortPathsByStartNodes()
             console.log('No nodes to evaluate')
+            self.sortPathsByStartNodes()
         }
     }
     this.expandNode = function(pathParams){
         //This function will only ever be called with nodeIDs. We will do all relationship stuff infunction. So ()-[] then ()-[] || ()<<END NODE
         let {curPath,curID,depth,minLevel,maxLevel,filterBy,fullSeq,filter,firstRelations,hasEndNode,validStates} = pathParams
-        let {nodes,blacklistNodes,terminatorNodes,endNodes,whitelistNodes,filterStartNode,beginSequenceAtStart,uniqueness} = self.elements.EXPAND
+        let {toCheck,startNodesChecked,nodes,blacklistNodes,terminatorNodes,endNodes,whitelistNodes,filterStartNode,beginSequenceAtStart,uniqueness} = self.elements.EXPAND
         //console.log({curPath,curID,depth,minLevel,maxLevel,filterBy,fullSeq,filter,firstRelations,hasEndNode,validStates})
 
         let {b,t,i} = parseSoul(curID)
         let endPath = false
         curPath.push(curID)
+        if(depth === 0){
+            toCheck.delete(curID)
+            startNodesChecked.add(curID)
+            
+        }
         if(blacklistNodes.length && blacklistNodes.includes(curID)){
             done(false)
         }else if(terminatorNodes.length && terminatorNodes.includes(curID)){
@@ -2967,7 +2975,8 @@ function Query(path,userCB,sID){
                     getCell(id,pType,function(nextNode){
                         toGet--
                         self.openPaths++
-                        self.expandNode(new Path(pathParams,nextNode,id,pType))
+                        //self.expandNode(new Path(pathParams,nextNode,id,pType))
+                        setTimeout(self.expandNode,1,new Path(pathParams,nextNode,id,pType))
                         if(!toGet)done(true)//pass this current path, done will see if it should add this to result or not
                     },true)
                 }
@@ -2975,10 +2984,7 @@ function Query(path,userCB,sID){
         }
         function done(passed){
             self.openPaths--
-            if(depth === 0){
-                self.elements.EXPAND.toCheck.delete(curID)
-                self.elements.EXPAND.startNodesChecked.add(curID)
-            }
+            
             if(passed && depth >= minLevel && depth <= maxLevel){//in range, should we add this path to result?
                 //console.log('passed',curID)
                 let addPath = false
@@ -3091,11 +3097,11 @@ function Query(path,userCB,sID){
         self.prevSkip = skip
         self.prevLimit = limit
         if(self.resultState){//skip and limit is the same and nothing structural changed, should be really rare for expand
-            console.log('resultState is true, skipping build')
+            //console.log('resultState is true, skipping build')
             self.queryDone(true)
             return
         }else{
-            console.log('building result for output')
+            console.log('Building result for output...')
         }
         const result = self.result = self.paths.slice(skip,skip+limit)
         Object.defineProperty(self.result,'out',{value:{}}) //remake our outer result arr
@@ -3870,7 +3876,7 @@ function Query(path,userCB,sID){
                 let indexInPathArr = pathOrderIdxMap.indexOf(returning[j])
                 let nodeID = pathArr[indexInPathArr]
                 result[i][j] = newThing(returning[j],nodeID) //will return [] || {} w/metadata according to params
-                let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels,idOnly,humanID} = elements[returning[j]]
+                let {props:getProps,returnAsArray,propsByID,noAddress,noInherit,raw:allRaw,rawLabels,idOnly,humanID} = elements[returning[j]]
                 let allPropsToGet = []
                 if(humanID && (idOnly || allIDonly)){
                     countO.count += 1
@@ -3878,7 +3884,7 @@ function Query(path,userCB,sID){
                     thingsToBuild.push([[nodeID,hidP,addValue(0,hidP,countO,true),true,sID]])//getCell arguments
                     let addr = toAddress(nodeID,hidP)
                     if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
-                        let subID = subThing(addr,resultSub(result[i][j],0,rawLabels,hidP),false,{raw:true})
+                        let subID = subThing(addr,resultSub(addr,result[i][j],0,rawLabels,hidP),false,{raw:true})
                         setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
                     }
                 }
@@ -3898,7 +3904,7 @@ function Query(path,userCB,sID){
                         countO.count += 1
                         //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
                         if(sID && !getValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],self)){
-                            let subID = subThing(addr,resultSub(result[i][j],propKey,rawLabels,p),false,{raw})
+                            let subID = subThing(addr,resultSub(addr,result[i][j],propKey,rawLabels,p),false,{raw})
                             setValue(['addrSubs',addr,'paths',pathO[0],indexInPathArr],subID,self)
                         }
                     }else{
@@ -3917,11 +3923,14 @@ function Query(path,userCB,sID){
                     return property
                 }
                 function addValue(property,p,counter,forHumanID){
-                    return function(val){
+                    return function(val,from){
                         result[i][j][property] = val
                         let fullPath = toAddress(nodeID,p)
                         if(!noAddress && !forHumanID){
                             result[i][j].address[property] = fullPath
+                        }
+                        if(!noInherit){
+                            result[i][j].inherit[property] = (fullPath === from) ? false : from
                         }
                         if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
                             replaceLabelIDs(result[i][j],property,val)
@@ -3948,7 +3957,7 @@ function Query(path,userCB,sID){
         if(!thingsToBuild.length)self.queryDone(true)//did not need to get any data, so we must call done manually
         self.resultState = true
         function newThing(el,id){
-            let {props,returnAsArray,noID,noAddress,idOnly,humanID} = elements[el]
+            let {props,returnAsArray,noID,noAddress,noInherit,idOnly,humanID} = elements[el]
             let nodeObj
             if((idOnly || allIDonly) && !humanID){
                 nodeObj = [id]
@@ -3960,58 +3969,8 @@ function Query(path,userCB,sID){
             }
             if(!noID)Object.defineProperty(nodeObj,'id',{value: id})
             if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+            if(!noInherit)Object.defineProperty(nodeObj,'inherit',{value: (returnAsArray) ? [] : {}})
             return nodeObj
-        }
-
-        function findAllPropsNeeded(pathIdx,nodeObj,nodeID,userVar,pathStr,counter){
-            let {props:getProps,returnAsArray,propsByID,noAddress,raw:allRaw,rawLabels} = elements[userVar]
-            let allPropsToGet = []
-            for (let i = 0, l = getProps.length; i < l; i++) {
-                const {alias,as:propAs,raw:rawProp} = getProps[i];
-                let raw = !!allRaw || !!rawProp
-                let p = qParams.aliasToID.id(nodeID,alias)
-                if(p!==undefined){
-                    let propKey = returnKeyAs(i,p,alias,propAs)
-                    allPropsToGet.push([nodeID,p,addValue(propKey,p,counter),raw,sID])//getCell arguments
-                    counter.count += 1
-                    //getCell(nodeID,p,addValue(propKey,p,counter),raw,sID)
-                    let addr = toAddress(nodeID,p)
-                    if(sID && !getValue(['addrSubs',addr,'paths',pathStr,pathIdx],self)){
-                        let subID = subThing(addr,resultSub(nodeObj,propKey,rawLabels,p),false,{raw})
-                        setValue(['addrSubs',addr,'paths',pathStr,pathIdx],subID,self)
-                    }
-                }else{
-                    //what to do? neo returns `null`
-                    console.warn('Cannot find '+alias+' for '+nodeID+' ---setting value as: `undefined`---')
-                    addValue(propKey,p)(undefined)
-                }
-            }
-            return allPropsToGet
-             
-            function returnKeyAs(i,p,alias,propAs){
-                let property = propAs || (propsByID) ? p : alias
-                if(returnAsArray){
-                    property = i
-                }
-                return property
-            }
-            function addValue(property,p,counter){
-                return function(val){
-                    nodeObj[property] = val
-                    let fullPath = toAddress(nodeID,p)
-                    if(!noAddress){
-                        nodeObj.address[property] = fullPath
-                    }
-                    if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
-                        replaceLabelIDs(nodeObj,property,val)
-                    }
-                    counter.count -=1
-                    if(!counter.count){
-                        self.queryDone(true)
-                    }
-                }
-                
-            }
         }
     }
 
@@ -4029,15 +3988,17 @@ function Query(path,userCB,sID){
             }
         }
     }
-    function resultSub(obj,k,rawLabels,p){
+    function resultSub(addr,obj,k,rawLabels,p){
         //obj = [] || {}  j = pval || arrIdx
-        return function(newVal){
+        return function(newVal,from){
             //was failing but now could be passing, or was passing and may be failing (the single null value just set)
             if(!rawLabels && p === 'LABELS' && Array.isArray(val)){
                 replaceLabelIDs(obj,k,newVal)
             }else{
                 obj[k] = newVal
             }
+            if(addr !== from && obj.inherit && !obj.inherit[k])obj.inherit[k] = from
+            else if(addr === from && obj.inherit && obj.inherit[k])obj.inherit[k] = false
             if(self.state !== 'pending'){
                 //even if this is 'running' it will schedule another run through.
                 self.state = 'pending'
@@ -4065,7 +4026,7 @@ function Query(path,userCB,sID){
             console.log('Setting up query: '+ sID)
             let kType = typeof self.sID === 'string' && `'${self.sID}'` || `${self.sID}`
             console.log(`To remove this query: gbase.base('${self.b}').kill(${kType})`)
-            setValue([self.base,self.sID],qParams,querySubs)
+            setValue([self.b,self.sID],qParams,querySubs)
         }
         qParams.state = ''
         self.metrics.addTimeSplit('buildResults/getData')
@@ -4095,8 +4056,8 @@ function Query(path,userCB,sID){
                 }
             }
         }
-        console.log(self.base,self.sID,querySubs)
-        delete querySubs[self.base][self.sID]
+        //console.log(self.b,self.sID,querySubs)
+        delete querySubs[self.b][self.sID]
     }
 
     function Metrics(){

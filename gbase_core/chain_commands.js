@@ -819,7 +819,7 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
         cb = (cb instanceof Function && cb) || function(){}
         let allProps = grabThingPropPaths(gbGet(),path)
         allProps = allProps.map(x => [x,['hidden','archived','deleted','sortval','propType','format']])
-        let {returnAsArray,propsByID,noID,noAddress,raw,subID,props,propAs,partial} = opts || {}
+        let {returnAsArray,propsByID,noID,noAddress,noInherit,raw,subID,props,propAs,partial} = opts || {}
         if(isSub && !subID)subID = Symbol()
         gbGet(allProps,nodeGet)
         return subID
@@ -835,6 +835,7 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
                 }
                 if(!noID)Object.defineProperty(nodeObj,'id',{value: path})
                 if(!noAddress)Object.defineProperty(nodeObj,'address',{value: (returnAsArray) ? [] : {}})
+                if(!noInherit)Object.defineProperty(nodeObj,'inherit',{value: (returnAsArray) ? [] : {}})
                 let allSubs = []
                 let toGet = props.length
                 for (let i = 0,l=props.length; i < l; i++) {
@@ -846,13 +847,14 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
                         property =  propAs && propAs[p] || (propsByID) ? p : getValue(configPathFromChainPath(toAddress(path,p)),gb).alias
                     }
                     let addr = toAddress(path,p)
-                    getCell(path,p,function(val){
+                    getCell(path,p,function(val,from){
                         nodeObj[property] = val
                         if(!noAddress)nodeObj.address[property] = addr
+                        if(!noInherit)nodeObj.inherit[property] = (path === from) ? false : from
                         toGet--
                         if(!toGet)cb.call(cb,nodeObj)
                     },raw,true)
-                    let addrsub = subThing(addr,nodeSubCB(nodeObj,property,cb,partial),false,{raw})
+                    let addrsub = subThing(addr,nodeSubCB(addr,nodeObj,property,cb,partial),false,{raw})
                     allSubs.push(addrsub)
                 }
                 setValue([path,subID],{kill:function(){allSubs.map(x => x.kill())}},nodeSubs)
@@ -862,9 +864,11 @@ const makenodeGet = (gbGet,getCell,subThing,nodeSubs) => (path,isSub) =>{
             }
         }
         
-        function nodeSubCB(obj,keyAs,cb,partial){
-            return function(v){
+        function nodeSubCB(addr,obj,keyAs,cb,partial){
+            return function(v,from){
                 obj[keyAs] = v
+                if(addr !== from && obj.inherit && !obj.inherit[keyAs])obj.inherit[keyAs] = from
+                else if(addr === from && obj.inherit && obj.inherit[keyAs])obj.inherit[keyAs] = false
                 if(partial && !returnAsArray)cb.call(cb,{[keyAs]:v})
                 else cb.call(cb,obj)
             }
@@ -1404,17 +1408,25 @@ const makeimportRelationships = (gun,gbGet,timeLog,timeIndex,getCell) => (path) 
     f.help = function(){
         let fromReadMe =
 `
-**importNewNodeType(*\*(tsv || array)*, *configObj*,*opts*, *cb*)**
-This api is for importing a new node type in to gbase, building the configs from the data.
+**importRelationships(*\*(tsv || array)*, *srcArg*, *trgtArg*, *cb*)**
+This api is for importing relationships to an **existing** relation in the databse.  
+Requirements for this api to work:
+* Source and Target nodeTypes MUST have externalID's
+* The imported file/array must have all the same nodeTypes for the 'Source' column
+* The imported file/array must have all the same nodeTypes for the 'Target' column (can be same or different from the source column)
 
-tsv || array = should have a single header row for the properties on each node.  Should be 2D [[headerRow],[dataRow1],[dataRow2],etc]
-configObj = for this nodeType (not any of the properties). For more info see [config options](#config-options).
-opts = {labels: 'Header Name that contains anything that has labels you want to tag the nodes with'}
+tsv || array = should have a single header row for the properties on each node.  Should be 2D `[[headerRow],[dataRow1],[dataRow2],etc]`
+srcArg = {[src nodeType ID or alias]: 'Header value for the sources'}
+trgtArg = {[trgt nodeType ID or alias]: 'Header value for the targets'}
 cb = function(error||undefined). If there is an error, the cb will fire with an error object, otherwise it will return the new node type id
 
 Usage:
 
-gbase.base(baseID).importNewNodeType(data,{alias: 'Things'},false,console.log)
+
+//data = [['User','hasFriend','since'],[userID,otherUserID,2003]]
+gbase.base(baseID).relation('FRIENDS_WITH').importRelationships(data,{People: 'User'},{People: 'hasFriend'}false,console.log)
+
+**NOTE** In example above, the 'since' property will be created if it is not found on the 'FRIENDS_WITH' relationship type.
 `
         console.log(fromReadMe)
     }
