@@ -1,5 +1,5 @@
 'use strict'
-const {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut} = require('../gbase_core/util.js')
+const {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut} = require('../core/util.js')
 function getBlockTime(unix){
   let date = new Date(unix)
   //console.log(date.toString())

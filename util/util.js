@@ -1,4 +1,4 @@
-const {parseSoul,makeSoul,configPathFromChainPath,ALL_ADDRESSES,getValue,findID,findConfigFromID} = require('../gbase_core/util')
+const {parseSoul,makeSoul,configPathFromChainPath,ALL_ADDRESSES,getValue,findID,findConfigFromID} = require('../core/util')
 const makegetAlias = (gb) => (baseOrAddress,pval)=>{
     if(ALL_ADDRESSES.test(baseOrAddress)){
         let {alias} = getValue(configPathFromChainPath(baseOrAddress), gb) || {}

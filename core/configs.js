@@ -24,7 +24,7 @@ const {convertValueToType,
     toAddress,
     removeP,
     lookupID
-} = require('../gbase_core/util')
+} = require('../core/util')
 
 const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
 
