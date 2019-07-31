@@ -8,7 +8,7 @@ const {
         clientLeft,
         getAlias,
         getProps
-        }=require('./gbase_core/core')
+        }=require('./core/core')
 const { fnHelp }=require('./function_lib/functions')
 
 

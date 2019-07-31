@@ -1,5 +1,5 @@
 const gfn = require('./functions')
-const {convertValueToType,getValue,isMulti,getPropType} = require('../gbase_core/util')
+const {convertValueToType,getValue,isMulti,getPropType} = require('../core/util')
 //FUNCTION STUFF
 const ALL_LINKS_PATTERN = /\{([!#\-.$&,a-z0-9]+)\}/gi
 const makesolve = (gb, getCell) =>function solve(rowID, eq, cb){
