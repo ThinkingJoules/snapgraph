@@ -24,6 +24,6 @@
   },
   "homepage": "https://github.com/ThinkingJoules/snapgraph#readme",
   "dependencies": {
-    "gun": "^0.2019.413"
+    "gun": "^0.2019.428"
   }
 }
