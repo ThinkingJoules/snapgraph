@@ -467,7 +467,17 @@ function getValue(propertyPath, obj){
         return obj[propertyPath[0]]
     }
 }
-
+function mergeObj(oldO,newO){
+    //console.log({oldO,newO})
+    for (const key in newO) {
+        const val = newO[key];
+        if(typeof val === 'object' && val !== null && !Array.isArray(val)){
+            if(typeof oldO[key] !== 'object')oldO[key] = {}
+            mergeObj(oldO[key],newO[key])
+        }
+        oldO[key] = newO[key]
+    }
+}
 //error handling
 function throwError(cb,errmsg){
     let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
@@ -1818,5 +1828,6 @@ module.exports = {
     BASE,
     CONFIG_SOUL,
     TIME_INDEX_PROP,
-    throwError
+    throwError,
+    mergeObj
 }
