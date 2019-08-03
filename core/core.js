@@ -82,7 +82,8 @@ const {
     IS_CONFIG_SOUL,
     TIME_INDEX_PROP,
     ALL_ADDRESSES,
-    StringCMD
+    StringCMD,
+    getLength
 } = require('./util.js')
 let gbGet
 
@@ -986,6 +987,7 @@ function sendToCache(nodeID, p, value){
 }
 let getBuffer = {}
 let getBufferState = true
+
 function getCell(nodeID,p,cb,raw){
     //need to store all the params in the 
     // buffer should be //Map{nodeID: Map{p:[]}}
@@ -1003,7 +1005,7 @@ function getCell(nodeID,p,cb,raw){
             //console.log('RETURNING GET CELL FROM CACHE:',cVal)
             returnGetValue(fromN,p,cVal,cb,raw)
             //console.log('getCell,cache in:',Date.now()-start)
-            return cVal //for using getCell without cb, assuming data is in cache
+            return cVal //for using getCell without cb, assuming data is in cache??
         }
     }
 
@@ -1046,6 +1048,7 @@ function batchedWireReq(){//direct to super peer(s??)
                     if(prop === '_')continue//these are valid gun nodes
                     const value = putObj[prop];
                     let addr = toAddress(soul,prop)
+                    sendToCache(soul,prop,value)
                     let argsArr = doneCBs[addr]
                     let e
                     if(e = isEnq(value)){//send it for another round...
@@ -1060,130 +1063,6 @@ function batchedWireReq(){//direct to super peer(s??)
             }
         })
     })
-}
-
-
-function GUNgetCell(nodeID,p,cb,raw){
-    //need to store all the params in the 
-    // buffer should be //Map{nodeID: Map{p:[]}}
-    let address = toAddress(nodeID,p)
-    let cVal = cache.get(address)
-    let from = address
-    if(cVal !== undefined){
-        while (isEnq(cVal)) {
-            let lookup = isEnq(cVal)
-            cVal = cache.get(lookup)
-            from = lookup
-        }
-        if(cVal !== undefined){
-            let [fromN,p] = removeP(from)
-            //console.log('RETURNING GET CELL FROM CACHE:',cVal)
-            returnGetValue(fromN,p,cVal,cb,raw)
-            //console.log('getCell,cache in:',Date.now()-start)
-            return cVal //for using getCell without cb, assuming data is in cache
-        }
-    }
-
-    //only runs the following when needing network request
-    if(getBufferState){
-        getBufferState = false
-        setTimeout(routeGetBuffer,1)
-    }
-    let args = [cb,raw]
-    if(!getBuffer[nodeID]){
-        getBuffer[nodeID] = new Map()
-    }
-    let argArr = getBuffer[nodeID].get(p)
-    if(!argArr)getBuffer[nodeID].set(p,[args])
-    else argArr.push(args)
-}
-function routeGetBuffer(){
-    let b = Object.assign({},getBuffer)
-    getBuffer = {}
-    getBufferState = true
-    for (const nodeID in b) {
-        if(b[nodeID].size > 40){
-            console.log('FULL')
-            retrieveNode(nodeID,b[nodeID])
-        }else{
-            console.log('PROP')
-            for (const [p,argsArr] of b[nodeID].entries()) {
-                retrieveCell(nodeID,p,argsArr)
-            }
-        }
-    }
-}
-function retrieveCell(nodeID,p,argsArr,cb){
-    //let start = Date.now()
-    //will return the inheritted value if not found on own node
-    gun._.on('out', {
-        get: {'#':nodeID,'.':p},
-        '#': gun._.ask(function(msg){
-            let val = msg.put && msg.put[nodeID] && msg.put[nodeID][p]
-            //everything is cached, all the time? Since we don't have in-memory graph
-            if(isEnq(val)){//will keep getting inherited props until we get to data.
-                sendToCache(nodeID,p,val)
-                let fromAddr = val.slice(1)
-                let [fromSoul, fromP] = removeP(fromAddr)
-                retrieveCell(fromSoul,fromP,argsArr,cb)
-            }else if(typeof val == 'object' && val !== null && val['#']){
-                let s = val['#']
-                gunGet(gun)(s,false,function(obj){
-                    sendToCache(nodeID,p,obj)
-                    handleGetValue(nodeID,p,obj,argsArr)
-                })
-            }else{
-                sendToCache(nodeID,p,val)
-                if(cb){
-                    cb(val)
-                }else{
-                    handleGetValue(nodeID,p,val,argsArr)
-                }
-
-            }
-        })
-    })
-}
-function retrieveNode(nodeID,pMap){
-    let expectedProps = getAllActiveProps(gb,nodeID,{hidden:true,archived:true,deleted:true}).length
-    let collector = new Map()
-    let timeout = setTimeout(nodeReceived,5000)//wait 5 seconds?
-    gun._.on('out', {
-        get: {'#':nodeID},
-        '#': gun._.ask(function(msg){
-            let o = msg.put && msg.put[nodeID]
-            for (const key in o) {
-                if (key === '_')continue
-                const val = o[key];
-                collector.set(key,val)
-            }
-            if(collector.size > expectedProps*0.8)nodeReceived() //wait for 80% of the props?? in case our expected count isn't perfect?
-        })
-    })
-    function nodeReceived(){
-        clearTimeout(timeout)
-        for (const [p,argsArr] of pMap.entries()) {
-            let val = collector.get(p)
-            if(isEnq(val)){//will keep getting inherited props until we get to data.
-                sendToCache(nodeID,p,val)//put the lookup in cache
-                let fromAddr = val.slice(1)
-                let [fromSoul, fromP] = removeP(fromAddr)
-                retrieveCell(fromSoul,fromP,false,function(val){
-                    handleGetValue(fromSoul,fromP,val,argsArr)
-                    //handleGetValue(nodeID,p,val,argsArr)
-                })
-            }else if(typeof val == 'object' && val !== null && val['#']){
-                let s = val['#']
-                gunGet(gun)(s,false,function(obj){
-                    sendToCache(nodeID,p,obj)//put the lookup in cache
-                    handleGetValue(nodeID,p,obj,obj,argsArr)
-                })
-            }else{
-                sendToCache(nodeID,p,val)//put the lookup in cache
-                handleGetValue(nodeID,p,val,argsArr)
-            }   
-        } 
-    }
 }
 function handleGetValue(nodeID,p,val,argsArr){
     //console.log("GET VALUE:",val,{nodeID,p})

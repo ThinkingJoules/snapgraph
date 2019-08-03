@@ -28,10 +28,11 @@ const PROP_TYPE = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+$/i
 
 const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
 const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
-const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
-const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/i
+const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
+const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
 const TIME_DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
 const TIME_RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
+
 
 const TIME_INDEX_PROP = regOr([TIME_DATA_ADDRESS,TIME_RELATION_ADDRESS])
 const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
@@ -1702,6 +1703,14 @@ const gunPut = (gun) => (soul,putO)=>{
     })
 }
 
+function getLength(gun,soul,cb){//direct to super peer(s??)
+    gun._.on('out', {
+        getLength: soul,
+        '#': gun._.ask(function(msg){
+            cb(msg.length)
+        })
+    })
+}
 
 const soulSchema = {//OUTDATED!
     /* legend
@@ -1829,5 +1838,6 @@ module.exports = {
     CONFIG_SOUL,
     TIME_INDEX_PROP,
     throwError,
-    mergeObj
+    mergeObj,
+    getLength
 }

@@ -1,5 +1,5 @@
 'use strict'
-const {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut} = require('../core/util.js')
+const {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut,getLength} = require('../core/util.js')
 function getBlockTime(unix){
   let date = new Date(unix)
   //console.log(date.toString())
@@ -195,7 +195,6 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   //idxID = must be !# !#. !-. soul  THERE IS NO VERIFICATION ON ID OR DATA PASSED IN
   //idxData = if !# = !#$  if idx is !(#|-). then data is !(#|-)$ ...VV
   //idxDate = This is the timestamp you are indexing the idxData at. 
-  let root = gun.back(-1)
   let soulObj = parseSoul(idxID)
 
   opts = opts || {}
@@ -214,19 +213,19 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
   gun.get(idIdx).get(idxData).once(function(prevIdx){
     if (prevIdx !== undefined){//false old index in case of edit
       let oldSoul = makeSoul(Object.assign({},soulObj,{':':getBlockTime(prevIdx)}))
-      root.get(oldSoul).put({[idxData]: false})
+      gun.get(oldSoul).put({[idxData]: false})
     }
     if(archive || deleteThis)return
     //at this point we are editing.
     gun.get(blockIdxSoul).once(function(allBlocks) {//new idxData, check last block time to see if we add to that block or create new block
       if(allBlocks !== undefined){
         if(allBlocks[correctSoul]!== undefined){//add to existing block
-          root.get(correctSoul).put({[idxData]:idxDate})
+          gun.get(correctSoul).put({[idxData]:idxDate})
         }else{//make new block 
           newBlock(allBlocks)
         }
-        put(idIdx,{[idxData]:idxDate})
-        //root.get(idIdx).put({[idxData]:idxDate})//'last' index
+        //put(idIdx,{[idxData]:idxDate})
+        gun.get(idIdx).put({[idxData]:idxDate})//'last' index
       }else{//newSoul, with new src/trgt combo
         newIndex()
       }
@@ -250,40 +249,40 @@ const timeIndex = (gun) => (idxID, idxData, idxDate, opts) =>{
       }
     }
     let newBlock = {prev:prevSoul ,next: nextSoul, [idxData]:idxDate}
-    put(correctSoul,newBlock)
+    //put(correctSoul,newBlock)
     gun.get(blockIdxSoul).put({[correctSoul]:correctBlock})
-    //root.get(correctSoul).put(newBlock)//put data and prev in new block
+    gun.get(correctSoul).put(newBlock)//put data and prev in new block
     if(prevSoul !== null){
-      put(prevSoul,{next:correctSoul})
-      //gun.get(prevSoul).put({next:correctSoul})
+      //put(prevSoul,{next:correctSoul})
+      gun.get(prevSoul).put({next:correctSoul})
     }
     if(prevSoul === null){
       let firstBlock = makeSoul(Object.assign({},soulObj,{':':head}))
-      put(firstBlock,{prev:correctSoul})
-      put(blockIdxSoul,{head:correctBlock})
-      //gun.get(firstBlock).put({prev:correctSoul})
-      //root.get(blockIdxSoul).put({head:correctBlock})
+      //put(firstBlock,{prev:correctSoul})
+      //put(blockIdxSoul,{head:correctBlock})
+      gun.get(firstBlock).put({prev:correctSoul})
+      gun.get(blockIdxSoul).put({head:correctBlock})
     }
     if(nextSoul !== null){
-      put(nextSoul,{prev:correctSoul})
-      //gun.get(nextSoul).put({prev:correctSoul})
+      //put(nextSoul,{prev:correctSoul})
+      gun.get(nextSoul).put({prev:correctSoul})
     }
     if(nextSoul === null){
       let lastBlock = makeSoul(Object.assign({},soulObj,{':':tail}))
-      put(lastBlock,{next:correctSoul})
-      put(blockIdxSoul,{tail:correctBlock})
-      //gun.get(lastBlock).put({next:correctSoul})
-      //root.get(blockIdxSoul).put({tail:correctBlock})
+      // put(lastBlock,{next:correctSoul})
+      // put(blockIdxSoul,{tail:correctBlock})
+      gun.get(lastBlock).put({next:correctSoul})
+      gun.get(blockIdxSoul).put({tail:correctBlock})
     }
   }
   function newIndex(){
     let firstBlock = {prev:null,next:null,[idxData]:idxDate}
-    put(idIdx,{[idxData]:idxDate})
-    put(blockIdxSoul,{[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
-    put(correctSoul,firstBlock)
-    //root.get(idIdx).put({[idxData]:idxDate})
-    //root.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
-    //root.get(correctSoul).put(firstBlock)
+    // put(idIdx,{[idxData]:idxDate})
+    // put(blockIdxSoul,{[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    // put(correctSoul,firstBlock)
+    gun.get(idIdx).put({[idxData]:idxDate})
+    gun.get(blockIdxSoul).put({[correctSoul]:correctBlock,tail:correctBlock,head:correctBlock})
+    gun.get(correctSoul).put(firstBlock)
   }
 }
 
@@ -382,32 +381,44 @@ const getLabeledNodes = (gun,getCell,nodeType,labelArr,cb)=>{
   if(!labelArr || !Array.isArray(labelArr) || (Array.isArray(labelArr) && !labelArr.length))throw new Error('Must specify at least one label')
   let out = []
   //labels should already be IDs, nodeType should be !#
-
-  //if we have a length property on each label, we could find the shortest list first, then get that list, then get the set from those props
-  //for now, we will not.
-  let idx = makeSoul({b,t,l:labelArr[0]})//get first label
-
-  gun.get(idx).once(function(nodes){
-    let nodesToTry = []
-    for (const nodeID in nodes) {
-      const boolean = nodes[nodeID];
-      if(DATA_INSTANCE_NODE.test(nodeID) && boolean){
-        nodesToTry.push(nodeID)
+  let allIdx = []
+  let toGet = labelArr.length
+  for (let i = 0; i < labelArr.length; i++) {
+    const l = labelArr[i];
+    let idx = makeSoul({b,t,l})//get first label
+    getLength(gun,idx,function(len){
+      allIdx.push([idx,len])
+      toGet--
+      if(!toGet){
+        allIdx.sort((a,b)=>a[1]-b[1])
+        getIdx(allIdx[0][0])
       }
-    }
-    let toGet = nodesToTry.length
-    for (const node of nodesToTry) {
-      getCell(node,'LABELS',function(set){
-        toGet--
-        let pass = true
-        for (const label of labelArr) {
-          if(!set.includes(label))pass=false;break; //getCell should give us an array
+    })
+  }
+  function getIdx(idx){
+    gun.get(idx).once(function(nodes){
+      let nodesToTry = []
+      for (const nodeID in nodes) {
+        const boolean = nodes[nodeID];
+        if(DATA_INSTANCE_NODE.test(nodeID) && boolean){
+          nodesToTry.push(nodeID)
         }
-        if(pass)out.push(node)
-        if(!toGet)cb(out)
-      })
-    }
-  })
+      }
+      let toGet = nodesToTry.length
+      for (const node of nodesToTry) {
+        getCell(node,'LABELS',function(set){
+          toGet--
+          let pass = true
+          for (const label of labelArr) {
+            if(!set.includes(label))pass=false;break; //getCell should give us an array
+          }
+          if(pass)out.push(node)
+          if(!toGet)cb(out)
+        })
+      }
+    })
+  }
+  
 }
 
 
