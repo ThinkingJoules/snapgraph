@@ -1,10 +1,17 @@
 {
   "name": "snapgraph",
   "version": "0.3.0",
-  "description": "Used to help organize and create a traversable graph structure.",
-  "main": "index.js",
+  "description": "Used to help organize and create a traversable graph data structure in a mesh network.",
+  "main": "dist/snap.cjs.js",
+  "module": "dist/snap.esm.js",
+  "browser": "dist/snap.min.umd.js",
   "scripts": {
-    "test": "\"echo \\\"Error: no test specified\\\" && exit 1\""
+    "test": "\"echo \\\"Error: no test specified\\\" && exit 1\"",
+    "server": "node index.js",
+    "start": "npm run server",
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "pretest": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -25,5 +32,15 @@
   "homepage": "https://github.com/ThinkingJoules/snapgraph#readme",
   "dependencies": {
     "gun": "^0.2019.428"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "rollup": "^1.19.3",
+    "rollup-plugin-auto-external": "^2.0.0",
+    "rollup-plugin-commonjs": "^10.0.2",
+    "rollup-plugin-node-resolve": "^5.2.0",
+    "rollup-plugin-uglify": "^6.0.2"
   }
 }
