@@ -1,6 +1,5 @@
 "use strict";
-import Gun from ('gun')
-const {
+import {
     configPathFromChainPath,
     gbForUI,
     gbByAlias,
@@ -25,17 +24,19 @@ const {
     TIME_INDEX_PROP,
     ALL_ADDRESSES,
     StringCMD,
-} = require('./util.js')
+    rand,
+    mergeObj,
+    on
+} from './util.js'
 let gbGet
 
 
-const {
-    basicFNvalidity,
-    gbGet:rawgbGet,
-}= require('./configs')
-const makegbGet = rawgbGet(gb)
+import {
+    gbGet as rawgbGet
+} from './configs'
+//const makegbGet = rawgbGet(gb)
 
-const {makenewBase,
+import {makenewBase,
     makenewNodeType,
     makeaddProp,
     makenewNode,
@@ -66,61 +67,109 @@ const {makenewBase,
     makeaddLabel,
     makeimportRelationships,
     makeperformExpand
-} = require('./chain_commands')
+} from './chain_commands'
 let newBase,newNodeType,addProp,newNode,config,edit,nullValue,relatesTo
 let importNewNodeType,archive,unarchive,deleteNode,newFrom
 let performQuery,setAdmin,newGroup,addUser,userAndGroup,chp
 let typeGet, nodeGet, addressGet, getConfig,addLabel, importRelationships,performExpand
-const showgb = makeshowgb(gb)
-const showcache = makeshowcache(cache)
-const showgunsub = makeshowgunsub(gunSubs)
+//const showgb = makeshowgb(gb)
+//const showcache = makeshowcache(cache)
+//const showgunsub = makeshowgunsub(gunSubs)
 
 
-const {makesolve} = require('../function_lib/function_utils');
+import {makesolve} from './functions/function_utils'
 let solve
 
 
-const {timeIndex,
+import {timeIndex,
     queryIndex,
-    timeLog,} = require('../chronicle/chronicle')
+    timeLog,} from '../chronicle/chronicle'
 let qIndex,tIndex,tLog
 
-function Snap(o){
-	if(!(this instanceof Snap)){ return new Snap(o) }
+var isNode=new Function("try {return this===global;}catch(e){return false;}")()
+
+
+
+import Router from './router';
+import MemStore from './memStore'
+import SG from './sg'
+import PeerHandler from './peerManager'
+import commsInit from './peer/listen'
+import addListeners from './events'
+import { create, auth, leave, verify } from './auth/auth';
+
+
+const defaultOpts = {
+    persist: {
+        gossip:isNode,
+        data:isNode, //would be nice to give it a namespace of things to persist (if this peer was only watching 1 db?)
+    },
+    inMemory: {
+        gossip:true,
+        data:true, 
+    },
+    listen: {
+        gossip: isNode,
+        data: (isNode) ? 'namespace' : 'requested' //namespace according to your public records, requested, only things you have asked from that person
+    },
+    log: console.log,
+    debug: function(){}
+}
+
+export default function Snap(initialPeers,opts){
+    if(!new.target){ return new Snap(initialPeers,opts) }
+    opts = opts || {}
+    if(!initialPeers)initialPeers = (isNode) ? [] : ['http://localhost:8765/snap']  // https://www.hello.snapgraph.net/snap //if they want no peers, must specify []
+    if(initialPeers && !Array.isArray(initialPeers))[initialPeers]
+    let self = this
 	this._ = {}
     let root = this._
-    root.graph = root.graph || {};
-    root.ask = root.ask || Snap.ask;
-    root.dup = root.dup || Snap.dup();
-    root.sg = {} //formerly gb
-    root.subs = {addrSubs:{},nodeSubs:{},querySubs:{},configSubs:{}}//this will probably change since my architecture changed...
-    root.inherit = {up:{},down:{}} //was upDeps, downDeps
-    Object.assign(this,snapChainOpt(this))
+    //root.memStore = new MemStore()
+    root.isNode = isNode
+    root.opt = defaultOpts
+    //root.sg = new SG(root)
+    root.tag = {}
+    mergeObj(root.opt,opts) //apply user's ops
+    root.router = new Router(root)
+    root.verify = verify
+    root.on  = on
+    if(isNode){
+        commsInit(root)//listen on port
+    }
+    root.peers = new PeerHandler(root) //this will open new peers
+    root.util = {getValue,setValue,rand}
 
-    let nodeStatesBuffer = {}
-    let stateBuffer = true
-    let gbBases = []
-    const kill = makekill(querySubs,configSubs,killSub)
-    const showgsub = makeshowgsub(querySubs,addrSubs,nodeSubs,configSubs)
+
+    addListeners(root)
+    for (let i = 0; i < initialPeers.length; i++) {
+        root.peers.connect(initialPeers[i])
+    }
+        
+    Object.assign(self,snapChainOpt(self))   
 }
-Snap.ask = require('./ask');
-Snap.dup = require('./dup');
+let nodeStatesBuffer = {}
+let stateBuffer = true
+let gbBases = []
+//const kill = makekill(querySubs,configSubs,killSub)
 
 
 function snapChainOpt(snap){
     return {snap,
-        newBase, 
-        showgb, 
-        showcache, 
-        showgsub, 
-        showgunsub, 
-        solve, 
-        base, 
-        node: node(),
-        ls:ls(),
-        help:chainHelp(),
-        getConfig: getConfig(),
-        kill:kill()
+        signUp:create,
+        signIn:auth,
+        signOut:leave,
+        //newBase, 
+        //showgb, 
+        //showcache, 
+        //showgsub, 
+        //showgunsub, 
+        //solve, 
+        //base, 
+        //node: node(),
+        //ls:ls(),
+        //help:chainHelp(),
+        //getConfig: getConfig(),
+        //kill:kill()
     }
 }
 function baseChainOpt(_path){
@@ -212,189 +261,6 @@ function nodeValueOpt(_path){
         getConfig: getConfig(_path)
     }
 }
-
-
-
-
-
- export const Snap = (function(opts){
-    
-
-
-
-
-
-
-
-
-    //CHAIN CONSTRUCTORS
-    const base = (function(base){
-        //check base for name in gb to find ID, or base is already ID
-        //return baseChainOpt
-        let bases = Object.keys(gb)
-        if(base === undefined && bases.length == 1)base = bases[0]
-        if(!base) throw new Error('You must specify a baseID to use as context!')
-        let path = '!'
-        if(gb[base] !== undefined){
-            path += base
-        }else{
-            for (const baseID in gb) {
-                const {alias} = gb[baseID];
-                if(base === alias){
-                    path += baseID
-                    break
-                }
-            }
-        }
-        if(!path){
-            throw new Error('Cannot find corresponding baseID for alias supplied')
-        }
-        let out = baseChainOpt(path)
-        return out
-    });
-    base.help = function(){
-        let summary = 
-        `
-        Used to move your chain context to a particular base.
-        `
-        let table = {firstArg:{what:'ID or Alias',type:'string'}}
-
-        console.warn(summary)
-        console.table(table)
-    }
-    const nodeType = (path,isNode) =>{
-        const f = (function(label){
-            //check base for name in gb to find ID, or base is already ID
-            //return depending on table type, return correct tableChainOpt
-            let {b} = parseSoul(path)
-            let sym = (isNode) ? 't' : 'r'
-            let under = (isNode) ? 'props' : 'relations'
-            let thingType = makeSoul({b,[sym]:label})
-            let id
-            let tvals = gb[b][under]
-            let check = getValue(configPathFromChainPath(thingType),gb)
-            if(check !== undefined){
-                id = label
-            }else{
-                for (const tval in tvals) {
-                    const {alias,parent} = tvals[tval];
-                    if(label === alias){
-                        id = tval
-                        break
-                    }
-                }
-            }
-            if(!id){
-                throw new Error('Cannot find corresponding ID for alias supplied')
-            }
-            let out
-            let newPath = makeSoul({b,[sym]:id})
-            out = nodeTypeChainOpt(newPath, isNode)
-
-            return out
-        });
-        f.help = function(){
-            let summary = 
-            `
-            Used to move your chain context to a particular type of Node (Not a relationship!).
-            `
-            let table = {firstArg:{what:'ID or Alias',type:'string'}}
-        
-            console.warn(summary)
-            console.table(table)
-        }
-        return f
-    }
-    const prop = (path) =>{
-        const f = (function(prop){
-            //check base for name in gb to find ID, or base is already ID
-            //return depending on table type, return correct columnChainOpt
-            let pathO = parseSoul(path)
-            let {b,t,r,i} = pathO
-            let id
-            let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
-            for (const pval in pvals) {
-                const {alias} = pvals[pval];
-                if(prop === alias || prop === pval){
-                    id = pval
-                    break
-                }
-            }
-            if(!id){
-                throw new Error('Cannot find corresponding ID for prop alias supplied')
-            }
-            let out
-            let newPath = makeSoul(Object.assign(pathO,{p:id}))
-            if(!i){
-                out = propChainOpt(newPath)
-            }else{//called prop from snap.node(ID).prop(name)
-                out = nodeValueOpt(newPath)
-            }
-            return out
-        });
-        f.help = function(){
-            let summary = 
-            `
-            Used to move your chain context to a particular property of your current context.
-            `
-            let table = {firstArg:{what:'ID or Alias',type:'string'}}
-        
-            console.warn(summary)
-            console.table(table)
-        }
-        return f
-    }
-    const node = (path) =>{
-        const f = (function(nodeID){
-            //can be with just id of or could be whole string (!#$ or !-$)
-            //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
-            let testPath = nodeID
-            if(path){//only if coming from base.nodeType.node
-                if(!INSTANCE_OR_ADDRESS.test(nodeID)){
-                    testPath = parseSoul(path)
-                    Object.assign(testPath,{i:testPath})
-                    testPath = makeSoul(testPath)
-                } 
-            }
-    
-            if(DATA_INSTANCE_NODE.test(testPath)){
-                return nodeChainOpt(testPath,true)
-            }else if(RELATION_INSTANCE_NODE.test(testPath)){
-                return nodeChainOpt(testPath,false)
-            }else if(DATA_ADDRESS.test(testPath)){//is a nodeProp
-                return nodeValueOpt(testPath)
-            }else if(RELATION_ADDRESS.test(testPath)){//is a relationProp
-                return nodeValueOpt(testPath)
-            }else{
-                throw new Error('Cannot decipher rowID given')
-            }
-        });
-        f.help = function(){
-            let summary = 
-            `
-            Used to select a specific node OR property on a node (address)
-            `
-            let table = {'1st Arg, Opt 1':{what:'NodeID (!#$,!-$)',type:'string'},'1st Arg, Opt 2':{what:'Address (!#.$,!-.$)',type:'string'}}
-        
-            console.warn(summary)
-            console.table(table)
-        }
-        return f
-    }
-
-    //STATIC CHAIN OPTS
-    
-
-
-})
-
-
-
-
-
-
-
-
 
 
 function dumpStateChanges(){
@@ -1056,14 +922,4 @@ function returnGetValue(fromSoul,fromP,val,cb,raw){
     cb.call(cb,val, fromAddr)
     //console.log('getCell,DATA in:',Date.now()-start)
 
-}
-
-
-
-
-module.exports = {
-    snap,
-    gunToSnap,
-    getAlias,
-    getProps
 }

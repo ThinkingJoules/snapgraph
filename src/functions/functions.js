@@ -1,4 +1,4 @@
-const {evaluateAllFN, findTruth} = require('./function_utils')
+import {evaluateAllFN, findTruth} from './function_utils'
 //GBase FN wrappers
 //all FN except IFERROR will recieve args already resolved of functions
 //args will always be an array
@@ -74,18 +74,6 @@ function IF(args){
     }
     if(findTruth(args[0]))return args[1]
     return args[2]
-}
-function IFERROR(args){
-    if(args.length !== 2){
-        throw new Error('Must pass two arguments for IFERROR()')
-    }
-    let out
-    try{
-        out = evaluateAllFN(args[0])
-    }catch(e){
-        out = evaluateAllFN(args[1])
-    }
-    return out
 }
 function SWITCH(args){
     let argslen = args.length
@@ -391,8 +379,7 @@ function TEST(args){
     let r = new RegExp(eval(regex),flags)
     return r.test(value)
 }
-module.exports = {
-    IFERROR,
+export {
     SUM,
     IF,
     SWITCH,

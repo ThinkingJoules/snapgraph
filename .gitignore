@@ -28,6 +28,3 @@ GOSSIP_STORE
 DATA_STORE
 creds.json
 
-# Rollup bundle
-dist
-bundle.js

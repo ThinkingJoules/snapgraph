@@ -1,7 +1,6 @@
-const{getValue,
+import {getValue,
     configPathFromChainPath,
     findID,
-    findRowID,
     tsvJSONgb,
     convertValueToType,
     getAllActiveProps,
@@ -24,14 +23,13 @@ const{getValue,
     grabThingPropPaths,
     NON_INSTANCE_PATH,
     grabAllIDs,
-    StringCMD,
     BASE,
     lookupID,
     throwError
 
-} = require('./util')
+} from './util'
 
-const{newBaseConfig,
+import {newBaseConfig,
     newNodeTypeConfig,
     newNodePropConfig,
     newRelationshipConfig,
@@ -40,10 +38,10 @@ const{newBaseConfig,
     handleConfigChange,
     loadAllConfigs
 
-} = require('./configs')
+} from './configs'
 
 
-const {relationIndex} = require('../chronicle/chronicle')
+import {relationIndex} from '../chronicle/chronicle'
 
 const DEPS_GET_CELL = ['propType','dataType','format']
 const DEPS_ACTIVE_PROPS = ['hidden','archived','deleted','sortval']
@@ -1658,7 +1656,7 @@ const makeshowgunsub = (gunSubs)=> () =>{
     return gunSubs
 }
 
-module.exports = {
+export {
     makenewBase,
     makenewNodeType,
     makeaddProp,

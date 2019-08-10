@@ -4,14 +4,14 @@
   "description": "Used to help organize and create a traversable graph data structure in a mesh network.",
   "main": "dist/snap.cjs.js",
   "module": "dist/snap.esm.js",
-  "browser": "dist/snap.min.umd.js",
+  "browser": "dist/snap.umd.js",
   "scripts": {
     "test": "\"echo \\\"Error: no test specified\\\" && exit 1\"",
-    "server": "node index.js",
-    "start": "npm run server",
     "build": "rollup -c",
     "dev": "rollup -c -w",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "start": "npm run build && node examples/http.js",
+    "startTest": "npm run build && node examples/testServer.js"
   },
   "repository": {
     "type": "git",
@@ -31,16 +31,20 @@
   },
   "homepage": "https://github.com/ThinkingJoules/snapgraph#readme",
   "dependencies": {
-    "gun": "^0.2019.428"
+    "gun": "^0.2019.428",
+    "node-webcrypto-ossl": "^1.0.48",
+    "text-encoding": "^0.7.0",
+    "ws": "^7.1.1"
   },
   "files": [
-    "dist"
+    "dist/*"
   ],
   "devDependencies": {
     "rollup": "^1.19.3",
     "rollup-plugin-auto-external": "^2.0.0",
     "rollup-plugin-commonjs": "^10.0.2",
-    "rollup-plugin-node-resolve": "^5.2.0",
-    "rollup-plugin-uglify": "^6.0.2"
+    "rollup-plugin-node-builtins": "^2.1.2",
+    "rollup-plugin-node-globals": "^1.4.0",
+    "rollup-plugin-node-resolve": "^5.2.0"
   }
 }

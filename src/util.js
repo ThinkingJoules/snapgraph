@@ -1447,7 +1447,33 @@ function parseIncrement(incr){
 }
 
 
-
+//SNAP STUFF
+const on = function(tag,cb,opts){
+    const onObj = this
+    opts = opts || {}
+    if((cb && cb instanceof Function) || (cb && Array.isArray(cb) && cb.every(x => x instanceof Function))){//adding an event listener
+        if(!getValue(['tag',tag],onObj))setValue(['tag',tag],[],onObj)
+        if((opts.dir || 'push') == 'push'){
+            onObj.tag[tag] = onObj.tag[tag].concat(cb)
+        }else{
+            onObj.tag[tag] = cb.concat(onObj.tag[tag])
+        }
+    }else{//new event on this tag
+        let calls = onObj.tag[tag]
+        if(calls && Array.isArray(calls)){
+            run(calls,cb)
+            function run(calls,eventValue){
+                let inst = calls.slice()
+                next()                
+                function next(){
+                    let nextCall = inst.shift()
+                    nextCall = (nextCall instanceof Function && nextCall) || function(){}
+                    nextCall.call(onObj,eventValue,next)
+                }
+            }
+        }
+    }
+}
 
 
 
@@ -1485,7 +1511,7 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
 
 function rand(len, charSet){
     var s = '';
-    len = len || 24; // you are not going to make a 0 length random number, so no need to check type
+    len = len || 24;
     charSet = charSet || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
     while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
     return s;
@@ -1545,6 +1571,33 @@ function hash(key, seed) {
 
 	return h1 >>> 0;
 }
+function quickHash(s){
+    if(typeof s !== 'string'){ s = String(s) }
+    let c = 0;
+    if(!s.length){ return c }
+    for(let i=0,l=s.length,n; i<l; ++i){
+      n = s.charCodeAt(i);
+      c = ((c<<5)-c)+n;
+      c |= 0;
+    }
+    return c; // Math.abs(c);
+}
+function nodeHash(node){
+    //node should be without the soul {key: value}
+    //we do not include states in our hash
+    let copy = JSON.parse(JSON.stringify(node))
+    delete copy['_'] //if it has meta data remove it
+    return quickHash(JSON.stringify(Object.entries(node).sort((a,b)=>{
+        if (a[0] < b[0]) {
+            return -1;
+        }
+        if (a[0] > b[0]) {
+            return 1;
+        }
+        return 0;
+    })))
+}
+
 
 
 //SOUL STUFF
@@ -1781,7 +1834,7 @@ const soulSchema = {//OUTDATED!
 
 
 
-module.exports = {
+export {
     gunGet,
     gunPut,
     configPathFromChainPath,
@@ -1839,5 +1892,7 @@ module.exports = {
     TIME_INDEX_PROP,
     throwError,
     mergeObj,
-    getLength
+    getLength,
+    nodeHash,
+    on
 }

@@ -1,23 +1,16 @@
-const {convertValueToType,
+import {convertValueToType,
     configPathFromChainPath,
     configSoulFromChainPath,
-    findRowID,
     findID,
     getValue,
     setValue,
     removeFromArr,
-    handleRowEditUndo,
-    findHIDprop,
     rand,
     makeSoul,
     parseSoul,
-    DATA_INSTANCE_NODE,
-    PROPERTY_PATTERN,
-    IS_CONFIG_SOUL,
     putData,
     newID,
     gunGet,
-    gunPut,
     IS_CONFIG,
     ALL_INSTANCE_NODES,
     CONFIG_SOUL,
@@ -25,9 +18,9 @@ const {convertValueToType,
     removeP,
     lookupID,
     throwError
-} = require('../core/util')
+} from './util'
 
-const {verifyLinksAndFNs, ALL_LINKS_PATTERN} = require('../function_lib/function_utils')
+import {verifyLinksAndFNs, ALL_LINKS_PATTERN} from './functions/function_utils'
 
 //CONFIG FUNCTIONS
 const newBaseConfig = (config) =>{
@@ -1145,7 +1138,7 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
 }
 
 
-module.exports = {
+export {
     newBaseConfig,
     newNodeTypeConfig,
     newRelationshipConfig,

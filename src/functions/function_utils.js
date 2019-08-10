@@ -1,5 +1,4 @@
-const gfn = require('./functions')
-const {convertValueToType,getValue,isMulti,getPropType} = require('../core/util')
+import * as gfn from './functions'
 //FUNCTION STUFF
 const ALL_LINKS_PATTERN = /\{([!#\-.$&,a-z0-9]+)\}/gi
 const makesolve = (gb, getCell) =>function solve(rowID, eq, cb){
@@ -595,8 +594,8 @@ const verifyLinksAndFNs = (gb, path, fnString)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split(',')
-        let linkMulti = isMulti(gb,links[0])
-        let valueType = getPropType(gb,links[0])
+        let linkMulti = false //isMulti(gb,links[0])
+        let valueType = false //getPropType(gb,links[0])
         let summation = false
         if(valueType === 'next'){nextUsed = true}
         if(linkMulti && ['prev','lookup'].includes(valueType)){
@@ -664,8 +663,8 @@ const initialParseLinks = (gb, fnString, rowID)=>{
         let replace = match[0]
         let path = match[1]
         let links = path.split(',')
-        let linkMulti = isMulti(gb,links[0])
-        let valueType = getPropType(gb,links[0])
+        let linkMulti = false //isMulti(gb,links[0])
+        let valueType = false //getPropType(gb,links[0])
         let summation = false
         let summationargs = false
         if(linkMulti){
@@ -694,7 +693,7 @@ function getLinks(gb, getCell, path, sObj){
     let {p} = parseSoul(pathInfo.links[0])
     let get = pathInfo.currentRow
     let dataType = getDataType(gb,pathInfo.links[0])
-    let propType = getPropType(gb,pathInfo.links[0])
+    let propType = false//getPropType(gb,pathInfo.links[0])
     if(['child','parent','lookup'].includes(propType)){
         if(dataType === 'unorderedSet'){//multiple links
             getCell(get,p,function(val){
@@ -732,7 +731,7 @@ function getLinks(gb, getCell, path, sObj){
         })  
     }
 }
-module.exports = {
+export {
     evaluateAllFN,
     findTruth,
     findFN,

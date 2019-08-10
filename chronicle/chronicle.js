@@ -1,5 +1,5 @@
 'use strict'
-const {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut,getLength} = require('../core/util.js')
+import {getValue, setValue, makeSoul, parseSoul,DATA_INSTANCE_NODE,configPathFromChainPath,gunGet,gunPut,getLength} from '../src/util'
 function getBlockTime(unix){
   let date = new Date(unix)
   //console.log(date.toString())
@@ -695,7 +695,7 @@ function granularDate(date, depth) {
   return [year.getUTCFullYear(), month.getUTCMonth()+1, day.getUTCDate(), hour.getUTCHours(), mins.getUTCMinutes(), sec.getUTCSeconds(), ms.getUTCMilliseconds()]
 }
 
-module.exports = {
+export {
   timeIndex,
   relationIndex,
   queryIndex,
