@@ -8,66 +8,17 @@ const regOr = (regArr) =>{
     cur = '/'+cur+'/i'
     return eval(cur)
 }
-//soul regex
-const TYPE_INDEX = /^![a-z0-9]+$/i
-const BASE_CONFIG =/^![a-z0-9]+%$/i
-const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$$/i
-const RELATION_STATE = /^![a-z0-9]+-[a-z0-9]+\$$/i
-const BASE = /^![a-z0-9]+$/i
-const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+$/i
-const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+$/i
-const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+$/i
-const LABEL_INDEX = /^![a-z0-9]+&$/i
-const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+$/i
-const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
-const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
-const PROP_CONFIG = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+%$/i
-const TYPE_PROP_INDEX = /^![a-z0-9]+#[a-z0-9]+$/i
-const RELATION_PROP_INDEX = /^![a-z0-9]+-[a-z0-9]+$/i
-const PROP_TYPE = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+$/i
-
-const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
-const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
-const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
-const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
-const TIME_DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
-const TIME_RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
-
-
-const TIME_INDEX_PROP = regOr([TIME_DATA_ADDRESS,TIME_RELATION_ADDRESS])
-const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
-const INSTANCE_OR_ADDRESS = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE,DATA_ADDRESS,RELATION_ADDRESS])
-const NON_INSTANCE_PATH = regOr([BASE,NODE_TYPE,RELATION_TYPE,PROP_TYPE])
-const ALL_ADDRESSES = regOr([DATA_ADDRESS,RELATION_ADDRESS])
-const ALL_TYPE_PATHS = regOr([NODE_TYPE,RELATION_TYPE,LABEL_TYPE])
-const ALL_INSTANCE_NODES = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE])
-const ALL_CONFIGS = {
-    typeIndex: TYPE_INDEX,
-    baseConfig: BASE_CONFIG,
-    propIndex: regOr([TYPE_PROP_INDEX,RELATION_PROP_INDEX]),
-    thingConfig: regOr([TYPE_CONFIG,RELATION_CONFIG]),
-    propConfig: PROP_CONFIG,
-    label: LABEL_TYPE,
-    labelIndex: LABEL_INDEX
-}
-const IS_CONFIG = (soul) =>{
-    let is = false
-    for (const soulType in ALL_CONFIGS) {
-        const r = ALL_CONFIGS[soulType];
-        if(is = r.test(soul))return soulType
-    }
-    return is
-}
-const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX,LABEL_INDEX])
-const CONFIG_SOUL = regOr([BASE_CONFIG,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG])
 
 //other regex
 const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
-const ENQ_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
-const USER_ENQ = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
+const USER_SUB = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
 const LABEL_ID = /\d+l[a-z0-9]+/i
-const NULL_HASH = hash64(JSON.stringify(null))
-const ENQ = String.fromCharCode(5) //enquiry NP char. Using for an escape to say the value that follow is the node to find this prop on
+
+const LINK_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/iu
+const LINK = String.fromCharCode(5) //enquiry NP char. enquire again for next node
+
+const SUB_LOOKUP = /^\u{26}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
+const SUB = String.fromCharCode(26) //substitute NP char. direct replacement, this value is inherited from another.
 
 
 //gb CONFIG HELPERS
@@ -99,28 +50,7 @@ function configPathFromChainPath(thisPath){
 }
 
 //soul creators
-function configSoulFromChainPath(thisPath){
-    //should just need to append % to end if they are in right order..
-    //should parse, then make soul to be safe
-    //assumes path is a valid config base: !, !#, !-, !#., !-.
-    let parse = parseSoul(thisPath)
-    Object.assign(parse,{'%':true})
-    let soul = makeSoul(parse)
-    return soul
 
-}
-function stateIdxSoulFromChainPath(thisPath){
-
-}
-function labelIdxSoulFromChainPath(thisPath){
-
-}
-function dateIdxSoulFromChainPath(thisPath){
-
-}
-function createdIdxSoulFromChainPath(thisPath){
-
-}
 
 
 //alias-ID finders
@@ -747,7 +677,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let raw = ctxRaw[pval]
                 let userVal = putObj[pval]
                 if(inherit && (userVal === undefined || userVal && userVal === val) && !enforceUnique && !autoIncrement){
-                    if(isEnq(raw) && inherit === 'exact'){
+                    if(isLookup(raw) && inherit === 'exact'){
                         temp[pval] = raw //directly look at the reference on the other node (parallel links)
                     }else{
                         temp[pval] = makeEnq(ctx,pval) //no user input, we will inherit from ref (potentially serial links)
@@ -766,7 +696,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             for (const p in putObj) {
                 const userVal = putObj[p], existingR = existingRaw[p], enqV = existingValues[p]
                 console.log(userVal,existingR,enqV)
-                if(own || (isEnq(existingR) && enqV !== userVal) || (!isEnq(existingR) && existingR !== userVal)){
+                if(own || (isLookup(existingR) && enqV !== userVal) || (!isLookup(existingR) && existingR !== userVal)){
                     //if (prop is currently inherited but different) or (fOwns it already and userval is different)
                     cleanPutObj[p] = userVal
                 }
@@ -786,17 +716,17 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let curR = existingRaw[pval]//always undefined if isNew
                 let enqV = existingValues[pval]
                 
-                if(isEnq(val)){//making new val an enq (or changing it)
+                if(isLookup(val)){//making new val an enq (or changing it)
                     let childAddress = val.slice(1)
                     let thisAddr = toAddress(nodeID,pval)
-                    if(isEnq(curR)){
+                    if(isLookup(curR)){
                         let removeAddress = curR.slice(1)
                         changeEnq(false,thisAddr,removeAddress,pval)
                     }
                     changeEnq(true,thisAddr,childAddress,pval)
                 }
                 
-                if(isEnq(curR) && dataType === 'unorderedSet' && !isEnq(val)){
+                if(isLookup(curR) && dataType === 'unorderedSet' && !isLookup(val)){
                     if(typeof val === 'object' && val !== null){ //val must be an object
                         let refVal = (typeof enqV === 'object' && enqV !== null) ? enqV : {}
                         putObj[pval] = Object.assign({},refVal,val) //merge userVal with inherited value? Assumes user is giving partial changes to put on new Obj
@@ -1015,7 +945,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                     cVal = JSON.parse(cVal)//convert value will stringify arrays so they are gun ready 
                 } catch (error) {}
             }
-            if(isEnq(cVal) && !enforceUnique && externalID !== pval){//cannot inherit values on unique properties
+            if(isLookup(cVal) && !enforceUnique && externalID !== pval){//cannot inherit values on unique properties
                 refChanges.push(cVal)
             }
             if(pval === 'LABELS'){
@@ -1210,12 +1140,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
     function changeEnq(add,parentAddr,childAddr){
         //verify parent and child are of the same nodeType
-        if(!DATA_ADDRESS.test(parentAddr) && !isEnq(parentAddr)){
+        if(!DATA_ADDRESS.test(parentAddr) && !isLookup(parentAddr)){
             let e = 'Invalid parent ID referenced for an inheritance'
             err = throwError(cb,e)
             return
         }
-        if(!DATA_ADDRESS.test(childAddr) && !isEnq(childAddr)){
+        if(!DATA_ADDRESS.test(childAddr) && !isLookup(childAddr)){
             let e = 'Invalid child ID referenced for an inheritance'
             err = throwError(cb,e)
             return
@@ -1262,8 +1192,8 @@ function StringCMD(path,appendApiToEnd){
 function convertValueToType(value, toType, rowAlias, delimiter){
     let out
     if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
-    if(isEnq(value))return value//this is a lookup value, just return it.
-    if(USER_ENQ.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
+    if(isLookup(value))return value//this is a lookup value, just return it.
+    if(USER_SUB.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
         return makeEnq(value)
     }
     if(toType === undefined) throw new Error('Must specify what "type" you are trying to convert ' + value + ' to.')
@@ -1453,7 +1383,9 @@ const on = function(tag,cb,opts){
     opts = opts || {}
     if((cb && cb instanceof Function) || (cb && Array.isArray(cb) && cb.every(x => x instanceof Function))){//adding an event listener
         if(!getValue(['tag',tag],onObj))setValue(['tag',tag],[],onObj)
-        if((opts.dir || 'push') == 'push'){
+        if(!Array.isArray(cb))cb = [cb]
+        opts.dir = opts.dir || 'push'
+        if(opts.dir == 'push'){
             onObj.tag[tag] = onObj.tag[tag].concat(cb)
         }else{
             onObj.tag[tag] = cb.concat(onObj.tag[tag])
@@ -1474,8 +1406,319 @@ const on = function(tag,cb,opts){
         }
     }
 }
+const encTime = function(unix){
+    //state only, so we know length will always be 13 and `a` will never start with 0
+    unix = unix || Date.now()
+    if(typeof unix === 'number' && (unix = String(unix)).length === 13){//should ignore Infinity or other low numeric values
+        let a = String.fromCharCode(unix.slice(0,5))
+        let b = String.fromCharCode(checkZeros(unix.slice(5,9)))
+        let c = String.fromCharCode(checkZeros(unix.slice(9)))
+        return a+b+c
+    }
+    return unix
+    function checkZeros(subS){
+        let i = 0
+        while (subS[i] == 0) {
+            subS = subS.slice(i)
+            i++
+        }
+        return (subS || 0) //if it is all zeros we need to return atleast one
+    }
+}
+const decTime = function(str){
+    let a = String(str.charCodeAt(0))
+    let b = [...String(str.charCodeAt(1))]
+    let c = [...String(str.charCodeAt(2))]
+    while(b.length !==4){b.unshift('0')}
+    while(c.length !==4){c.unshift('0')}
+    return +(a+b.join('')+c.join(''))
+}
+
+const ALIAS_LIST = /^~@.+/
+const LOGIN_AUTH_INFO = /^~\*[^@>]+$/
+const PUBKEY_OWNED_PEERS = /^~\*[^@>]+>$/
+const NAMESPACE_LOCATION = /^~!.+/
+
+const TYPE_INDEX = /^![a-z0-9]+#}$/i
+const BASE_CONFIG =/^![a-z0-9]+%$/i
+const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$}$/i
+const RELATION_STATE = /^![a-z0-9]+-[a-z0-9]+\$}$/i
+const BASE = /^![a-z0-9]+$/i
+const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+$/i
+const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+$/i
+const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+$/i
+const LABEL_INDEX = /^![a-z0-9]+&}$/i
+const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+$/i
+const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
+const TYPE_LABEL_INDEX = /^![a-z0-9]+#[a-z0-9]+&}$/i
+const RELATION_INDEX = /^![a-z0-9]+-[a-z0-9]+>[a-z0-9]+<[a-z0-9]+}$/i
+
+const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
+const PROP_CONFIG = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+%$/i
+const TYPE_PROP_INDEX = /^![a-z0-9]+#[a-z0-9]+.}$/i
+const RELATION_PROP_INDEX = /^![a-z0-9]+-[a-z0-9]+.}$/i
+const PROP_TYPE = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+$/i
+
+const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
+const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
+const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
+const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
+const TIME_DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
+const TIME_RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
+
+const BASE_PERM = /^![a-zA-Z0-9]+\|(?:[crud])?$/
+const NT_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\|(?:[crud])?$/
+const PROP_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+.[a-zA-Z0-9]+\|(?:[crud])?$/
+const NODE_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\$[a-zA-Z0-9_]+\|(?:[crud])?$/
+const LABEL_INDEX_PERM = /^![a-zA-Z0-9]+&}\|(?:[crud])?$/
+const TYPE_INDEX_PERM = /^![a-zA-Z0-9]+#}\|(?:[crud])?$/
+const TYPE_PROP_INDEX_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+.}\|(?:[crud])?$/
+const NODE_STATE_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\$}\|(?:[crud])?$/i
 
 
+const TIME_INDEX_PROP = regOr([TIME_DATA_ADDRESS,TIME_RELATION_ADDRESS])
+const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
+const INSTANCE_OR_ADDRESS = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE,DATA_ADDRESS,RELATION_ADDRESS])
+const NON_INSTANCE_PATH = regOr([BASE,NODE_TYPE,RELATION_TYPE,PROP_TYPE])
+const ALL_ADDRESSES = regOr([DATA_ADDRESS,RELATION_ADDRESS])
+const ALL_TYPE_PATHS = regOr([NODE_TYPE,RELATION_TYPE,LABEL_TYPE])
+const ALL_INSTANCE_NODES = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE])
+const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX,LABEL_INDEX])
+const CONFIG_SOUL = regOr([BASE_CONFIG,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG])
+const IS_CONFIG = (id) =>{
+    const ALL = {
+        typeIndex: TYPE_INDEX,
+        baseConfig: BASE_CONFIG,
+        propIndex: regOr([TYPE_PROP_INDEX,RELATION_PROP_INDEX]),
+        thingConfig: regOr([TYPE_CONFIG,RELATION_CONFIG]),
+        propConfig: PROP_CONFIG,
+        label: LABEL_TYPE,
+        labelIndex: LABEL_INDEX
+    }
+    let is = false
+    for (const idType in ALL) {
+        const r = ALL[idType];
+        if(is = r.test(id))return idType
+    }
+    return is
+}
+const IS_PERM = (id) =>{
+    const ALL = {
+        base: BASE_PERM,
+        type: NT_PERM,
+        prop: PROP_PERM,
+        node: NODE_PERM,
+        labelIndex: LABEL_INDEX_PERM,
+        typeIndex: TYPE_INDEX_PERM,
+        typePropIndex: TYPE_PROP_INDEX_PERM,
+        nodeStateIndex: NODE_STATE_PERM
+        //created/time index/blocks?
+    }
+    let is = false
+    for (const idType in ALL) {
+        const r = ALL[idType];
+        if(is = r.test(id))return idType
+    }
+    return is
+}
+const IS_NODE = (id) =>{
+    const ALL = {
+        node: regOr([DATA_INSTANCE_NODE,DATA_ADDRESS]),
+        relation: regOr([RELATION_INSTANCE_NODE,RELATION_ADDRESS]),
+    }
+    let is = false
+    for (const idType in ALL) {
+        const r = ALL[idType];
+        if(is = r.test(id))return idType
+    }
+    return is
+}
+const IS_INDEX = (id) =>{
+    //need this so we check premissions on the keys within the node and not the node id itself
+    const ALL = {
+        state: regOr([NODE_STATE,RELATION_STATE]),
+        label: regOr([TYPE_LABEL_INDEX,RELATION_INDEX]),
+    }
+    let is = false
+    for (const idType in ALL) {
+        const r = ALL[idType];
+        if(is = r.test(id))return idType
+    }
+    return is
+}
+const IS_GOSSIP = (id) =>{
+    const ALL = {
+        alias: ALIAS_LIST,
+        auth: LOGIN_AUTH_INFO,
+        owns: PUBKEY_OWNED_PEERS,
+        resource: NAMESPACE_LOCATION,
+    }
+    let is = false
+    for (const idType in ALL) {
+        const r = ALL[idType];
+        if(is = r.test(id))return idType
+    }
+    return is
+}
+
+function snapID(id,opts){
+    if(!new.target){ return new snapID(id,opts) }
+    
+    const SOUL_ALIAS = {'!':'b','#':'t','-':'r','$':'i','.':'p','^':'g','&':'l','*':'pub','~':'gos'}//makes it easier to type out...
+    const SOUL_SYM_ORDER = '~!#-><.$&^*|%[};:/?@' // "," is used internally for splitting souls, _ is reserved for simple splits in ids
+    //opts will have extract, 
+    if(typeof id === 'string'){
+        if(LINK_LOOKUP.test(id) || SUB_LOOKUP.test(id))id = id.slice(1)//trim first char
+        self.string = id
+        whatIs()
+        stoo()
+        cPath()
+    }else{//? should never need???
+        self.otos()
+    }
+    const self = this
+    function stoo(){//parse string
+        let out = self
+        let last = 0
+        let curSym = [soul[0]]
+        let idx
+        for (const char of SOUL_SYM_ORDER) {
+            if(char === soul[0])continue
+            idx = soul.indexOf(char)
+            if(idx !== -1){
+                toOut()
+                last = idx
+                curSym.push(char)
+            }
+        }
+        //get last segment out, since the end of string will not find add last arg to info
+        toOut(soul.length)
+        function toOut (toIdx){
+            toIdx = toIdx || idx
+            let s = curSym.pop()
+            let al = SOUL_ALIAS[s]
+            let args = soul.slice(last+1,toIdx) || true 
+            out[s] = args
+            if(al)out[al] = args //put both names in output?
+        }
+    }
+    this.otos = function(argObj){//make string
+        //no type uses current state
+        argObj = argObj || self
+        let soul = ''
+        for (const sym of SOUL_SYM_ORDER) {
+            let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
+            if(val !== undefined){
+                soul += sym
+                if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
+                    soul += val
+                }
+            }
+        }
+        return soul
+    }
+    function whatIs(){
+        let temp
+        if((temp = IS_CONFIG(id)))self.is = 'config' 
+        else if((temp = IS_PERM(id)))self.is = 'perm' 
+        else if((temp = IS_INDEX(id))) self.is = 'index' 
+        else if((temp = IS_NODE(id)))self.is = 'node'   
+        else if((temp = IS_GOSSIP(id)))self.is = 'gossip' 
+        self.type = temp
+    }
+    function cPath(){
+        //valid paths: !, !#, !-, !^, !&, !#., !-.
+        let {b,t,r,p,g,l} = self
+        let configpath = [b]
+        if(t){//nodeType
+            configpath = [...configpath, 'props']
+            if(typeof t === 'string')configpath.push(t)
+        }else if(r){
+            configpath = [...configpath, 'relations']
+            if(typeof r === 'string')configpath.push(r)
+        }
+        if(p){
+            configpath = [...configpath, 'props']
+            if(typeof p === 'string')configpath.push(p)
+        }else if(g){
+            configpath = [...configpath, 'groups']
+            if(typeof g === 'string')configpath.push(g)
+        }else if(l){
+            configpath = [...configpath, 'labels']
+            if(typeof l === 'string')configpath.push(l)
+        }
+    
+        self.cPath = configpath
+    
+    }
+    this.toStr = function(){return self.otos()}
+    this.toSnapID = function(){//only for returning the base node !#$ !-$
+        return self.otos({b:self.b,t:self.t,r:self.r,i:self.i})
+    }
+    this.toAddress = function(pval){
+        return self.otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval})
+    }
+    this.toNodeID = function(){//in case there is other meta data on soul, and we just want the p stripped
+        let copy = JSON.parse(JSON.stringify(self))
+        delete copy.p
+        delete copy['.']
+        return self.otos(copy)
+    }
+    this.toLink = function(){
+        return (LINK+self.otos({b:self.b,t:self.t,r:self.r,i:self.i}))
+    }
+    this.toSub = function(pval){
+        pval = pval || self.p
+        return (SUB+self.otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval}))
+    }
+    this.toConfigSoul = function(){
+        //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
+        return self.otos(Object.assign({},self,{'%':true}))
+    }
+    this.toNameSpaceID = function(){
+        return self.otos({b:self.b,'~':true})
+    }
+    this.toStateIndex = function(){
+        return self.otos({b:self.b,t:self.t,r:self.r,'$':true,'}':true})
+    }
+    this.toLabelIndex = function(labelID,targetType){
+        if(self.t){
+            return self.otos({b:self.b,t:self.t,l:labelID,'}':true})
+        }
+        return self.otos({b:self.b,r:self.r,'>':labelID,'<':targetType,'}':true})
+    }
+    this.toDateIndex = function(created){
+        let base = {b:self.b,t:self.t,':':true,'}':true}
+        return self.otos(Object.assign(base,(created?{}:{p:self.p})))
+    }
+
+    this.newDataNodeID = function(id,unix_ms){//assumes you passed in all other symbols
+        let i = (id !== undefined) ? id : rand(3)
+        let t = unix_ms || Date.now()
+        return self.otos({b:self.b,t:self.t,r:self.r,i:(i+'_'+t)})
+    }
+    this.newRelationID = function(src,trgt){
+        return self.otos({b:self.b,t:self.t,r:self.r,i:(hash64(src+trgt))})
+    }
+}
+function isLookup(val){
+    if(typeof val === 'string' && (SUB_LOOKUP.test(val) || LINK_LOOKUP.test(val))){
+        return val.slice(1)
+    }
+    return false
+}
+
+
+function signChallenge(root,peer){
+    let challenge = peer.theirChallenge
+    root.sign(challenge,function(sig){
+        peer.theirChallenge = false
+        if(peer.pub)root.on.pairwise(peer)
+        let m = {m:'auth',r:challenge,b:{auth:sig,pub:root.user.pub}}
+        console.log(m)
+        peer.send(m)
+    })
+}
 
 
 function buildPermObj(type, curPubKey, usersObj,checkOnly){
@@ -1508,11 +1751,11 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
     return out
 }
 
-
-function rand(len, charSet){
+const allChars = Array.from({length:65535},(v,i)=>String.fromCharCode(i)).join('')
+function rand(len, charSet,all){
     var s = '';
     len = len || 24;
-    charSet = charSet || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
+    charSet = charSet || (all && allChars) || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
     while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
     return s;
 }
@@ -1600,88 +1843,6 @@ function nodeHash(node){
 
 
 
-//SOUL STUFF
-const SOUL_ALIAS = {'!':'b','#':'t','-':'r','$':'i','.':'p','^':'g','&':'l'}//makes it easier to type out...
-const SOUL_SYM_ORDER = '!#-><.$&^*|%[;@:/?' // "," is used internally for splitting souls, _ is reserved for simple splits in ids
-function makeSoul(argObj){
-    let length = {'!':10,'#':6,'-':6,'$':10,'.':6,'^':5,'&':7}
-    let soul = ''
-    for (const sym of SOUL_SYM_ORDER) {
-        let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
-        if(val !== undefined){
-            soul += sym
-            if(val === 'new' && length[sym])val=rand(length[sym])
-            if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
-                soul += val
-            }
-        }
-    }
-    return soul
-}
-function parseSoul(soul){
-    //first character of soul MUST be some symbol, or this won't work
-    let out = {}
-    let last = 0
-    let curSym = [soul[0]]
-    let idx
-    for (const char of SOUL_SYM_ORDER) {
-        if(char === soul[0])continue
-        idx = soul.indexOf(char)
-        if(idx !== -1){
-            toOut()
-            last = idx
-            curSym.push(char)
-        }
-    }
-    //get last segment out, since the end of string will not find add last arg to info
-    toOut(soul.length)
-    function toOut (toIdx){
-        toIdx = toIdx || idx
-        let s = curSym.pop()
-        let al = SOUL_ALIAS[s]
-        let args = soul.slice(last+1,toIdx) || true 
-        out[s] = args
-        if(al)out[al] = args //put both names in output?
-    }
-    return out
-}
-function toAddress(node,p){
-    if(ALL_ADDRESSES.test(node))return node
-    return makeSoul(Object.assign(parseSoul(node),{p}))
-}
-function removeP(address){//address > nodeID
-    let idObj = parseSoul(address)
-    let pval = idObj.p
-    delete idObj.p
-    delete idObj['.']
-    return [makeSoul(idObj),pval]
-}
-function isEnq(val){
-    if(typeof val === 'string' && ENQ_LOOKUP.test(val)){
-        return val.slice(1)
-    }
-    return false
-}
-function makeEnq(nodeOrAddress,p){
-    let soul = nodeOrAddress
-    if(p && DATA_INSTANCE_NODE.test(nodeOrAddress)){
-        soul = toAddress(nodeOrAddress,p)
-    }else if(USER_ENQ.test(nodeOrAddress)){
-        soul = nodeOrAddress.match(USER_ENQ)[1]
-    }
-    if(!ALL_ADDRESSES.test(soul))throw new Error('Must specify a full address for a substitute.')
-    return ENQ+soul
-}
-function newDataNodeID(id,unix_ms){
-    let i = (id !== undefined) ? id : rand(3)
-    let t = unix_ms || Date.now()
-    return i+'_'+t
-}
-function newRelationID(src,trgt){
-    return hash64(src+trgt)
-}
-
-
 //SET STUFF
 function intersect(setA, setB) {
     var _intersection = new Set();
@@ -1707,6 +1868,8 @@ function removeFromArr(arr,index){//mutates array to remove value, 7x faster tha
 
     arr.pop();
 }
+
+//SORT STUFF
 function naturalCompare(a, b) {
     let ax = [], bx = [];
     a = String(a).trim().toUpperCase()  //trim and uppercase good idea?
@@ -1838,7 +2001,6 @@ export {
     gunGet,
     gunPut,
     configPathFromChainPath,
-    configSoulFromChainPath,
     findID,
     gbForUI,
     gbByAlias,
@@ -1851,8 +2013,6 @@ export {
     getAllActiveProps,
     buildPermObj,
     rand,
-    makeSoul,
-    parseSoul,
     putData,
     ALL_INSTANCE_NODES,
     DATA_INSTANCE_NODE,
@@ -1860,25 +2020,19 @@ export {
     DATA_ADDRESS,
     RELATION_ADDRESS,
     ISO_DATE_PATTERN,
-    NULL_HASH,
     newID,
     hash64,
-    newDataNodeID,
-    ENQ,
+    SUB,
     INSTANCE_OR_ADDRESS,
     IS_CONFIG_SOUL,
-    isEnq,
-    makeEnq,
-    toAddress,
+    isLookup,
     lookupID,
     getAllActiveNodeTypes,
     getAllActiveRelations,
     collectPropIDs,
     intersect,
     union,
-    findConfigFromID,
     IS_STATE_INDEX,
-    removeP,
     ALL_TYPE_PATHS,
     naturalCompare,
     IS_CONFIG,
@@ -1894,5 +2048,9 @@ export {
     mergeObj,
     getLength,
     nodeHash,
-    on
+    on,
+    encTime,
+    decTime,
+    snapID,
+    signChallenge
 }

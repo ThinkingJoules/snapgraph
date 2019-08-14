@@ -49,7 +49,7 @@ export const create = function(alias, pass, cb){
         root.sign = sign(act.pair)
         root.user = {pub: act.pair.pub,alias:act.data.alias}
         root.util.setValue(['state','cat','ing'],false,root);
-        root.on('auth',act.pair.pub)
+        root.on.auth(act.pair.pub)
         //root.get(tmp = '~'+act.pair.pub).put(act.data); // awesome, now we can actually save the user with their public key as their ID.
         //root.get('~@'+alias).put(Gun.obj.put({}, tmp, Gun.val.link.ify(tmp))); // next up, we want to associate the alias with the public key. So we add it to the alias list.
         
@@ -61,9 +61,11 @@ export const create = function(alias, pass, cb){
 export const leave = function(){
     let snap = this
     let root = snap._
-    root.on('signout',true)
+    root.on.signout()
 }
 export const auth = function(alias, pass, cb, opt){
+    let snap = this
+    let root = snap._
     let cat = getValue(['state','cat'], root) || {}
     cb = cb || function(){};
     if(cat.ing){
@@ -114,7 +116,7 @@ export const auth = function(alias, pass, cb, opt){
     }
     act.g = function(pair){
         act.pair = pair;
-        opt.change? act.z() : done(act.pair);
+        opt.change? act.z() : done();
     }
     act.z = function(){
         // password update so encrypt private key using new pwd + salt
@@ -144,10 +146,12 @@ export const auth = function(alias, pass, cb, opt){
     if(!alias && !pass){
         act.err('NOT SURE!!')
     }
-    function done(pair){
-        root.sign = sign(pair)
-        root.verify = verify(pair)
-        root.alias = alias
+    function done(){
+        root.sign = sign(act.pair)
+        root.user = {pub: data.pub,alias}
+        root.util.setValue(['state','cat','ing'],false,root);
+        root.on.auth()
+        cb(false,data.pub)
     }
 }
 function user(snap){
