@@ -1566,25 +1566,30 @@ function snapID(id,opts){
     
     const SOUL_ALIAS = {'!':'b','#':'t','-':'r','$':'i','.':'p','^':'g','&':'l','*':'pub','~':'gos'}//makes it easier to type out...
     const SOUL_SYM_ORDER = '~!#-><.$&^*|%[};:/?@' // "," is used internally for splitting souls, _ is reserved for simple splits in ids
-    //opts will have extract, 
+    const self = this
+    
+    //opts? will have regex match 'extract', for better performance?
     if(typeof id === 'string'){
         if(LINK_LOOKUP.test(id) || SUB_LOOKUP.test(id))id = id.slice(1)//trim first char
         self.string = id
         whatIs()
-        stoo()
+        let parse = stoo(id)
+        if(Array.isArray(parse))return parse
+        else Object.assign(this,parse)
         cPath()
     }else{//? should never need???
-        self.otos()
+        Object.assign(this,stoo(otos(id)))
     }
-    const self = this
-    function stoo(){//parse string
-        let out = self
+    function stoo(str){//parse string
+        let out = {}
         let last = 0
-        let curSym = [soul[0]]
+        let [id,p] = str.split(String.fromCharCode(30))//shouldn't ever send a flatpack string in?
+        if(p)return [id,p] //will return the split instead of the ido?
+        let curSym = [id[0]]
         let idx
         for (const char of SOUL_SYM_ORDER) {
-            if(char === soul[0])continue
-            idx = soul.indexOf(char)
+            if(char === id[0])continue
+            idx = id.indexOf(char)
             if(idx !== -1){
                 toOut()
                 last = idx
@@ -1592,30 +1597,31 @@ function snapID(id,opts){
             }
         }
         //get last segment out, since the end of string will not find add last arg to info
-        toOut(soul.length)
+        toOut(id.length)
+        return out
         function toOut (toIdx){
             toIdx = toIdx || idx
             let s = curSym.pop()
             let al = SOUL_ALIAS[s]
-            let args = soul.slice(last+1,toIdx) || true 
+            let args = id.slice(last+1,toIdx) || true 
             out[s] = args
             if(al)out[al] = args //put both names in output?
         }
     }
-    this.otos = function(argObj){//make string
+    function otos(argObj){//make string
         //no type uses current state
         argObj = argObj || self
-        let soul = ''
+        let id = ''
         for (const sym of SOUL_SYM_ORDER) {
             let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
             if(val !== undefined){
-                soul += sym
+                id += sym
                 if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
-                    soul += val
+                    id += val
                 }
             }
         }
-        return soul
+        return id
     }
     function whatIs(){
         let temp
@@ -1651,54 +1657,60 @@ function snapID(id,opts){
         self.cPath = configpath
     
     }
-    this.toStr = function(){return self.otos()}
+    this.toStr = function(){return otos(self)}
     this.toSnapID = function(){//only for returning the base node !#$ !-$
-        return self.otos({b:self.b,t:self.t,r:self.r,i:self.i})
+        return otos({b:self.b,t:self.t,r:self.r,i:self.i})
     }
     this.toAddress = function(pval){
-        return self.otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval})
+        return otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval})
+    }
+    this.toFlatPack = function(pval){
+        let first = (!pval)?self.toNodeID():otos(self)
+        let p = pval || self.p
+        if(!p)throw new Error('Invalid flat pack')
+        return first+String.fromCharCode(30)+p
     }
     this.toNodeID = function(){//in case there is other meta data on soul, and we just want the p stripped
         let copy = JSON.parse(JSON.stringify(self))
         delete copy.p
         delete copy['.']
-        return self.otos(copy)
+        return otos(copy)
     }
     this.toLink = function(){
-        return (LINK+self.otos({b:self.b,t:self.t,r:self.r,i:self.i}))
+        return (LINK+otos({b:self.b,t:self.t,r:self.r,i:self.i}))
     }
     this.toSub = function(pval){
         pval = pval || self.p
-        return (SUB+self.otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval}))
+        return (SUB+otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval}))
     }
     this.toConfigSoul = function(){
         //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
-        return self.otos(Object.assign({},self,{'%':true}))
+        return otos(Object.assign({},self,{'%':true}))
     }
     this.toNameSpaceID = function(){
-        return self.otos({b:self.b,'~':true})
+        return otos({b:self.b,'~':true})
     }
     this.toStateIndex = function(){
-        return self.otos({b:self.b,t:self.t,r:self.r,'$':true,'}':true})
+        return otos({b:self.b,t:self.t,r:self.r,'$':true,'}':true})
     }
     this.toLabelIndex = function(labelID,targetType){
         if(self.t){
-            return self.otos({b:self.b,t:self.t,l:labelID,'}':true})
+            return otos({b:self.b,t:self.t,l:labelID,'}':true})
         }
-        return self.otos({b:self.b,r:self.r,'>':labelID,'<':targetType,'}':true})
+        return otos({b:self.b,r:self.r,'>':labelID,'<':targetType,'}':true})
     }
     this.toDateIndex = function(created){
         let base = {b:self.b,t:self.t,':':true,'}':true}
-        return self.otos(Object.assign(base,(created?{}:{p:self.p})))
+        return otos(Object.assign(base,(created?{}:{p:self.p})))
     }
 
     this.newDataNodeID = function(id,unix_ms){//assumes you passed in all other symbols
         let i = (id !== undefined) ? id : rand(3)
         let t = unix_ms || Date.now()
-        return self.otos({b:self.b,t:self.t,r:self.r,i:(i+'_'+t)})
+        return otos({b:self.b,t:self.t,r:self.r,i:(i+'_'+t)})
     }
     this.newRelationID = function(src,trgt){
-        return self.otos({b:self.b,t:self.t,r:self.r,i:(hash64(src+trgt))})
+        return otos({b:self.b,t:self.t,r:self.r,i:(hash64(src+trgt))})
     }
 }
 function isSub(val){
@@ -1723,7 +1735,7 @@ function signChallenge(root,peer){
     root.sign(challenge,function(sig){
         peer.theirChallenge = false
         if(peer.pub)root.on.pairwise(peer)
-        let m = {m:'auth',r:challenge,b:{auth:sig,pub:root.user.pub}}
+        let m = {m:'auth',r:challenge,b:{auth:sig,pub:root.user.pub,is:root.is}}//IS send our ~*PUB> node
         console.log(m)
         peer.send(m)
     })

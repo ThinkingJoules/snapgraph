@@ -77,14 +77,14 @@ export const auth = function(alias, pass, cb, opt){
     var pair = (alias && (alias.pub || alias.epub))? alias : (pass && (pass.pub || pass.epub))? pass : null;
     var act = {}, u;
     act.a = function(data){
-        if(!data){ return act.b() }
-        if(!data.pub){
+        if(!data){ return act.b() }//first call
+        if(!data.pub){//second call
             var tmp = [];
             Gun.node.is(data, function(v){ tmp.push(v) })
             return act.b(tmp);
         }
         if(act.name){ return act.f(data) }
-        act.c((act.data = data).auth); //this sets data.pub a>map>b>getsSoul2>c>ifFail start over
+        act.c((act.data = data).auth); //this sets data.pub a>map>b>getsSoul2>c>d>e   ifFail start over at a
     }
     act.b = function(list){
         var get = (act.list = (act.list||[]).concat(list||[])).shift();
@@ -92,7 +92,7 @@ export const auth = function(alias, pass, cb, opt){
             if(act.name){ return act.err('Your user account is not published for dApps to access, please consider syncing it online, or allowing local access by adding your device as a peer.') }
             return act.err('Wrong user or password.') 
         }
-        root.ask(get,false,act.a)
+        root.getNode(get,false,act.a)
     }
     act.c = function(auth){
         if(u === auth){ return act.b() }
@@ -294,7 +294,7 @@ function user(snap){
     }
 }
 function sign(pair){
-    return function(msg,cb){
+    return function(msg,cb){//WHEN SIGNING VALUES IN SNAP (once we no longer store use SEA), CONCAT KEY AND VALUE Sign(key+value)
         SEA.sign(msg,pair,cb)
     }
 }

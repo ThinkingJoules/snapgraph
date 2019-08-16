@@ -101,6 +101,8 @@ import Resolver from './resolver'
 import addListeners from './events'
 import { create, auth, leave, verify } from './auth/auth';
 import coreApi from './coreApi'
+import {encode,decode} from '@msgpack/msgpack'
+
 
 const defaultOpts = {
     persist: {
@@ -140,8 +142,11 @@ export default function Snap(initialPeers,opts){
         commsInit(root)//listen on port
     }
     coreApi(root)
+    //add diskStore
+    root.is = {}// not here, but need to get them so our intro/auth can send them
+    root.has = {}
 
-    root.util = {getValue,setValue,rand,encTime,decTime}
+    root.util = {getValue,setValue,rand,encTime,decTime,encode,decode}
 
 
     // for (let i = 0; i < initialPeers.length; i++) {

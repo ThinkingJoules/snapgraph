@@ -8,15 +8,14 @@ export default function addListeners (root){
     on.pairwise = function(peer){
         if(peer.pub === root.user.pub){
             peer.hasRoot = true
-            root.mesh.shuffle()
         }
     }
     on.signout = function(){
         delete root.sign
         delete root.user
-        root.mesh.signout()
+        root.mesh.signout()//disconnect all peers, as this peer is no longer authorized to interact with them.
         //really need to force refresh the page
-        //or disconnect all peers, as this peer is no longer authorized to interact with them.
+        
     }
     on.verifiedPeer = function(nowVerified){
         let msgs,peers //'is' should have all the ips we need to add owns to?? shouldn't need the first loop
@@ -63,6 +62,18 @@ export default function addListeners (root){
         }else{
             root.opt.debug('Could not route:',msg)
         }
+    }
+    on.peerDisconnect = function(peer){
+        console.warn('API NOT FINISHED')
+        //remove from resources, as the peer object is still in memory
+        //even though we deleted the reference to it in mesh.peers
+        //can't be garbage collected until all refs are gone
+        //we need to manually do that here.
+
+        //IF CLIENT VVV
+        //if this peer is supplying a resource that we are currently looking for
+        //then we need to see if we are still connected to it with another peer
+        //or if we have additional peers specified 
     }
 }
 

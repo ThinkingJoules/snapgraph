@@ -7,6 +7,7 @@ export default function commsInit(root){
 	let ws = {};
 	ws.server = opt.web;
 	const onM = onMsg(root)
+	const onD = onDisConn(root)
 	if(ws.server && !ws.web){
 		root.WebSocket = WebSocket
 		opt.WebSocket = WebSocket
@@ -18,8 +19,9 @@ export default function commsInit(root){
 			let peer;
 			root.opt.debug('new connection')
 			wire.upgradeReq = wire.upgradeReq || {};
+			let theirIP = wire.url
 			wire.url = url.parse(wire.upgradeReq.url||'', true);
-			peer = new Peer(wire,root.util.rand(12))//if it is another peer, can we see their ip from the wire and use that instead??
+			peer = new Peer(wire,(theirIP || root.util.rand(12)))//if it is another peer, can we see their ip from the wire and use that instead??
 			root.peers.set(peer.id,peer)
 			root.router.send.challenge(peer)//we do not send intro
 			
@@ -28,8 +30,7 @@ export default function commsInit(root){
 			});
 			wire.on('close', function(){//server does not try to reconnect to a peerer
 				root.opt.debug('peerer disconnected')
-				if(peer && peer.wire && peer.wire.close)peer.wire.close()
-				root.mesh.peers.delete(peer.id)
+				onD(peer)
 			});
 			wire.on('error', function(e){});
 			setTimeout(function heart(){ //setInterval??

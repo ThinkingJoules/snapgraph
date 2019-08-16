@@ -1,18 +1,21 @@
-import {onMsg} from './wire'
+import {onMsg, onDisConn, Peer} from './wire'
 import { setValue, signChallenge, getValue } from './util';
+import { parentPort } from 'worker_threads';
 export default function PeerManager(root){
     const self = this
     let opt = root.opt
 
     const onM = onMsg(root)
+    const onD = onDisConn(root)
     let env;
-    if(root.isNode)env = global
+    if(root.isPeer)env = global
     else env = window
     env = env || {};
-    this.websocket = root.WebSocket || env.WebSocket || env.webkitWebSocket || env.mozWebSocket;
+    root.WebSocket = root.WebSocket || env.WebSocket || env.webkitWebSocket || env.mozWebSocket;
 
     this.pack = opt.pack || (opt.memory? (opt.memory * 1000 * 1000) : 1399000000) * 0.3; // max_old_space_size defaults to 1400 MB.
     this.peers = new Map()
+    this.all = new Map()
     this.verifyPeer = function(ido,node){
         //should be !*PUB> id
         //node should be {ipAddress:validation}
@@ -29,11 +32,11 @@ export default function PeerManager(root){
 
     }
     this.auth = function(peer){
-        if(peer){
+        if(peer){//we are already auth'd and we have a new connection, sign it directly
             signChallenge(root,peer)
             return
         }
-        for (const peer of peers.values()) {
+        for (const peer of peers.values()) {//we just auth'd ourselves, sign and send existing challenges
             if(peer.theirChallenge){
                 signChallenge(root,peer)
             }
@@ -41,28 +44,33 @@ export default function PeerManager(root){
     }
     this.signout = function(){
         for (const peer of peers.values()) {
+            let isInitial = peer.initialPeer && peer.id
             peer.wire.close()
             self.peers.delete(peer.id)
+            root.on.peerDisconnect(peer)//need to remove from resources and anywhere else that might be relying on this peer
+            if(isInitial){
+                //want to reconnect so there are some peers
+                setTimeout(()=>{
+                    self.connect(peer.id)
+                },2000)//let socket settle and close fully, could probably be less
+            }
+            //short of a page refresh, this is the best we can do
+            //that way on reconnect we are no long auth'd
         }
     }
-    this.connect = function(ipAddr,cb){
+    this.connect = function(peer,cb){
         let wait = 2 * 1000;
         let doc = 'undefined' !== typeof document && document;
-        if(!ipAddr){ return }
+        if(!peer){ return }
+        let ipAddr = (peer instanceof Peer) ? peer.id : peer
         let url = ipAddr.replace('http', 'ws');
-        let wire = new self.websocket(url);
-        let peer = new Peer(wire,ipAddr)
-        if(!root.isNode)peer.wire.binaryType = 'arraybuffer'
-        peer.challenge = false
-        peer.pub = false
-        peer.has = {}
+        let wire = new root.WebSocket(url);
+        if(!(peer instanceof Peer))peer = new Peer(wire,ipAddr)
+        else peer.wire = wire
+        if(!root.isPeer)peer.wire.binaryType = 'arraybuffer'
         wire.onclose = function(){//if whoever we are connecting to closes
             root.opt.debug('connection lost to peer: ',peer.id)
-            //if this peer is supplying a resource that we are currently looking for
-            //then we need to see if we are still connected to it with another peer
-            //or if we have additional peers specified 
-            if(peer && peer.wire && peer.wire.close)peer.wire.close()
-            root.peers.delete(peer.id)
+            onD(peer)
             reconnect(peer);
         };
         wire.onerror = function(error){
@@ -80,7 +88,7 @@ export default function PeerManager(root){
         };
         return wire
         function reconnect(peer){
-            if(root.isNode)return
+            if(root.isPeer)return
             root.opt.debug('attempting reconnect')
             clearTimeout(peer.defer);
             if(doc && peer.retry <= 0){ return } 
@@ -91,45 +99,51 @@ export default function PeerManager(root){
             }, wait);
         }
     }
-    this.resources = {} //{baseID: Set{pubOwners}}
-    this.pendingMsgs = {} //{baseID: [msg,msg..]}
-    this.addResource = function(ido,node){
-        root.memStore.subNode(ido.toNodeID(),self.updateResource)
-        //id should be ~!baseID node
-        //node should be {ipAddress: {v:pubKeyBaseOwner}}
-        //has already been validated, take as truth
-        let {b} = ido,peer
-        self.resources[b] = self.resources[b] || new Set() 
-        for (const ip in node) {
-            let pubOwner = node[ip].v
-            if(pubOwner !== null)self.resources[b].add(pubOwner)
-            if((peer=root.mesh.peers.get(ip))){
-                if(pubOwner === null && peer.owns){peer.owns.delete(b);continue}
-                if(peer.pub && peer.pub === pubOwner){
-                    peer.owns = peer.owns || new Set()
-                    peer.owns.add(b)
+    this.setPeerState = function(ip,opts){
+        //opts = {owns:{baseID:pubKey attemps adds, false removes},connected,pub,verified,hasRoot}
+        let peer
+        if(!(peer = self.all.get(ip))){
+            peer = self.all.set(ip,new Peer(false,ip,false)).get(ip)
+        }
+        for (const opt in opts) {
+            const value = opts[opt];
+            if(opt === 'owns'){
+                value = value || {}
+                for (const baseID in value) {
+                    if(peer.pub && peer.pub === value[baseID]){
+                        peer.owns.add(b)
+                    }else{
+                        peer.owns.delete(baseID)
+                    }
                 }
+            }else{
+                peer[opt] = value
             }
         }
-        self.shuffleResource()
+        return peer
     }
-    this.updateResource = function(ido,node){
-
-    }
-    this.shuffle = function(){
-        //runs on every new connection
-        //go through all peers and categorize them:
+    this.getBestPeers = function(howMany){
+        //used on gets
+        howMany = howMany || 1
         let all = [...self.peers.values()]
-        self.isPeer = all.filter(x=>x.isPeer).sort((a,b)=>a.ping-b.ping)//superpeers sorted by ping, these should have gossip info on them, treated equally
-        self.isClient = new Map([...self.peers.entries()].filter(x=>!x[1].isPeer))
-        self.ours = all.filter(x=>x.hasRoot).sort((a,b)=>a.ping-b.ping)
+        if(howMany > all.length)howMany = all.length
+        return all.filter(x=>x.isPeer).sort((a,b)=>a.ping-b.ping).slice(0,howMany)//superpeers sorted by ping, these should have gossip info on them, treated equally
     }
-    this.shuffleResource = function(){
-        let res = {}
-        for (const b in self.resources) {
-            const owners = self.resources[b];
-            res[b] = {}
-                
+    this.getNonClients = function(){
+        //used on certain updates
+        //gets all connected peers that are not clients
+        return self.peers.values.filter(x=>x.isPeer)
+    }
+    this.getConnectedNeedingUpdate = function(nodeID,pval){
+        //updates on changes locally that need to be sent to others listening
+        //need to make sure they didn't just send us the update? Probably not job of this fn
+        let all = new Set() //set because we are going to have to use set operation to remove ones that sent us the update
+        for (const {wants} of self.peers.values()) {
+            let ps
+            if(wants && (ps=wants[nodeID]) && ps.has(pval)){
+                all.add(peer)
+            }
         }
-    }
+        return all
+    } 
 }

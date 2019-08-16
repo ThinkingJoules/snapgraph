@@ -20,42 +20,20 @@ export default function coreApi(root){
             //console.log('getCell,cache in:',Date.now()-start)
             return cVal //for using getCell without cb, assuming data is in cache??
         }
-    
-        //only runs the following when needing network request
-        if(r.getCellBufferState){
-            r.getCellBufferState = false
-            setTimeout(r.batchedCellReq,1)
-        }
-        let args = [cb,raw,exact]
-        if(!r.getCellBuffer[nodeID]){
-            r.getCellBuffer[nodeID] = {}
-        }
-        let argArr = r.getCellBuffer[nodeID][p]
-        if(!argArr)r.getCellBuffer[nodeID][p] = [args]
-        else argArr.push(args)
+        root.router.batch.getCell.add(address,[cb,raw,exact])
+       
     }
     root.getNode = function(nodeID,cb,raw){
         //for getting full nodes only (unknown amount of keys)
-        //since we don't know, how can we know? otherwise it is always a network request
-        //maybe thats fine, should only be the non-data nodes that we don't know
-        //gossip nodes, config nodes, some permission nodes
-        //could put a flag in mem on nodeIDs, nodeID:{full:true,props:Set{}}
         let cVal = root.memStore.get(nodeID)
         let r = root.router
         if(cVal !== undefined){
+            //what does raw mean??
             cb(root.memStore.extractVals(cVal))
             return cVal //for using getCell without cb, assuming data is in cache??
         }
-    
         //only runs the following when needing network request
-        if(r.getNodeBufferState){
-            r.getNodeBufferState = false
-            setTimeout(r.batchedNodeReq,1)
-        }
-        let args = [cb,raw]
-        let argArr = r.getNodeBuffer[nodeID]
-        if(!argArr)r.getNodeBuffer[nodeID] = [args]
-        else argArr.push(args)
+        root.router.batch.getNode.add(nodeID,[cb,raw])
     }
     root.put = function(things,cb,opts){
 

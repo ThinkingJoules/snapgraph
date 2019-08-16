@@ -9,51 +9,35 @@ export default function Router(root){
     const send = router.send = {}
     const recv = router.recv = {}
     const route = router.route = {}
-
-    router.getCellBufferState = false //only for getCell calls
-    router.getCellBuffer = {}
-    router.getCellDoneCBs = {} //{[addr:[[cb,raw]]]}
-    router.batchedCellReq = function(){//direct to super peer(s??)
-        let b = Object.assign({},router.getCellBuffer)
-        router.getCellBuffer = {}
-        router.getCellBufferState = true
+    const batch = router.batch = {}
+    batch.getCell = new GetBatch(sendCellReq)
+    batch.getNode = new GetBatch(sendNodeReq)
+    function sendCellReq(b){//direct to super peer(s??)
         let dataRequests = new Map()
         let gossipRequests = new Map()
-        for (const nodeID in b) {//sort requests
-            let node = snapID(nodeID)
-            const pArgs = b[nodeID];
-            let to = (node.is === 'gossip') ? gossipRequests : dataRequests
-            let ps = []
-            if(node.is === 'gossip')to.set(node.toStr(),ps)
-            else to.set(node,ps)
-            for (const p in pArgs) {
-                const argArray = pArgs[p];
-                router.getCellDoneCBs[node.toAddress(p)] = argArray
-                ps.push(p)
-            }
+        for (const addr in b) {//sort requests
+            let node = snapID(addr),nodeID = node.toNodeID(), p = node.p,temp
+            const argArray = b[addr];
+            let to = (node.is === 'node') ? dataRequests : gossipRequests
+            if(!(temp = to.get(nodeID)))temp=to.set(nodeID,[]).get(nodeID)
+            root.memStore.addAskCB(nodeID,p,argArray)
+            temp.push(p)
         }
         if(gossipRequests.size)router.route.askGossip(gossipRequests)
         if(dataRequests.size)router.route.ask(dataRequests)
         //see if we have resources, if not add the messages to pending and setup connection cycle
         //if so, just send the messages
     }
-    router.getNodeBufferState = false //only for getNode calls
-    router.getNodeBuffer = {}
-    router.getNodeDoneCBs = {} //{id:[[cb,raw]]}
-    router.batchedNodeReq = function(){//direct to super peer(s??)
-        let b = Object.assign({},router.getNodeBuffer)
-        router.getNodeBuffer = {}
-        router.getNodeBufferState = true
+    function sendNodeReq(){//direct to super peer(s??)
         let dataRequests = new Map()
         let gossipRequests = new Map()
         for (const nodeID in b) {//sort requests
             let node = snapID(nodeID)
             const cbArr = b[nodeID];
-            let to = (node.is === 'gossip') ? gossipRequests : dataRequests
+            let to = (node.is === 'node') ? dataRequests : gossipRequests
             let ps = false
-            if(node.is === 'gossip')to.set(node.toStr(),ps)
-            else to.set(node,ps)
-            router.getNodeDoneCBs[node.toStr()] = cbArr
+            to.set(nodeID,ps)
+            root.memStore.addAskCB(nodeID,false,cbArr)
         }
         if(gossipRequests.size)router.route.askGossip(gossipRequests)
         if(dataRequests.size)router.route.ask(dataRequests)
@@ -127,12 +111,15 @@ export default function Router(root){
             let {isPeer,has} = value
             peer.isPeer = isPeer
             if(has){//should be valid snap nodes
-                //root.on.in(has,peer)//should send it back around to recv.gossip>resource
+                let things = Object.keys(has)
+                //emulating an ask response
+                for (const id of things) {
+                    root.memStore.addAskCB(id,false,[(node)=>{root.assets.processResourceNode(id,node)}])
+                    root.assets.subResource(id)
+                }
                 root.resolver.resolveAsk({checkSigs:new Map(Object.entries(has))})//emulate an ask response
             }
-            
             next()
-            //b should have auth, need to verify sig and compare to challenge
         }
     }
     recv.intro = function(msg){//this is what the receiver is going to do on getting it
@@ -166,12 +153,21 @@ export default function Router(root){
         peer.send(msg)
         function onDone(value,next){//what to do with their response
             console.log('HAS SIG',value,this)
-            let {auth,pub} = value
+            let {auth,pub,is} = value
             root.verify(auth,pub,function(valid){
                 if(valid){
                     root.opt.debug('Valid signature, now authenticated!')
                     peer.pub = pub
                     peer.challenge = false
+                    if(is){
+                        let things = Object.keys(is)
+                        //emulating an ask response
+                        for (const id of things) {
+                            root.memStore.addAskCB(id,false,[(node)=>{root.assets.processPeerOwnershipNode(id,node)}])
+                            root.assets.subPeerOwnership(id)
+                        }
+                        root.resolver.resolveAsk({checkSigs:new Map(Object.entries(is))})//emulate an ask response
+                    }
                     if(root.user)root.on.pairwise(peer)
                 }else{
                     root.opt.log('Signature did not validate!')
@@ -265,26 +261,7 @@ export default function Router(root){
                 router.send.ask(to,msgBody)
             }
         }
-        function isConn(base){
-            let seen = getValue(['resources',b])
-            if(!seen)return false
-            let peers
-            if((peers = Object.values(seen.connected)) && peers.length){
-                let owns = peers.filter(x=>x.owns.has(base))
-                if(owns.length) return owns//returning peerObjects
-                return peers
-            }
-            return false
-        }
-        function needsConn(base){
-            let seen = getValue(['resources',b])
-            if(!seen)return false
-            let peers
-            if(seen.peers && (peers = seen.peers) && peers.length){
-                return peers//returning array of urls
-            }
-            return false
-        }
+        
 
         
     }
@@ -453,3 +430,29 @@ export default function Router(root){
     }
 }
 
+function GetBatch(onFlush){
+    let self = this
+    this.state = true //only for getCell calls
+    this.buffer = {}
+    this.cbs = {} //{[addr:[[cb,raw]]]}
+    this.onFlush = onFlush
+    this.done = function(){
+        let b = Object.assign({},self.buffer)
+        self.buffer = {}
+        self.state = true
+        if(self.onFlush instanceof Function)self.onFlush(b)
+    }
+    //only runs the following when needing network request
+    this.add = function(id,cbArgs){
+        if(self.state){
+            self.state = false
+            setTimeout(self.done,1)
+        }
+        if(!self.buffer[id]){
+            self.buffer[id] = []
+        }
+        let cur = self.buffer[id] || (self.buffer[id] = [])
+        cur.push(cbArgs)
+    }
+    
+}

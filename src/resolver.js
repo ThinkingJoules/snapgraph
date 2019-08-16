@@ -201,13 +201,13 @@ export default function Resolver(root){
         //so right now, v = s and verify returns v, but at somepoint it will not be
         let toGet = Object.keys(node).length//not very efficient? need to find a faster way
         switch (ido.type) {
-            case 'resource':
-                let {b} = ido
+            case 'owns': //~*PUB> 
+                let {pub} = ido
                 for (const ip in node) {
-                    const {v,s} = node[ip]; //v is pub in this one, we signed the ip value
+                    const {v,s} = node[ip]; //v is just true..., 
                     if(!s){got(node,ip);continue} //must be signed
-                    root.verify(s,v,function(val){
-                        if(val === ip){
+                    root.verify(s,pub,function(val){
+                        if(val === (ip+v)){
                             got()
                         }else{
                             got(node,ip)
@@ -216,14 +216,26 @@ export default function Resolver(root){
                     })
                 }
                 break;
-            case 'owns': //~*PUB> keys are ips, v is pubkey o
+            case 'resource': //~!BASEID
+                for (const ip in node) {
+                    const {v,s} = node[ip]; //v is pub in this one, we signed the ip value
+                    if(!s){got(node,ip);continue} //must be signed
+                    root.verify(s,v,function(val){
+                        if(val === (ip+v)){
+                            got()
+                        }else{
+                            got(node,ip)
+                            console.log('sig failed. auth.verifyGossip')
+                        }
+                    })
+                }
+                break;
             case 'auth': //~*PUB
-                let {pub} = ido
                 for (const key in node) {//keys are gun auth node keys
                     const {v,s} = node[key];
                     if(!s){got(node,key);continue} //must be signed
                     root.verify(s,pub,function(val){
-                        if(val === v){
+                        if(val === (key+v)){
                             got()
                         }else{
                             got(node,key)
@@ -232,12 +244,12 @@ export default function Resolver(root){
                     })
                 }
                 break;
-            case 'alias':
+            case 'alias': //~@ALIAS
                 for (const pub in node) {
                     const {v,s} = node[pub];//v is powhash/randNumber
                     if(!s){got(node,pub);continue} //must be signed
                     root.verify(s,pub,function(val){
-                        if(val === v){
+                        if(val === (pub+v)){
                             got()
                         }else{
                             got(node,pub)

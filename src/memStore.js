@@ -5,6 +5,38 @@ export default function MemStore(root){
     this.mem = new Map()
     this.addrSubs = {}
     this.nodeSubs = {}
+    this.askCBs = {}
+    this.addAskCB = function(id,p,argsArr){
+        let thing = self.askCBs[id] || (self.askCBs[id] = {node:[],props:{}})
+        if(!p){thing.node.push(argsArr);return}
+        let prop = thing.props[p] || (thing.props[p] = [])
+        prop.push(argsArr)
+    }
+    this.fulfillAsk = function(id,p,value){
+        let thing = self.askCBs[id]
+        if(!p && !thing.node.length){return}
+        if(!p){
+            self.addFullNode(id)
+            for (const [cb,raw] of thing.node) {
+                if(!raw){}//apply formatting
+                if(cb instanceof Function)cb(self.extractVals(value))//value is full obj w/meta
+            }
+            thing.node = [] //zero out
+            return
+        }
+
+        let prop = thing.props[p]
+        if(!(prop && prop.length))return
+        for (const args of prop) {
+            self.addPropToNode(id,p)
+            let s = isSub(value)
+            if(s && !args[2]){//args[2] = truthy flag for exact value at this address, not the inherited/linked value
+                root.getCell(s.toNodeID(),s.p,...args)
+            }else{
+                self.returnGetValue(id,prop,value,...args)//value is just value, no meta
+            }
+        }
+    }
     this.addPropToNode = function(id,prop){
         let thing = self.mem.get(id) || self.mem.set(id,{full:false,props:new Set()}).get(id)
         thing.props.add(prop)
@@ -20,22 +52,24 @@ export default function MemStore(root){
             if(ps && ps.full){//only nodes with full flag can be gotten without network
                 let out = {}
                 for (const p of ps) {
-                    out[p] = self.mem.get(ido.toAddress(p))
+                    out[p] = self.mem.get(ido.toFlatPack(p))
                 }
                 return out
             }
             return
         }
-        return self.mem.get(ido.toAddress(pval))
+        return self.mem.get(ido.toFlatPack(pval))
     }
     this.getAddrValue = function(nodeID,pval){//returns the substituted value
-        let address = snapID(nodeID).toAddress(pval)
-        let v = self.mem.get(address)//if it is inherited we want the value to go out to buffer
+        let ido = snapID(nodeID)
+        let address = ido.toAddress(pval)
+        let memAddr = ido.toFlatPack(pval)
+        let v = self.mem.get(memAddr)//if it is inherited we want the value to go out to buffer
         let from = address
         let lookup 
         while ((lookup = isSub((v && v.v)))) {
             from = lookup.toStr()
-            v = self.mem.get(from)
+            v = self.mem.get(lookup.toFlatPack())
             v = v && v.v
         }
         return [v,from]
@@ -54,40 +88,11 @@ export default function MemStore(root){
         //just need to add them to store, fire cb's, and (opt) send to persist
         for (const id in things) {
             const obj = things[id];
-            self.mem[id] = self.mem[id] || new Set()
-            let temp
-            if((temp = root.router.getNodeDoneCBs[id])){
-                // we requested a full node
-                // so we can put the 'full' flag in mem
-                self.addFullNode(id)
-                for (const [cb,raw] of temp) {
-                    if(!raw)//apply formatting
-                    cb(self.extractVals(obj))
-                }
-            }
-            let ido = snapID(id)
+            self.fulfillAsk(id,false,obj)
             for (const prop in obj) {
-                self.addPropToNode(id,prop)
-                self.mem[id].add(prop)
                 const vase = obj[prop];
-                let addr = ido.toAddress(prop)
                 self.sendToCache(id,prop,vase)
-                let argsArr = root.router.getCellDoneCBs[addr]
-                if(!argsArr) continue
-                for (const args of argsArr) {
-                    let s = isSub(vase.v)
-                    if(s && !args[2]){//args[2] = truthy flag for exact value at this address, not the inherited/linked value
-                        // if(!p){//link to another node... that represents this value???No, just like substitute effectively
-                        //     root.getNode(s,function(node){
-                        //         self.returnGetValue(s,false,node,...args)
-                        //     },true)
-                        // }else{//direct substitue
-                            root.getCell(s.toNodeID(),s.p,...args)
-                        // }
-                    }else{
-                        self.returnGetValue(id,prop,vase.v,...args)
-                    }
-                }
+                self.fulfillAsk(id,prop,vase.v)
             } 
         }
     }
@@ -100,8 +105,9 @@ export default function MemStore(root){
         return copy
     }
     this.sendToCache = function(nodeID, p, vase){
-        let newEnq = handleCacheDep(nodeID,p,vase.v)//will get deps correct so we can return proper data to buffer
-        let address = toAddress(nodeID,p)
+        let ido = snapID(nodeID)
+        let newEnq = handleCacheDep(ido,p,vase.v)//will get deps correct so we can return proper data to buffer
+        let address = ido.toAddress(p)
         let [v,from] = self.getAddrValue(nodeID,p)
         if(newEnq || (from === address && vase.v !== v)){//this is some sort of new/changed value
             self.mem.set(address,vase)
@@ -116,8 +122,8 @@ export default function MemStore(root){
                     for (const depAddr of deps) {
                         let subs = addrSubs[depAddr]
                         if(subs === undefined)continue
-                        let [nodeID,pval]= removeP(depAddr)
-                        root.getCell(nodeID,pval,processValue(depAddr,subs),true,false)
+                        let ido = snapID(depAddr)
+                        root.getCell(ido.toNodeID(),ido.p,processValue(depAddr,subs),true,false)
                         checkDeps(depAddr)//recur... until it can't
                     }
                 }
@@ -127,16 +133,15 @@ export default function MemStore(root){
     }
     this.upDeps = {}
     this.downDeps = {}
-    this.handleCacheDep = function(nodeID, pval, val){
-        let ido = snapID(nodeID)
-        const address = ido.toAddress(pval)
-        let [s,p] = isLookup(val)
-        if(!s){//could have changed from Enq to val
+    this.handleCacheDep = function(nodeIDO, pval, val){
+        const address = nodeIDO.toAddress(pval)
+        let ido = isSub(val)
+        if(!ido){//could have changed from Enq to val
             return removeDep()
         }
         let downDeps = self.downDeps
         let upDeps = self.upDeps
-        let inheritsNodeID = snapID(s).toAddress(p)
+        let inheritsNodeID = ido.toStr()//should be an address
         const looksAtAddress = inheritsNodeID
         if(!downDeps[address]){//add
             addDep()
@@ -189,7 +194,7 @@ export default function MemStore(root){
         
     }
     
-    function formatData(format, pType,dType,val){
+    function formatData(format, pType,dType,val){//TODO
         //returns the formatted value
         if(format){
             if(pType === 'date'){
@@ -204,9 +209,9 @@ export default function MemStore(root){
     }
     
     
-    function processValue(addr,subs){
+    function processValue(addr,subs){//UPDATE
         return function(val,from){
-            let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
+            let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)//UPDATE
             if(dataType === 'array'){
                 try{
                     val = JSON.parse(val)
@@ -246,13 +251,12 @@ export default function MemStore(root){
         }
         //so we have data on this soul and this should be returned to the cb
         if(dataType === 'unorderedSet'){//this will be a full object
-            let data = JSON.parse(JSON.stringify(val))
+            let data = val //JSON.parse(JSON.stringify(val))
             let setVals = []
             if(Array.isArray(data)){
                 setVals = data.slice()
             }else{
-                for (const key in data) {
-                    if(key === '_')continue
+                for (const key in data) {// just return the object?
                     const boolean = data[key];
                     if (boolean) {//if currently part of the set
                         setVals.push(key) 
@@ -264,10 +268,10 @@ export default function MemStore(root){
             val = setVals
         }else if(dataType === 'array'){
             try {
-                val = JSON.parse(val)
+                val = val //JSON.parse(val)
                 for (let i = 0; i < val.length; i++) {
                     const el = val[i];
-                    if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                    if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion HOW DOES MSG PACK HANDLE IT?
                         val[i] = new Date(el)
                     }
                 }
