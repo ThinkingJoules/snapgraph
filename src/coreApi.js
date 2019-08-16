@@ -1,43 +1,61 @@
 import {onDisConn,onMsg,Peer} from './wire'
-import { snapID, isLookup } from './util';
+import { snapID, isLink, isSub } from './util';
 export default function coreApi(root){
-    root.getCell = function(nodeID,p,cb,raw){
+    root.getCell = function(nodeID,p,cb,raw,exact){
         //need to store all the params in the 
         // buffer should be //Map{nodeID: Map{p:[]}}
         let address = snapID(nodeID).toAddress(p)
-        let cVal = root.memStore.get(nodeID,p)
+        let cVal = (root.memStore.get(nodeID,p) || {}).v
         let from = address
         let r = root.router
+        if(!exact){
+            let res = root.memStore.getAddrValue(nodeID,p)
+            cVal = res[0]
+            from = res[1]
+        }
         if(cVal !== undefined){
-            let lookup
-            while ((lookup = isLookup(cVal))) {
-                cVal = root.memStore.get(lookup)//lookup could be an address or a nodeid
-                from = lookup
-            }
-            if(cVal !== undefined){
-                let ido = snapID(from)
-                //console.log('RETURNING GET CELL FROM CACHE:',cVal)
-                r.returnGetValue(ido.toNodeID(),ido.p,cVal,cb,raw)
-                //console.log('getCell,cache in:',Date.now()-start)
-                return cVal //for using getCell without cb, assuming data is in cache??
-            }
+            let ido = snapID(from)
+            //console.log('RETURNING GET CELL FROM CACHE:',cVal)
+            r.returnGetValue(ido.toNodeID(),ido.p,cVal,cb,raw)
+            //console.log('getCell,cache in:',Date.now()-start)
+            return cVal //for using getCell without cb, assuming data is in cache??
         }
     
         //only runs the following when needing network request
-        if(r.getBufferState){
-            r.getBufferState = false
-            setTimeout(r.batchedReq,1)
+        if(r.getCellBufferState){
+            r.getCellBufferState = false
+            setTimeout(r.batchedCellReq,1)
         }
-        let args = [cb,raw]
-        if(!r.getBuffer[nodeID]){
-            r.getBuffer[nodeID] = {}
+        let args = [cb,raw,exact]
+        if(!r.getCellBuffer[nodeID]){
+            r.getCellBuffer[nodeID] = {}
         }
-        let argArr = r.getBuffer[nodeID][p]
-        if(!argArr)getBuffer[nodeID][p] = [args]
+        let argArr = r.getCellBuffer[nodeID][p]
+        if(!argArr)r.getCellBuffer[nodeID][p] = [args]
         else argArr.push(args)
     }
-    root.get = function(things,cb,opts){
+    root.getNode = function(nodeID,cb,raw){
         //for getting full nodes only (unknown amount of keys)
+        //since we don't know, how can we know? otherwise it is always a network request
+        //maybe thats fine, should only be the non-data nodes that we don't know
+        //gossip nodes, config nodes, some permission nodes
+        //could put a flag in mem on nodeIDs, nodeID:{full:true,props:Set{}}
+        let cVal = root.memStore.get(nodeID)
+        let r = root.router
+        if(cVal !== undefined){
+            cb(root.memStore.extractVals(cVal))
+            return cVal //for using getCell without cb, assuming data is in cache??
+        }
+    
+        //only runs the following when needing network request
+        if(r.getNodeBufferState){
+            r.getNodeBufferState = false
+            setTimeout(r.batchedNodeReq,1)
+        }
+        let args = [cb,raw]
+        let argArr = r.getNodeBuffer[nodeID]
+        if(!argArr)r.getNodeBuffer[nodeID] = [args]
+        else argArr.push(args)
     }
     root.put = function(things,cb,opts){
 

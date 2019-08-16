@@ -1,5 +1,5 @@
 import {onMsg} from './wire'
-import { setValue, signChallenge } from './util';
+import { setValue, signChallenge, getValue } from './util';
 export default function PeerManager(root){
     const self = this
     let opt = root.opt
@@ -18,14 +18,14 @@ export default function PeerManager(root){
         //node should be {ipAddress:validation}
         //has already been validated, take as truth
         let {pub} = ido
-        let temp,peer
+        let nowVerified = new Set(),peer
         for (const ip in node) {
             if((peer=self.peers.get(ip)) && (peer.pub && peer.pub === pub)){
                 peer.verified = true
-                temp = true
+                nowVerified.add(peer.id)
             }
         }
-        if(temp)root.on.verifiedPeer()
+        if(nowVerified.length)root.on.verifiedPeer(nowVerified)
 
     }
     this.auth = function(peer){
@@ -45,7 +45,7 @@ export default function PeerManager(root){
             self.peers.delete(peer.id)
         }
     }
-    this.connect = function(ipAddr,cb,resource){
+    this.connect = function(ipAddr,cb){
         let wait = 2 * 1000;
         let doc = 'undefined' !== typeof document && document;
         if(!ipAddr){ return }
@@ -73,7 +73,7 @@ export default function PeerManager(root){
             self.peers.set(peer.id,peer)
             root.router.send.intro(peer)
             root.router.send.auth(peer)
-            if(cb && cb instanceof Function)cb(peer)//hook so we know when this peer is connected
+            if(cb && cb instanceof Function)cb(peer)//hook so we know when this peer is connected??
         }
         wire.onmessage = function(raw){
             onM((raw.data || raw),peer)
@@ -91,6 +91,31 @@ export default function PeerManager(root){
             }, wait);
         }
     }
+    this.resources = {} //{baseID: Set{pubOwners}}
+    this.pendingMsgs = {} //{baseID: [msg,msg..]}
+    this.addResource = function(ido,node){
+        root.memStore.subNode(ido.toNodeID(),self.updateResource)
+        //id should be ~!baseID node
+        //node should be {ipAddress: {v:pubKeyBaseOwner}}
+        //has already been validated, take as truth
+        let {b} = ido,peer
+        self.resources[b] = self.resources[b] || new Set() 
+        for (const ip in node) {
+            let pubOwner = node[ip].v
+            if(pubOwner !== null)self.resources[b].add(pubOwner)
+            if((peer=root.mesh.peers.get(ip))){
+                if(pubOwner === null && peer.owns){peer.owns.delete(b);continue}
+                if(peer.pub && peer.pub === pubOwner){
+                    peer.owns = peer.owns || new Set()
+                    peer.owns.add(b)
+                }
+            }
+        }
+        self.shuffleResource()
+    }
+    this.updateResource = function(ido,node){
+
+    }
     this.shuffle = function(){
         //runs on every new connection
         //go through all peers and categorize them:
@@ -98,5 +123,13 @@ export default function PeerManager(root){
         self.isPeer = all.filter(x=>x.isPeer).sort((a,b)=>a.ping-b.ping)//superpeers sorted by ping, these should have gossip info on them, treated equally
         self.isClient = new Map([...self.peers.entries()].filter(x=>!x[1].isPeer))
         self.ours = all.filter(x=>x.hasRoot).sort((a,b)=>a.ping-b.ping)
+    }
+    this.shuffleResource = function(){
+        let res = {}
+        for (const b in self.resources) {
+            const owners = self.resources[b];
+            res[b] = {}
+                
+        }
     }
 }

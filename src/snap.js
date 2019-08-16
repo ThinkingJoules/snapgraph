@@ -94,6 +94,7 @@ var isNode=new Function("try {return this===global;}catch(e){return false;}")()
 import Router from './router';
 import MemStore from './memStore'
 import SG from './sg'
+import ResourceManager from './resources'
 import PeerManager from './peerManager'
 import commsInit from './peer/listen'
 import Resolver from './resolver'
@@ -131,7 +132,7 @@ export default function Snap(initialPeers,opts){
 
     //root.memStore = new MemStore()
     //root.sg = new SG(root)
-    root.resources = {}
+    root.assets = new ResourceManager(root)
     root.mesh = new PeerManager(root)
     root.router = new Router(root)
     root.resolver = new Resolver(root)

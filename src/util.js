@@ -1701,9 +1701,18 @@ function snapID(id,opts){
         return self.otos({b:self.b,t:self.t,r:self.r,i:(hash64(src+trgt))})
     }
 }
-function isLookup(val){
-    if(typeof val === 'string' && (SUB_LOOKUP.test(val) || LINK_LOOKUP.test(val))){
-        return val.slice(1)
+function isSub(val){
+    if(SUB_LOOKUP.test(val)){
+        return snapID(val.slice(1))
+    }
+    return false
+}
+function isLink(val){
+    if(typeof val === 'string'){
+        if(LINK_LOOKUP.test(val)){
+            return val.slice(1)
+        }
+        return false
     }
     return false
 }
@@ -2025,7 +2034,8 @@ export {
     SUB,
     INSTANCE_OR_ADDRESS,
     IS_CONFIG_SOUL,
-    isLookup,
+    isSub,
+    isLink,
     lookupID,
     getAllActiveNodeTypes,
     getAllActiveRelations,

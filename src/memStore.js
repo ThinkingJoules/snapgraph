@@ -1,43 +1,142 @@
-export default function MemStore(root){
-    
-    function dumpStateChanges(){//should be on an in listener
-        let buffer = Object.assign({}, nodeStatesBuffer)
-        nodeStatesBuffer = {}
-        stateBuffer = !stateBuffer
-        sendToSubs(buffer)
-    }
+import { snapID, isLink,isSub, getValue } from "./util";
 
-    function sendToSubs(buffer){
-        for (const baseid in querySubs) {
-            if(!buffer[baseid])continue
-            const subO = querySubs[baseid];
-            for (const sVal in subO) {
-                const qParams = subO[sVal];
-                qParams.newStates(buffer[baseid])   
-            }
-        }
-        
+export default function MemStore(root){
+    let self = this
+    this.mem = new Map()
+    this.addrSubs = {}
+    this.nodeSubs = {}
+    this.addPropToNode = function(id,prop){
+        let thing = self.mem.get(id) || self.mem.set(id,{full:false,props:new Set()}).get(id)
+        thing.props.add(prop)
     }
-    
-    function formatData(format, pType,dType,val){
-        //returns the formatted value
-        if(format){
-            if(pType === 'date'){
-                //date formatting
-                //format should be an object
-            }else{
-                //solve()? need a subsitute
-                //might make a formatter solve so it is faster
-            }
-        }
-        return val
+    this.addFullNode = function(id){
+        let thing = self.mem.get(id) || self.mem.set(id,{full:true,props:new Set()}).get(id)
+        thing.full = true
     }
-    function handleCacheDep(nodeID, p, val){
-        const address = toAddress(nodeID,p)
-        let inheritsNodeID = isEnq(val)
-        if(!inheritsNodeID){//could have changed from Enq to val
+    this.get = function(nodeID,pval){//returns exactly the thing at the asked location
+        let ido = snapID(nodeID)
+        if(!pval){
+            let ps = self.mem.get(nodeID)
+            if(ps && ps.full){//only nodes with full flag can be gotten without network
+                let out = {}
+                for (const p of ps) {
+                    out[p] = self.mem.get(ido.toAddress(p))
+                }
+                return out
+            }
+            return
+        }
+        return self.mem.get(ido.toAddress(pval))
+    }
+    this.getAddrValue = function(nodeID,pval){//returns the substituted value
+        let address = snapID(nodeID).toAddress(pval)
+        let v = self.mem.get(address)//if it is inherited we want the value to go out to buffer
+        let from = address
+        let lookup 
+        while ((lookup = isSub((v && v.v)))) {
+            from = lookup.toStr()
+            v = self.mem.get(from)
+            v = v && v.v
+        }
+        return [v,from]
+    }
+    this.put = function(nodeID,obj){
+
+    }
+    this.subProp = function(id,p,cb,subID){
+
+    }
+    this.subNode = function(id,cb,subID){
+
+    }
+    this.resolvedAsk = function(things){
+        //these are not currently in mem
+        //just need to add them to store, fire cb's, and (opt) send to persist
+        for (const id in things) {
+            const obj = things[id];
+            self.mem[id] = self.mem[id] || new Set()
+            let temp
+            if((temp = root.router.getNodeDoneCBs[id])){
+                // we requested a full node
+                // so we can put the 'full' flag in mem
+                self.addFullNode(id)
+                for (const [cb,raw] of temp) {
+                    if(!raw)//apply formatting
+                    cb(self.extractVals(obj))
+                }
+            }
+            let ido = snapID(id)
+            for (const prop in obj) {
+                self.addPropToNode(id,prop)
+                self.mem[id].add(prop)
+                const vase = obj[prop];
+                let addr = ido.toAddress(prop)
+                self.sendToCache(id,prop,vase)
+                let argsArr = root.router.getCellDoneCBs[addr]
+                if(!argsArr) continue
+                for (const args of argsArr) {
+                    let s = isSub(vase.v)
+                    if(s && !args[2]){//args[2] = truthy flag for exact value at this address, not the inherited/linked value
+                        // if(!p){//link to another node... that represents this value???No, just like substitute effectively
+                        //     root.getNode(s,function(node){
+                        //         self.returnGetValue(s,false,node,...args)
+                        //     },true)
+                        // }else{//direct substitue
+                            root.getCell(s.toNodeID(),s.p,...args)
+                        // }
+                    }else{
+                        self.returnGetValue(id,prop,vase.v,...args)
+                    }
+                }
+            } 
+        }
+    }
+    this.extractVals = function(node){
+        let copy = {}
+        for (const p in node) {
+            const vase = node[p];
+            copy[p] = vase.v
+        }
+        return copy
+    }
+    this.sendToCache = function(nodeID, p, vase){
+        let newEnq = handleCacheDep(nodeID,p,vase.v)//will get deps correct so we can return proper data to buffer
+        let address = toAddress(nodeID,p)
+        let [v,from] = self.getAddrValue(nodeID,p)
+        if(newEnq || (from === address && vase.v !== v)){//this is some sort of new/changed value
+            self.mem.set(address,vase)
+            handlePropDataChange()
+        }
+        function handlePropDataChange(){
+            let startAddress = (address === from) ? from : address
+            checkDeps(startAddress)
+            function checkDeps(changedAddress){
+                let deps = upDeps[changedAddress]
+                if(deps){
+                    for (const depAddr of deps) {
+                        let subs = addrSubs[depAddr]
+                        if(subs === undefined)continue
+                        let [nodeID,pval]= removeP(depAddr)
+                        root.getCell(nodeID,pval,processValue(depAddr,subs),true,false)
+                        checkDeps(depAddr)//recur... until it can't
+                    }
+                }
+            }
+            
+        }
+    }
+    this.upDeps = {}
+    this.downDeps = {}
+    this.handleCacheDep = function(nodeID, pval, val){
+        let ido = snapID(nodeID)
+        const address = ido.toAddress(pval)
+        let [s,p] = isLookup(val)
+        if(!s){//could have changed from Enq to val
             return removeDep()
         }
+        let downDeps = self.downDeps
+        let upDeps = self.upDeps
+        let inheritsNodeID = snapID(s).toAddress(p)
         const looksAtAddress = inheritsNodeID
         if(!downDeps[address]){//add
             addDep()
@@ -64,40 +163,47 @@ export default function MemStore(root){
     
         }
     }
-    function sendToCache(nodeID, p, value){
-        let newEnq = handleCacheDep(nodeID,p,value)//will get deps correct so we can return proper data to buffer
-        let address = toAddress(nodeID,p)
-        let v = cache.get(address)//if it is inherited we want the value to go out to buffer
-        let from = address
-        while (isEnq(v)) {
-            let lookup = isEnq(v)
-            v = cache.get(lookup)
-            from = lookup
-        }
-        if(newEnq || (from === address && value !== v)){//this is some sort of new/changed value
-            cache.set(address,value)//should fire the watch cb
-            handlePropDataChange()
-            return
-        }
-        function handlePropDataChange(){
-            let {p} = parseSoul(address)
-            let startAddress = (address === from) ? from : address
-            checkDeps(startAddress)
-            function checkDeps(changedAddress){
-                let deps = upDeps[changedAddress]
-                if(deps){
-                    for (const depAddr of deps) {
-                        let subs = addrSubs[depAddr]
-                        if(subs === undefined)continue
-                        let [nodeID,pval]= removeP(depAddr)
-                        getCell(nodeID,pval,processValue(depAddr,subs),true,true)
-                        checkDeps(depAddr)//recur... until it can't
-                    }
-                }
-            }
-            
-        }
+
+
+
+
+
+
+
+    function dumpStateChanges(){//will have to check 'says' for
+        let buffer = Object.assign({}, nodeStatesBuffer)
+        nodeStatesBuffer = {}
+        stateBuffer = !stateBuffer
+        sendToSubs(buffer)
     }
+
+    function sendToSubs(buffer){//only for states, to make sure queries include new items
+        for (const baseid in querySubs) {
+            if(!buffer[baseid])continue
+            const subO = querySubs[baseid];
+            for (const sVal in subO) {
+                const qParams = subO[sVal];
+                qParams.newStates(buffer[baseid])   
+            }
+        }
+        
+    }
+    
+    function formatData(format, pType,dType,val){
+        //returns the formatted value
+        if(format){
+            if(pType === 'date'){
+                //date formatting
+                //format should be an object
+            }else{
+                //solve()? need a subsitute
+                //might make a formatter solve so it is faster
+            }
+        }
+        return val
+    }
+    
+    
     function processValue(addr,subs){
         return function(val,from){
             let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)
@@ -124,7 +230,56 @@ export default function MemStore(root){
             }
         }
     }
+    this.returnGetValue = function(fromID,fromP,val,cb,raw){
+        let ido = snapID(fromID)
+        let {b,t,r,p} = ido
+        if(!fromP && !p){//weird link, but technically valid, val is a full node
+            cb.call(cb,val, fromID,fromP)
+            return
+        }
+        fromP = fromP || p
+        let {propType,dataType,format} = getValue(configPathFromChainPath(makeSoul({b,t,r,p:fromP})),gb)//UPDATE
+        if([null,undefined].includes(val)){
+            cb.call(cb,null,fromID,fromP)
+            //console.log('getCell,NULL in:',Date.now()-start)
+            return
+        }
+        //so we have data on this soul and this should be returned to the cb
+        if(dataType === 'unorderedSet'){//this will be a full object
+            let data = JSON.parse(JSON.stringify(val))
+            let setVals = []
+            if(Array.isArray(data)){
+                setVals = data.slice()
+            }else{
+                for (const key in data) {
+                    if(key === '_')continue
+                    const boolean = data[key];
+                    if (boolean) {//if currently part of the set
+                        setVals.push(key) 
+                    }
+                }
+            }
+            
+            if(fromP === 'LABELS')setVals.unshift(t)
+            val = setVals
+        }else if(dataType === 'array'){
+            try {
+                val = JSON.parse(val)
+                for (let i = 0; i < val.length; i++) {
+                    const el = val[i];
+                    if(ISO_DATE_PATTERN.test(el)){//JSON takes a date object to ISO string on conversion
+                        val[i] = new Date(el)
+                    }
+                }
+            } catch (error) {
+                // leave as is..
+            }
+        }
+        if(!raw)val = formatData(format,propType,dataType,val)
+        cb.call(cb,val, fromID,fromP)
+        //console.log('getCell,DATA in:',Date.now()-start)
 
+    }
 
 }
 

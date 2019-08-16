@@ -18,31 +18,28 @@ export default function addListeners (root){
         //really need to force refresh the page
         //or disconnect all peers, as this peer is no longer authorized to interact with them.
     }
-    on.verifiedPeer = function(){
-        let msgs,peers
+    on.verifiedPeer = function(nowVerified){
+        let msgs,peers //'is' should have all the ips we need to add owns to?? shouldn't need the first loop
+        for (const baseID in root.resources) {
+            const {connected,owner} = self.resources[baseID];
+            for (const ip in connected) {
+                const peer = connected[ip];
+                if(!nowVerified.has(peer.id) || (nowVerified.has(peer.id) && peer.pub !== owner))continue
+                //this is ugly and slow, but we need to have the data on the peer so when they disconnect we don't have to know where its all at
+                peer.owns = peer.owns || new Set()
+                peer.owns.add(baseID)
+            }
+        }
+
         for (const baseID in root.resources) {
             const {connected,pending} = self.resources[baseID];
-            if((msgs=Object.values(pending)).length && (peers=Object.values(connected).filter(x=>x.verified).sort((a,b)=>a.ping-b.ping)).length){
+            if((msgs=Object.values(pending)).length && (peers=Object.values(connected).filter(x=>x.verified)).length){
                 root.opt.debug('Sending pending msgs to peer[0]',{msgs,peers})
+                peers.sort((a,b)=>a.ping-b.ping)
                 for (const msg of msgs) {
                     if(peers[0] && peers[0].send)peers[0].send(msg)
                 }
             }
-        }
-    }
-    on.askResponse = function(msg){//reply from our .ask  or an incoming say
-        let {hasRoot} = msg.from
-        for (const id in msg.b) {
-            let ido = snapID(id)
-            const obj = msg.b[id];
-            if(!hasRoot){//validate sig/data
-                for (const p in obj) {
-                    const {v,sig} = obj[p];
-                }
-            }
-            let cur = root.memStore.get(id) || {}
-            let diff = root.diff(cur,obj)
-            if(diff)root.memStore.onChange(id,diff)//store changes and fire emit out to other peers
         }
     }
     on.in = function(msg){
@@ -60,9 +57,9 @@ export default function addListeners (root){
                 temp.on('reply',msg)//only send the body to the tracker?
             }
         }else if (r && m == 'ask'){//msg expired, but we can merge this to graph as an update??
-            //maybe this is how subscrive vs retrieve works?
-            //we don't expire messages that we are subscribing to, they just stream the results?
-            //so if it is here it was a retrieve that had more data come in after expiration?
+            //maybe this is how subscrive vs retrieve works? NO, must specify an off message to stop updates (which should be 'say' not 'ask')
+            //WE COULD TREAT THIS AS A 'SAY' AND IT WOULD ACT LIKE A 'NEW' NODE WAS CREATED???
+            //doesn't really matter, if retrieve fired cb, then won't do anything, if sub'd, just merge and emit?
         }else{
             root.opt.debug('Could not route:',msg)
         }
@@ -72,24 +69,10 @@ export default function addListeners (root){
 //listeners here are for both env
 
 //anything we receive
-function route(msg,next){
-    let root = this
-    
-    next()
-}
 
 
 //handshake and auth stuff
-function sendIntro(peerID,next){
-    let root = this
-    let peer = root.peers.peers.get(peerID)
-    if(!peer){
-        root.opt.debug('NO PEER FOUND')
-        return
-    }
-    root.router.send.intro(peer)
-    next()
-}
+
 function intro(peerID,next){
     let root = this
     root.opt.debug('recvd intro message from:',peerID)

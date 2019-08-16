@@ -1,5 +1,4 @@
 import { on, setValue, getValue } from "./util";
-import { parentPort } from "worker_threads";
 const noop = function(){}
 export default function Router(root){
     //assume root has ws setup and bootstrap peers already listed/connected
@@ -11,32 +10,59 @@ export default function Router(root){
     const recv = router.recv = {}
     const route = router.route = {}
 
-    router.getBufferState = false
-    router.getBuffer = {}
-    router.doneCBs = {} //{[addr:[[cb,raw]]]}
-    router.batchedReq = function(){//direct to super peer(s??)
-        let b = Object.assign({},router.getBuffer)
-        router.getBuffer = {}
-        router.getBufferState = true
-        let dataRequests
-        let gossipRequests
+    router.getCellBufferState = false //only for getCell calls
+    router.getCellBuffer = {}
+    router.getCellDoneCBs = {} //{[addr:[[cb,raw]]]}
+    router.batchedCellReq = function(){//direct to super peer(s??)
+        let b = Object.assign({},router.getCellBuffer)
+        router.getCellBuffer = {}
+        router.getCellBufferState = true
+        let dataRequests = new Map()
+        let gossipRequests = new Map()
         for (const nodeID in b) {//sort requests
             let node = snapID(nodeID)
             const pArgs = b[nodeID];
             let to = (node.is === 'gossip') ? gossipRequests : dataRequests
-            requests[nodeID] = []
+            let ps = []
+            if(node.is === 'gossip')to.set(node.toStr(),ps)
+            else to.set(node,ps)
             for (const p in pArgs) {
                 const argArray = pArgs[p];
-                router.doneCBs[node.toAddress(p)] = argArray
-                to[nodeID].push(p)
+                router.getCellDoneCBs[node.toAddress(p)] = argArray
+                ps.push(p)
             }
         }
+        if(gossipRequests.size)router.route.askGossip(gossipRequests)
+        if(dataRequests.size)router.route.ask(dataRequests)
+        //see if we have resources, if not add the messages to pending and setup connection cycle
+        //if so, just send the messages
+    }
+    router.getNodeBufferState = false //only for getNode calls
+    router.getNodeBuffer = {}
+    router.getNodeDoneCBs = {} //{id:[[cb,raw]]}
+    router.batchedNodeReq = function(){//direct to super peer(s??)
+        let b = Object.assign({},router.getNodeBuffer)
+        router.getNodeBuffer = {}
+        router.getNodeBufferState = true
+        let dataRequests = new Map()
+        let gossipRequests = new Map()
+        for (const nodeID in b) {//sort requests
+            let node = snapID(nodeID)
+            const cbArr = b[nodeID];
+            let to = (node.is === 'gossip') ? gossipRequests : dataRequests
+            let ps = false
+            if(node.is === 'gossip')to.set(node.toStr(),ps)
+            else to.set(node,ps)
+            router.getNodeDoneCBs[node.toStr()] = cbArr
+        }
+        if(gossipRequests.size)router.route.askGossip(gossipRequests)
+        if(dataRequests.size)router.route.ask(dataRequests)
         //see if we have resources, if not add the messages to pending and setup connection cycle
         //if so, just send the messages
     }
     router.addResouce = function(ido,node){
         //id should be ~!baseID node
-        //node should be {ipAddress: validation}
+        //node should be {ipAddress: {v:pubKeyBaseOwner}}
         //has already been validated, take as truth
         let {b} = ido
         let temp
@@ -48,12 +74,6 @@ export default function Router(root){
         }
     }
  
-
-
-
-
-
-
 
     //console.log('WIRE BATCH',requests,doneCBs)
     // gun._.on('out', {
@@ -108,8 +128,7 @@ export default function Router(root){
             peer.isPeer = isPeer
             if(has){//should be valid snap nodes
                 //root.on.in(has,peer)//should send it back around to recv.gossip>resource
-                router.recv.ask({b:has, from:peer})//inernally chained? I guess it should work
-                
+                root.resolver.resolveAsk({checkSigs:new Map(Object.entries(has))})//emulate an ask response
             }
             
             next()
@@ -199,33 +218,117 @@ export default function Router(root){
     }
 
 
-
-    route.ask = function(things,body,opts){//generic ask, all requests are asks...
+    route.askGossip = function(reqMap){
+        let body = {}
+        for (const [nodeID,pvals] of reqMap.entries()) {
+            body[nodeID] = pvals
+        }
+        let peers = root.mesh.isPeer
+        if(peers.length === 1){
+            router.send.ask([peers[0]],body,{hops:2})
+        }else if(peers.length >=2){
+            router.send.ask([peers.slice(0,2)],body,{hops:2})
+        }else{
+            root.opt.log('You must be offline, no peers to route request to.')
+        }
+    }
+    route.ask = function(reqMap){//only for data requests, can be from getCell or getNode
         //analyze each soul and figure out if we can route to it
         //if not, we need to ask where to find it, and once we have that, we connect to it and then send the request
         //will want to make sure we have authed with that peer before we send the message?
         //may need to put a listener on the peer and queue messages?
         //not everything needs an auth, but if it does, then we have to handle a long pending msg or error...
+        let byB = {}
+        for (const [ido,pvals] of reqMap.entries()) {
+            let {b} = ido
+            byB[b] = byB[b] || {}
+            byB[b][ido.toStr()] = pvals   
+        }
+        for (const base in byB) {
+            const body = byB[base];
+            let peers
+            if((peers = isConn(base))){
+                tasks(body)(peers)//sending to all connected peers that have this data?? Sure
+            }else if((peers = needsConn(base))){
+                root.assets.addPendingMsg(base,tasks(body))
+                for (const url of peers) {//connect all? sure, probably only 1-3
+                    root.mesh.connect(url)
+                }
+            }else{
+                root.assets.findResource(base)
+                root.assets.addPendingMsg(base,tasks(body))
+            }
+                
+        }
+        function tasks(msgBody){//waiting for connection
+            return function(to){//send message
+                router.send.ask(to,msgBody)
+            }
+        }
+        function isConn(base){
+            let seen = getValue(['resources',b])
+            if(!seen)return false
+            let peers
+            if((peers = Object.values(seen.connected)) && peers.length){
+                let owns = peers.filter(x=>x.owns.has(base))
+                if(owns.length) return owns//returning peerObjects
+                return peers
+            }
+            return false
+        }
+        function needsConn(base){
+            let seen = getValue(['resources',b])
+            if(!seen)return false
+            let peers
+            if(seen.peers && (peers = seen.peers) && peers.length){
+                return peers//returning array of urls
+            }
+            return false
+        }
+
         
     }
-    send.ask = function(something, somehit,opts){
+    send.ask = function(peers, body ,opts){
         opts = opts || {}
         let expireReq = opts.expire || (Date.now()+(1000))//breadth, short duration,message will keep getting repeated until it expires or makes it 2 hops
-        let msg = new SendMsg('ask',body,false,expireReq,false,2)//hope body is formatted correctly
-        msg.to = arrOfPeerObj.map(x=>x.id)
-        let ons = {onError: opts.onError,onDone:[onDone,opts.onDone],onReply:opts.onReply,onAck:[onAck,opts.onAck]}
-        track(msg,new TrackOpts(opts.acks,(opts.replies || arrOfPeerObj.length),{},ons))
-        arrOfPeerObj.map(x=> (x.send && x.send(msg)))
-        function onDone(b,next){//what to do with their response
-            
-            
-            for (const id in b) {
-                const obj = b[id];
-                let ido = snapID(id)
-                if(ido.is === 'gossip'){
-                    router.recv.gossip(ido,obj,from)
+        let msg = new SendMsg('ask',body,true,expireReq,false,(opts.hops || 1))//hope body is formatted correctly
+        msg.to = peers.map(x=>x.id)
+        let ons = {onError: opts.onError,onDone:[onDone,opts.onDone],onReply:[onReply,opts.onReply],onAck:[onAck,opts.onAck]}
+        track(msg,new TrackOpts(opts.acks,(opts.replies || peers.length),{},ons))
+        peers.map(x=> (x.send && x.send(msg)))
+        function onReply(msg,next){
+            //{hasRoot:{id:pval:val},fromOwner:MAP{id:pval:val},checkSigs:{from:{id:pval:val},gossip:{id:pval:val}}}
+            let val = this.value
+            if(msg.from.hasRoot){//just merge the message down on receiving
+                for (const id in msg.b) {
+                    const incO = msg.b[id];
+                    const curO = val.hasRoot[id] || (val.hasRoot[id] = incO)
+                    root.resolver.resolveNode(id,curO,incO)
+                }
+            }else{//loop through souls, if it is gossip or the peer does not own {b} then checkSigs
+                let pid = msg.from.id
+                let owns = msg.from.owns
+                for (const id in msg.b) {
+                    let ido = snapID(id)
+                    let {b} = ido
+                    if(ido.is === 'gossip'){
+                        const incO = msg.b[id];
+                        const curO = val.gossip[id] || (val.gossip[id] = incO)
+                        root.resolver.resolveNode(id,curO,incO)
+                    }else if(owns && owns.has(b)){
+                        const incO = msg.b[id];
+                        const curO = val.fromOwner[id] || (val.fromOwner[id] = incO)
+                        root.resolver.resolveNode(id,curO,incO)
+                    }else{//need to check signatures, so we can't merge them yet, just collect them
+                        val.checkSigs = val.checkSigs || {}
+                        val.checkSigs[pid] = msg.b
+                    }
                 }
             }
+            next()
+        }
+        function onDone(askReply,next){
+            root.resolver.resolveAsk(askReply)
             next()
         }
     }
@@ -234,7 +337,7 @@ export default function Router(root){
         
 
     }
-    recv.gossip = function(idObj,node,fromPeer){
+    recv.gossip = function(idObj,node,fromPeer){//move to memstore??
         //if(root.isPeer)root.memStore.add(idObj,node)//clients don't store gossip in mem?//no one stores in mem?
         if(fromPeer.hasRoot)next(node)
         else root.verifyGossip(idObj,node,next)
