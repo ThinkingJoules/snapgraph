@@ -1728,6 +1728,7 @@ function isLink(val){
     }
     return false
 }
+const notFound = String.fromCharCode(21)
 
 
 function signChallenge(root,peer){
@@ -2074,5 +2075,6 @@ export {
     encTime,
     decTime,
     snapID,
-    signChallenge
+    signChallenge,
+    notFound
 }

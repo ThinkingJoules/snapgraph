@@ -1,8 +1,11 @@
-import { snapID, isLink,isSub, getValue } from "./util";
+import { snapID, isLink,isSub, getValue, notFound } from "./util";
+import Disk from './peer/disk'
+import BrowserStore from './browser/store'
 
-export default function MemStore(root){
+export default function Store(root){
     let self = this
     this.mem = new Map()
+    this.disk = root.opt.persist && ((root.isPeer && new Disk(root)) || new BrowserStore(root)) || false
     this.addrSubs = {}
     this.nodeSubs = {}
     this.askCBs = {}
@@ -45,20 +48,38 @@ export default function MemStore(root){
         let thing = self.mem.get(id) || self.mem.set(id,{full:true,props:new Set()}).get(id)
         thing.full = true
     }
-    this.get = function(nodeID,pval){//returns exactly the thing at the asked location
-        let ido = snapID(nodeID)
-        if(!pval){
-            let ps = self.mem.get(nodeID)
-            if(ps && ps.full){//only nodes with full flag can be gotten without network
-                let out = {}
-                for (const p of ps) {
-                    out[p] = self.mem.get(ido.toFlatPack(p))
-                }
-                return out
-            }
-            return
+    this.getBatch = function(batch){
+        let out = {}
+        for (const nodeID in batch) {
+            const pvals = batch[nodeID];
+            out[nodeID] = self.getNode(nodeID,pvals)
         }
-        return self.mem.get(ido.toFlatPack(pval))
+        return out
+    }
+    this.getNode = function(nodeID, pvals){
+        let out = {}
+        if(!pvals){
+            let mem = self.mem.get(nodeID)
+            if(mem && mem.full){//only nodes with full flag can be gotten from mem
+                pvals = [...mem.props]
+            }else if(self.disk){
+                pvals = self.disk.getProps(nodeID)
+            }
+        }
+        if(!pvals.length)return false //not sure how to handle unknown node, empty obj?{}
+        for (const p of pvals) {
+            out[p] = self.getProp(nodeID,p)
+        }
+        return out
+    }
+    this.getProp = function(nodeID,pval){
+        let ido = snapID(nodeID)
+        let vase
+        if(!(vase = self.mem.get(ido.toFlatPack(pval)))){
+            if(self.disk)vase = self.disk.getProp(nodeID,pval)
+            else vase = {v:notFound}
+        }
+        return vase
     }
     this.getAddrValue = function(nodeID,pval){//returns the substituted value
         let ido = snapID(nodeID)

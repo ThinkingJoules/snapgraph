@@ -1,6 +1,5 @@
 import {onMsg, onDisConn, Peer} from './wire'
 import { setValue, signChallenge, getValue } from './util';
-import { parentPort } from 'worker_threads';
 export default function PeerManager(root){
     const self = this
     let opt = root.opt
@@ -15,22 +14,6 @@ export default function PeerManager(root){
 
     this.pack = opt.pack || (opt.memory? (opt.memory * 1000 * 1000) : 1399000000) * 0.3; // max_old_space_size defaults to 1400 MB.
     this.peers = new Map()
-    this.all = new Map()
-    this.verifyPeer = function(ido,node){
-        //should be !*PUB> id
-        //node should be {ipAddress:validation}
-        //has already been validated, take as truth
-        let {pub} = ido
-        let nowVerified = new Set(),peer
-        for (const ip in node) {
-            if((peer=self.peers.get(ip)) && (peer.pub && peer.pub === pub)){
-                peer.verified = true
-                nowVerified.add(peer.id)
-            }
-        }
-        if(nowVerified.length)root.on.verifiedPeer(nowVerified)
-
-    }
     this.auth = function(peer){
         if(peer){//we are already auth'd and we have a new connection, sign it directly
             signChallenge(root,peer)
@@ -42,12 +25,12 @@ export default function PeerManager(root){
             }
         }
     }
-    this.signout = function(){
+    this.signout = function(){//NOT DONE YET
         for (const peer of peers.values()) {
             let isInitial = peer.initialPeer && peer.id
             peer.wire.close()
-            self.peers.delete(peer.id)
-            root.on.peerDisconnect(peer)//need to remove from resources and anywhere else that might be relying on this peer
+            peer.connected = false
+            root.on.peerDisconnect(peer)//need to setup subs at a new peer if we were relying on things from this peer
             if(isInitial){
                 //want to reconnect so there are some peers
                 setTimeout(()=>{

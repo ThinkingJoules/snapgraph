@@ -25,6 +25,7 @@ export const onMsg = (root) => (raw,peer)=>{
 export function Peer(socket,pid,initialPeer){
     this.wire = socket
     this.id = pid
+    this.ping = 1000
     this.challenge = false //our challenge to them for proof
     this.theirChallenge = false //they are challenging us, if we are not signed in yet, it waits here for our response
     this.pub = false //their pubkey once they answer are challenge??
@@ -37,7 +38,7 @@ export function Peer(socket,pid,initialPeer){
     this.initialPeer = initialPeer || false
     this.send = function(msg){
         console.log('sending')
-        msg = encode(msg)
+        msg = encode(msg,{sortKeys:true})
         let self = this
         if(self.wire.send instanceof Function){
             console.log('sent')

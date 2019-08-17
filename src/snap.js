@@ -132,7 +132,7 @@ export default function Snap(initialPeers,opts){
     mergeObj(root.opt,opts) //apply user's ops
     root.verify = verify
 
-    //root.memStore = new MemStore()
+    root.memStore = new MemStore(root)
     //root.sg = new SG(root)
     root.assets = new ResourceManager(root)
     root.mesh = new PeerManager(root)
@@ -142,13 +142,13 @@ export default function Snap(initialPeers,opts){
         commsInit(root)//listen on port
     }
     coreApi(root)
+    addListeners(root)
     //add diskStore
     root.is = {}// not here, but need to get them so our intro/auth can send them
     root.has = {}
 
-    root.util = {getValue,setValue,rand,encTime,decTime,encode,decode}
-
-
+    root.util = {getValue,setValue,rand,encode,decode}
+    
     // for (let i = 0; i < initialPeers.length; i++) {
     //     root.connect(initialPeers[i])
     // } can only connect from making a request?
@@ -161,6 +161,164 @@ let gbBases = []
 //const kill = makekill(querySubs,configSubs,killSub)
 
 
+
+
+
+
+//CHAIN CONSTRUCTORS
+const base = (function(base){
+    //check base for name in gb to find ID, or base is already ID
+    //return baseChainOpt
+    let bases = Object.keys(gb)
+    if(base === undefined && bases.length == 1)base = bases[0]
+    if(!base) throw new Error('You must specify a baseID to use as context!')
+    let path = '!'
+    if(gb[base] !== undefined){
+        path += base
+    }else{
+        for (const baseID in gb) {
+            const {alias} = gb[baseID];
+            if(base === alias){
+                path += baseID
+                break
+            }
+        }
+    }
+    if(!path){
+        throw new Error('Cannot find corresponding baseID for alias supplied')
+    }
+    let out = baseChainOpt(path)
+    return out
+});
+base.help = function(){
+    let summary = 
+    `
+    Used to move your chain context to a particular base.
+    `
+    let table = {firstArg:{what:'ID or Alias',type:'string'}}
+
+    console.warn(summary)
+    console.table(table)
+}
+const nodeType = (path,isNode) =>{
+    const f = (function(label){
+        //check base for name in gb to find ID, or base is already ID
+        //return depending on table type, return correct tableChainOpt
+        let {b} = parseSoul(path)
+        let sym = (isNode) ? 't' : 'r'
+        let under = (isNode) ? 'props' : 'relations'
+        let thingType = makeSoul({b,[sym]:label})
+        let id
+        let tvals = gb[b][under]
+        let check = getValue(configPathFromChainPath(thingType),gb)
+        if(check !== undefined){
+            id = label
+        }else{
+            for (const tval in tvals) {
+                const {alias,parent} = tvals[tval];
+                if(label === alias){
+                    id = tval
+                    break
+                }
+            }
+        }
+        if(!id){
+            throw new Error('Cannot find corresponding ID for alias supplied')
+        }
+        let out
+        let newPath = makeSoul({b,[sym]:id})
+        out = nodeTypeChainOpt(newPath, isNode)
+
+        return out
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to move your chain context to a particular type of Node (Not a relationship!).
+        `
+        let table = {firstArg:{what:'ID or Alias',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
+    }
+    return f
+}
+const prop = (path) =>{
+    const f = (function(prop){
+        //check base for name in gb to find ID, or base is already ID
+        //return depending on table type, return correct columnChainOpt
+        let pathO = parseSoul(path)
+        let {b,t,r,i} = pathO
+        let id
+        let {props:pvals} = getValue(configPathFromChainPath(makeSoul({b,t,r})),gb)
+        for (const pval in pvals) {
+            const {alias} = pvals[pval];
+            if(prop === alias || prop === pval){
+                id = pval
+                break
+            }
+        }
+        if(!id){
+            throw new Error('Cannot find corresponding ID for prop alias supplied')
+        }
+        let out
+        let newPath = makeSoul(Object.assign(pathO,{p:id}))
+        if(!i){
+            out = propChainOpt(newPath)
+        }else{//called prop from snap.node(ID).prop(name)
+            out = nodeValueOpt(newPath)
+        }
+        return out
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to move your chain context to a particular property of your current context.
+        `
+        let table = {firstArg:{what:'ID or Alias',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
+    }
+    return f
+}
+const node = (path) =>{
+    const f = (function(nodeID){
+        //can be with just id of or could be whole string (!#$ or !-$)
+        //can someone edit !-$ directly? I don't think so, should use the correct relationship API since data is in 3 places (each node, and relationship node)
+        let testPath = nodeID
+        if(path){//only if coming from base.nodeType.node
+            if(!INSTANCE_OR_ADDRESS.test(nodeID)){
+                testPath = parseSoul(path)
+                Object.assign(testPath,{i:testPath})
+                testPath = makeSoul(testPath)
+            } 
+        }
+   
+        if(DATA_INSTANCE_NODE.test(testPath)){
+            return nodeChainOpt(testPath,true)
+        }else if(RELATION_INSTANCE_NODE.test(testPath)){
+            return nodeChainOpt(testPath,false)
+        }else if(DATA_ADDRESS.test(testPath)){//is a nodeProp
+            return nodeValueOpt(testPath)
+        }else if(RELATION_ADDRESS.test(testPath)){//is a relationProp
+            return nodeValueOpt(testPath)
+        }else{
+            throw new Error('Cannot decipher rowID given')
+        }
+    });
+    f.help = function(){
+        let summary = 
+        `
+        Used to select a specific node OR property on a node (address)
+        `
+        let table = {'1st Arg, Opt 1':{what:'NodeID (!#$,!-$)',type:'string'},'1st Arg, Opt 2':{what:'Address (!#.$,!-.$)',type:'string'}}
+    
+        console.warn(summary)
+        console.table(table)
+    }
+    return f
+}
 function snapChainOpt(snap){
     return {snap,
         signUp:create,
@@ -271,10 +429,6 @@ function nodeValueOpt(_path){
 }
 
 
-
-
-
-
 const gunToSnap = (gunInstance,opts,doneCB) =>{
     gun = gunInstance
     let {bases,full} = opts
@@ -339,11 +493,6 @@ const gunToSnap = (gunInstance,opts,doneCB) =>{
 
     Object.assign(snap,snapChainOpt())
 }
-//snap INITIALIZATION
-/*
----GUN SOULS---
-see ./util soulSchema
-*/
 
 
 function mountBaseToChain(baseID,full,cb){//could maybe wrap this up fully so there is a cb called when it is fully loaded?

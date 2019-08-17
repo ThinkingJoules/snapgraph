@@ -17,30 +17,6 @@ export default function addListeners (root){
         //really need to force refresh the page
         
     }
-    on.verifiedPeer = function(nowVerified){
-        let msgs,peers //'is' should have all the ips we need to add owns to?? shouldn't need the first loop
-        for (const baseID in root.resources) {
-            const {connected,owner} = self.resources[baseID];
-            for (const ip in connected) {
-                const peer = connected[ip];
-                if(!nowVerified.has(peer.id) || (nowVerified.has(peer.id) && peer.pub !== owner))continue
-                //this is ugly and slow, but we need to have the data on the peer so when they disconnect we don't have to know where its all at
-                peer.owns = peer.owns || new Set()
-                peer.owns.add(baseID)
-            }
-        }
-
-        for (const baseID in root.resources) {
-            const {connected,pending} = self.resources[baseID];
-            if((msgs=Object.values(pending)).length && (peers=Object.values(connected).filter(x=>x.verified)).length){
-                root.opt.debug('Sending pending msgs to peer[0]',{msgs,peers})
-                peers.sort((a,b)=>a.ping-b.ping)
-                for (const msg of msgs) {
-                    if(peers[0] && peers[0].send)peers[0].send(msg)
-                }
-            }
-        }
-    }
     on.in = function(msg){
         let {m,s,r} = msg
         let temp
@@ -65,63 +41,12 @@ export default function addListeners (root){
     }
     on.peerDisconnect = function(peer){
         console.warn('API NOT FINISHED')
-        //remove from resources, as the peer object is still in memory
-        //even though we deleted the reference to it in mesh.peers
-        //can't be garbage collected until all refs are gone
-        //we need to manually do that here.
-
         //IF CLIENT VVV
-        //if this peer is supplying a resource that we are currently looking for
+        //if this peer is supplying a resource that we are currently looking for (subscribed to)
         //then we need to see if we are still connected to it with another peer
         //or if we have additional peers specified 
+        //this is something we should track in resources and let it handle this problem
     }
 }
 
-//listeners here are for both env
 
-//anything we receive
-
-
-//handshake and auth stuff
-
-function intro(peerID,next){
-    let root = this
-    root.opt.debug('recvd intro message from:',peerID)
-    let peer = root.peers.peers.get(peerID)
-    if(!peer){
-        root.opt.debug('Cannot find peer!! events/intro')
-        return
-    }
-    //could also run the peerShuffle where we evaluate all peers, rank 
-    if(!(peer && peer.theirChallenge) || !root.sign)return
-    signChallenge(root,peer,root.user.pub)
-    next()
-}
-function loadOwnership(peer,next){
-    let pub = peer.pub
-    root.router.send
-    next()
-}
-function sigs(pub, next){
-    //respond to all challenges from peers
-    let root = this
-    let peers = root.peers.peers.entries()
-    for (const [pid,peer] of peers) {
-        if(peer.theirChallenge){
-            signChallenge(root,peer,pub)
-        }
-    }
-    next()
-}
-
-function findAuthority(peer){
-    
-    next()
-
-}
-function signout(left,next){
-    let root = this
-    delete root.sign
-    delete root.user
-    next()
-}

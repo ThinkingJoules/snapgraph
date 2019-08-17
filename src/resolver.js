@@ -20,6 +20,7 @@ export default function Resolver(root){
     }
    this.resolveAsk = function(askReply){
         //{hasRoot:{id:pval:val},fromOwner:{id:pval:val},gossip:{id:pval:val},checkSigs:pid:msg.b}
+        
         //WHERE TO HANDLE PERMISSION DENIED VALUES OR 'NOT FOUND' VALUES?
         if(askReply.hasRoot){
             root.memStore.resolvedAsk(askReply.hasRoot)

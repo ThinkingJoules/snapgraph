@@ -44,59 +44,14 @@ export default function Router(root){
         //see if we have resources, if not add the messages to pending and setup connection cycle
         //if so, just send the messages
     }
-    router.addResouce = function(ido,node){
-        //id should be ~!baseID node
-        //node should be {ipAddress: {v:pubKeyBaseOwner}}
-        //has already been validated, take as truth
-        let {b} = ido
-        let temp
-        for (const ip in node) {
-            setValue([b,'peers',ip],true,root.resources)
-            if((temp=root.mesh.peers.get(ip))){
-                setValue([b,'connected',ip],temp,root.resources)
-            }
-        }
-    }
- 
-
-    //console.log('WIRE BATCH',requests,doneCBs)
-    // gun._.on('out', {
-    //     getBatch: requests,
-    //     '#': gun._.ask(function(msg){
-    //         let sg = msg.subGraph
-    //         for (const soul in sg) {
-    //             const putObj = sg[soul];
-    //             for (const prop in putObj) {
-    //                 if(prop === '_')continue//these are valid gun nodes
-    //                 const value = putObj[prop];
-    //                 let addr = toAddress(soul,prop)
-    //                 sendToCache(soul,prop,value)
-    //                 let argsArr = doneCBs[addr]
-    //                 let e
-    //                 if(e = isEnq(value)){//send it for another round...
-    //                     let [s,p] = removeP(e)
-    //                     for (const args of argsArr) {
-    //                         getCell(s,p,...args)
-    //                     }
-    //                 }else{
-    //                     handleGetValue(soul,prop,value,argsArr)
-    //                 }      
-    //             }    
-    //         }
-    //     })
-    // })
     
-
-
-
-
-
     send.intro = function(peer,opts){//sender generates
         opts = opts || {}
-        let expireReq = opts.expire || (Date.now()+(1000*10))//shouldn't take too long
+        let expireReq = opts.expire || (Date.now()+(1000*20))//shouldn't take too long
         let b = {isPeer:root.isPeer}
         let msg = new SendMsg('intro',b,['isPeer','has'],expireReq)
-        track(msg,new TrackOpts(opts.acks,opts.replies,{},{onError: opts.onError,onDone:[onDone,opts.onDone],onReply:opts.onReply,onAck:[onAck,opts.onAck]}))
+        let ons = {onError: opts.onError,onDone:[onDone,opts.onDone],onReply:opts.onReply,onAck:[onAck,opts.onAck]}
+        track(msg,new TrackOpts(opts.acks,opts.replies,{},ons))
         if(!peer.met)peer.met = Date.now()
         root.opt.debug('sending intro',msg)
         peer.send(msg)
@@ -117,7 +72,7 @@ export default function Router(root){
                     root.memStore.addAskCB(id,false,[(node)=>{root.assets.processResourceNode(id,node)}])
                     root.assets.subResource(id)
                 }
-                root.resolver.resolveAsk({checkSigs:new Map(Object.entries(has))})//emulate an ask response
+                root.resolver.resolveAsk({checkSigs:has})//emulate an ask response
             }
             next()
         }
@@ -133,7 +88,7 @@ export default function Router(root){
             m.has = root.has
             //root has should be things we have on disk and match the public gossip
             //this will include more info than exactly what we have
-            //but this is good, as it gives the peer backups incase we go offline
+            //but this is good, as it gives the peer backups in case we go offline
             //the peerer will validate all these records so this peer can't tamper with it.
 
         }
@@ -142,11 +97,12 @@ export default function Router(root){
     }
     send.challenge = function(peer,opts){//sender generates
         opts = opts || {}
-        let expireReq = opts.expire || (Date.now()+(1000*60*60*8))//must auth within 8 hrs??? Probably only browsers that will be waiting on human 
+        let expireReq = opts.expire || (Date.now()+(1000*60*60*8))//must auth within 8 hrs??? Should only be browsers that will be waiting on human 
         let b = {challenge:0}
         let msg = new SendMsg('challenge',b,['auth','pub'],expireReq)
         msg.b.challenge = msg.s //challenge is signing this msgID, that way the know where to respond
-        track(msg,new TrackOpts(opts.acks,opts.replies,{},{onError: opts.onError,onDone:[onDone,opts.onDone],onReply:opts.onReply,onAck:[onAck,opts.onAck]}))
+        let ons = {onError: opts.onError,onDone:[onDone,opts.onDone],onReply:opts.onReply,onAck:[onAck,opts.onAck]}
+        track(msg,new TrackOpts(opts.acks,opts.replies,{},ons))
         peer.challenge = msg.s
         if(!peer.met)peer.met = Date.now()
         root.opt.debug('sending challenge',msg)
@@ -159,6 +115,7 @@ export default function Router(root){
                     root.opt.debug('Valid signature, now authenticated!')
                     peer.pub = pub
                     peer.challenge = false
+                    peer.verified = true //need to add this, since we are adding pubs to peers as we see gosisp nodes
                     if(is){
                         let things = Object.keys(is)
                         //emulating an ask response
@@ -166,7 +123,7 @@ export default function Router(root){
                             root.memStore.addAskCB(id,false,[(node)=>{root.assets.processPeerOwnershipNode(id,node)}])
                             root.assets.subPeerOwnership(id)
                         }
-                        root.resolver.resolveAsk({checkSigs:new Map(Object.entries(is))})//emulate an ask response
+                        root.resolver.resolveAsk({checkSigs:is})//emulate an ask response
                     }
                     if(root.user)root.on.pairwise(peer)
                 }else{
@@ -216,10 +173,10 @@ export default function Router(root){
 
     route.askGossip = function(reqMap){
         let body = {}
-        for (const [nodeID,pvals] of reqMap.entries()) {
-            body[nodeID] = pvals
-        }
-        let peers = root.mesh.isPeer
+        reqMap.forEach(function(v,k){
+            body[k] = v
+        })
+        let peers = [...root.mesh.peers.values()].filter(x=> (x.connected && x.isPeer)).sort((a,b)=>a.ping-b.ping)
         if(peers.length === 1){
             router.send.ask([peers[0]],body,{hops:2})
         }else if(peers.length >=2){
@@ -242,10 +199,10 @@ export default function Router(root){
         }
         for (const base in byB) {
             const body = byB[base];
-            let peers
-            if((peers = isConn(base))){
+            let [conn,seen] = root.assets.getState(base)
+            if(conn.length){
                 tasks(body)(peers)//sending to all connected peers that have this data?? Sure
-            }else if((peers = needsConn(base))){
+            }else if(seen.length){
                 root.assets.addPendingMsg(base,tasks(body))
                 for (const url of peers) {//connect all? sure, probably only 1-3
                     root.mesh.connect(url)
@@ -258,7 +215,7 @@ export default function Router(root){
         }
         function tasks(msgBody){//waiting for connection
             return function(to){//send message
-                router.send.ask(to,msgBody)
+                router.send.ask(to,msgBody,{expire:(1000*30)})
             }
         }
         
@@ -277,9 +234,10 @@ export default function Router(root){
             //{hasRoot:{id:pval:val},fromOwner:MAP{id:pval:val},checkSigs:{from:{id:pval:val},gossip:{id:pval:val}}}
             let val = this.value
             if(msg.from.hasRoot){//just merge the message down on receiving
+                let hasRoot = val.hasRoot || (val.hasRoot = {})
                 for (const id in msg.b) {
                     const incO = msg.b[id];
-                    const curO = val.hasRoot[id] || (val.hasRoot[id] = incO)
+                    const curO = hasRoot[id] || (hasRoot[id] = incO)
                     root.resolver.resolveNode(id,curO,incO)
                 }
             }else{//loop through souls, if it is gossip or the peer does not own {b} then checkSigs
@@ -289,12 +247,14 @@ export default function Router(root){
                     let ido = snapID(id)
                     let {b} = ido
                     if(ido.is === 'gossip'){
+                        let gossip = val.gossip || (val.gossip = {})
                         const incO = msg.b[id];
-                        const curO = val.gossip[id] || (val.gossip[id] = incO)
+                        const curO = gossip[id] || (gossip[id] = incO)
                         root.resolver.resolveNode(id,curO,incO)
                     }else if(owns && owns.has(b)){
+                        let fromOwner = val.fromOwner || (val.fromOwner = {})
                         const incO = msg.b[id];
-                        const curO = val.fromOwner[id] || (val.fromOwner[id] = incO)
+                        const curO = fromOwner[id] || (fromOwner[id] = incO)
                         root.resolver.resolveNode(id,curO,incO)
                     }else{//need to check signatures, so we can't merge them yet, just collect them
                         val.checkSigs = val.checkSigs || {}
@@ -311,37 +271,20 @@ export default function Router(root){
     }
     recv.ask = function(msg){
         let {b,from} = msg
+        //TODO check permissions...
+        for (const id in b) {
+            const props = b[id];
+            if(!props)root.store.get(id,false)
+                
+        }
         
 
-    }
-    recv.gossip = function(idObj,node,fromPeer){//move to memstore??
-        //if(root.isPeer)root.memStore.add(idObj,node)//clients don't store gossip in mem?//no one stores in mem?
-        if(fromPeer.hasRoot)next(node)
-        else root.verifyGossip(idObj,node,next)
-        function next(obj){
-            switch (idObj.type) {
-                case 'resource':
-                    router.addResouce(idObj,obj)
-                    break;
-                case 'owns':
-                    root.mesh.verifyPeer(idObj,obj)
-                    break;
-                case 'auth':
-                    break;
-                case 'alias':
-                    break;
-                default:
-                    break;
-            }
-        } 
     }
     /*
     All data sent/received in snap will be like:
     {soul:{
-        sig:signature?? on node,special prop? stored only in db and transmitted(cannot be asked for independently?)
-        if only for soul, how do we check that the specifc prop is signed? Soul could work for gossip, but data is harder
-        need to store sig on prop?? Lots of overhead, but how else to do it? Only need sig for putting data on not-your-peer
-        pval1: {v:value,a:encTime..State,s:signature,e:expire}
+        //need to store sig on prop. Lots of overhead, but how else to do it? Only need sig for putting data on not-your-peer
+        pval1: {v:value,a:timestamp,s:signature,e:expire}// optional p: persist??
     }}  
     */
 
