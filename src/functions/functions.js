@@ -371,12 +371,13 @@ function JOIN(args){
 
 }
 function TEST(args){
+    let eval2 =eval
     if(args.length !== 2)throw new Error('TEST expects two arugments. Value to test, and a regex string "/regExStuffHere/gi"')
     let [value,regexStr] = args
     console.log(value,regexStr)
     let [match,regex,flags] = regexStr.match(/(\/[^\n\r]+\/)([gimuy]+)?/) || []
     if(!match)throw new Error('Regex string was not valid. Should be "/regExStuffHere/gi"')
-    let r = new RegExp(eval(regex),flags)
+    let r = new RegExp(eval2(regex),flags)
     return r.test(value)
 }
 export {

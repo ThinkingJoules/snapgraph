@@ -20,7 +20,7 @@ export default function addListeners (root){
     on.in = function(msg){
         let {m,s,r} = msg
         let temp
-        root.opt.debug('incoming msg',{m,s,r})
+        if(!['ack','ping'].includes(m))root.opt.debug('incoming msg',{m,s,r})
         if(s && (temp = root.router.recv[m])){//incoming request
             temp(msg)
         }else if (r && (temp = root.router.pending.get(r))){//incoming response to a previously sent message

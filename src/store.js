@@ -1,6 +1,6 @@
 import { snapID, isLink,isSub, getValue, notFound } from "./util";
 import Disk from './peer/disk'
-import BrowserStore from './browser/store'
+import BrowserStore from './browser/disk'
 
 export default function Store(root){
     let self = this
@@ -81,21 +81,20 @@ export default function Store(root){
         }
         return vase
     }
-    this.getAddrValue = function(nodeID,pval){//returns the substituted value
+    this.getPropValue = function(nodeID,pval){//returns the substituted value
         let ido = snapID(nodeID)
         let address = ido.toAddress(pval)
-        let memAddr = ido.toFlatPack(pval)
-        let v = self.mem.get(memAddr)//if it is inherited we want the value to go out to buffer
+        let v = self.getProp(nodeID,pval)//if it is inherited we want the value to go out to buffer
         let from = address
         let lookup 
         while ((lookup = isSub((v && v.v)))) {
             from = lookup.toStr()
-            v = self.mem.get(lookup.toFlatPack())
+            v = self.getProp(lookup.toNodeID(),lookup.p)
             v = v && v.v
         }
         return [v,from]
     }
-    this.put = function(nodeID,obj){
+    this.put = function(nodeID,obj){//this is where we need to determine changes?
 
     }
     this.subProp = function(id,p,cb,subID){
@@ -233,11 +232,6 @@ export default function Store(root){
     function processValue(addr,subs){//UPDATE
         return function(val,from){
             let {format,propType,dataType} = getValue(configPathFromChainPath(addr),gb)//UPDATE
-            if(dataType === 'array'){
-                try{
-                    val = JSON.parse(val)
-                }catch(e){} 
-            }
             for (const sID in subs) { //value has changed, trigger all subs
                 handleSub(subs[sID],val)
             }

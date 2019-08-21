@@ -1,12 +1,13 @@
 //REGEX STUFF
 const regOr = (regArr) =>{
+    let eval2 = eval
     let cur = ''
     for (const r of regArr) {
         cur += '(?:'+r.toString().slice(1,-2)+')' + '|'
     }
     cur = cur.slice(0,-1) //remove trailing '|'
     cur = '/'+cur+'/i'
-    return eval(cur)
+    return eval2(cur)
 }
 
 //other regex
@@ -422,7 +423,7 @@ function throwError(cb,errmsg){
 function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, nodeID, putObj, opts, cb){
     let startTime = Date.now()
     console.log('starting Put',nodeID)
-    let IDobj = parseSoul(nodeID) 
+    let ido = snapID(nodeID) 
     let {own,inherit,isNew,ctx,noRelations,isUnique} = opts
     let deleteThis,archive
     // if(inherit && !['exact','reference'].includes(inherit)){
@@ -436,7 +437,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     //isUnique will skip the unique check (used from config)
     //noRelations will not copy relationships in that array to the new node
     let ctxType = false
-    let {b,t,r,i} = IDobj
+    let {b,t,r,i} = ido
     let isNode = !r
     let {props,externalID} = getValue(configPathFromChainPath(nodeID),gb)
     let {relations,labels} = getValue(configPathFromChainPath(makeSoul({b})),gb) || {}
@@ -444,7 +445,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     let err
     if(ctx && isNew){
         if(DATA_INSTANCE_NODE.test(ctx)){
-            let {t:ct} = parseSoul(ctx)
+            let {t:ct} = snapID(ctx)
             if(t !== ct){//must be of same type to make a newFrom
                 throw new Error('NodeID specified for making new node from, is not the same type')
             }
@@ -480,8 +481,6 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
         }else{
             run.push(['deleteRelationship',[r]])
         }
-        
-
     }else if(archive){
         //set state idx value to `false`
         run.push(['changeArchive',[true]])
@@ -677,7 +676,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let raw = ctxRaw[pval]
                 let userVal = putObj[pval]
                 if(inherit && (userVal === undefined || userVal && userVal === val) && !enforceUnique && !autoIncrement){
-                    if(isLookup(raw) && inherit === 'exact'){
+                    if(isSub(raw) && inherit === 'exact'){
                         temp[pval] = raw //directly look at the reference on the other node (parallel links)
                     }else{
                         temp[pval] = makeEnq(ctx,pval) //no user input, we will inherit from ref (potentially serial links)
@@ -696,7 +695,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             for (const p in putObj) {
                 const userVal = putObj[p], existingR = existingRaw[p], enqV = existingValues[p]
                 console.log(userVal,existingR,enqV)
-                if(own || (isLookup(existingR) && enqV !== userVal) || (!isLookup(existingR) && existingR !== userVal)){
+                if(own || (isSub(existingR) && enqV !== userVal) || (!isSub(existingR) && existingR !== userVal)){
                     //if (prop is currently inherited but different) or (fOwns it already and userval is different)
                     cleanPutObj[p] = userVal
                 }
@@ -709,24 +708,23 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             //go through putObj
             //if isNew, simply addEnq when found
             //  else need to removeEnq if changing a enq
-
+            let subAddr
             for (const pval in putObj) {
                 let {dataType} = props[pval]
                 const val = putObj[pval];
                 let curR = existingRaw[pval]//always undefined if isNew
                 let enqV = existingValues[pval]
                 
-                if(isLookup(val)){//making new val an enq (or changing it)
-                    let childAddress = val.slice(1)
+                if((subAddr = isSub(val))){//making new val an enq (or changing it)
                     let thisAddr = toAddress(nodeID,pval)
-                    if(isLookup(curR)){
-                        let removeAddress = curR.slice(1)
+                    let removeAddress
+                    if((removeAddress=isSub(curR))){
                         changeEnq(false,thisAddr,removeAddress,pval)
                     }
-                    changeEnq(true,thisAddr,childAddress,pval)
+                    changeEnq(true,thisAddr,subAddr,pval)
                 }
                 
-                if(isLookup(curR) && dataType === 'unorderedSet' && !isLookup(val)){
+                if(isSub(curR) && dataType === 'unorderedSet' && !isSub(val)){
                     if(typeof val === 'object' && val !== null){ //val must be an object
                         let refVal = (typeof enqV === 'object' && enqV !== null) ? enqV : {}
                         putObj[pval] = Object.assign({},refVal,val) //merge userVal with inherited value? Assumes user is giving partial changes to put on new Obj
@@ -825,7 +823,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                 let stateSoul = makeSoul({b,t,r,i:true})
                 let toObj = {}
                 let soulList = []
-                gun.get(stateSoul).once(function(data){
+                root.getNode(stateSoul,function(data){
                     if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
                     for (const soul in data) {
                         if(!ALL_INSTANCE_NODES.test(soul))continue
@@ -836,7 +834,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                     }
                     let toGet = soulList.length
                     for (const soul of soulList) {
-                        getCell(soul,p,function(val,from){
+                        root.getCell(soul,p,function(val,from){
                             toGet--
                             toObj[from] = val
                             if(!toGet){
@@ -940,12 +938,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
             let {alias,propType,dataType,enforceUnique,pickOptions} = props[pval]
             
             let cVal = convertValueToType(v,dataType,alias)
-            if(dataType === 'array'){
-                try {
-                    cVal = JSON.parse(cVal)//convert value will stringify arrays so they are gun ready 
-                } catch (error) {}
-            }
-            if(isLookup(cVal) && !enforceUnique && externalID !== pval){//cannot inherit values on unique properties
+            if(isSub(cVal) && !enforceUnique && externalID !== pval){//cannot inherit values on unique properties
                 refChanges.push(cVal)
             }
             if(pval === 'LABELS'){
@@ -958,7 +951,7 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
                         temp[labelID] = cVal[label]
                     }else{
                         console.warn('Invalid reference ['+label+'] on prop: '+alias+', removing from request and continuing.')
-                        console.warn(`To add a new label: gbase.base('${b}').addLabel('${label}')`)
+                        console.warn(`To add a new label: snap.base('${b}').addLabel('${label}')`)
                     }
                 }
                 if(Object.keys(temp).length){
@@ -1140,12 +1133,12 @@ function putData(gun, gb, getCell, cascade, timeLog, timeIndex, relationIndex, n
     }
     function changeEnq(add,parentAddr,childAddr){
         //verify parent and child are of the same nodeType
-        if(!DATA_ADDRESS.test(parentAddr) && !isLookup(parentAddr)){
+        if(!DATA_ADDRESS.test(parentAddr) && !isSub(parentAddr)){
             let e = 'Invalid parent ID referenced for an inheritance'
             err = throwError(cb,e)
             return
         }
-        if(!DATA_ADDRESS.test(childAddr) && !isLookup(childAddr)){
+        if(!DATA_ADDRESS.test(childAddr) && !isSub(childAddr)){
             let e = 'Invalid child ID referenced for an inheritance'
             err = throwError(cb,e)
             return
@@ -1192,7 +1185,7 @@ function StringCMD(path,appendApiToEnd){
 function convertValueToType(value, toType, rowAlias, delimiter){
     let out
     if(value === undefined) throw new Error('Must specify a value in order to attempt conversion')
-    if(isLookup(value))return value//this is a lookup value, just return it.
+    if(isSub(value))return value//this is a lookup value, just return it.
     if(USER_SUB.test(value)){//convert user specified enq '${!#.$}' to gbase Enq
         return makeEnq(value)
     }
@@ -1736,7 +1729,7 @@ function signChallenge(root,peer){
     root.sign(challenge,function(sig){
         peer.theirChallenge = false
         if(peer.pub)root.on.pairwise(peer)
-        let m = {m:'auth',r:challenge,b:{auth:sig,pub:root.user.pub,is:root.is}}//IS send our ~*PUB> node
+        let m = msgs.recv.challenge(challenge,sig)
         console.log(m)
         peer.send(m)
     })

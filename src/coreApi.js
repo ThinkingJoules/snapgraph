@@ -1,23 +1,21 @@
 import {onDisConn,onMsg,Peer} from './wire'
-import { snapID, isLink, isSub } from './util';
+import { snapID, isLink, isSub, notFound } from './util';
 export default function coreApi(root){
     root.getCell = function(nodeID,p,cb,raw,exact){
         //need to store all the params in the 
         // buffer should be //Map{nodeID: Map{p:[]}}
         let address = snapID(nodeID).toAddress(p)
-        let cVal = (root.memStore.get(nodeID,p) || {}).v
+        let cVal = (root.store.getProp(nodeID,p) || {}).v
         let from = address
         let r = root.router
         if(!exact){
-            let res = root.memStore.getAddrValue(nodeID,p)
+            let res = root.store.getPropValue(nodeID,p)
             cVal = res[0]
             from = res[1]
         }
-        if(cVal !== undefined){
+        if(cVal !== notFound){
             let ido = snapID(from)
-            //console.log('RETURNING GET CELL FROM CACHE:',cVal)
             r.returnGetValue(ido.toNodeID(),ido.p,cVal,cb,raw)
-            //console.log('getCell,cache in:',Date.now()-start)
             return cVal //for using getCell without cb, assuming data is in cache??
         }
         root.router.batch.getCell.add(address,[cb,raw,exact])
@@ -25,17 +23,53 @@ export default function coreApi(root){
     }
     root.getNode = function(nodeID,cb,raw){
         //for getting full nodes only (unknown amount of keys)
-        let cVal = root.memStore.get(nodeID)
-        let r = root.router
+        let cVal = root.store.getNode(nodeID)
         if(cVal !== undefined){
             //what does raw mean??
-            cb(root.memStore.extractVals(cVal))
+            cb(root.store.extractVals(cVal))
             return cVal //for using getCell without cb, assuming data is in cache??
         }
         //only runs the following when needing network request
         root.router.batch.getNode.add(nodeID,[cb,raw])
     }
     root.put = function(things,cb,opts){
+        //cb if for err,done processing
+
+        //are we a client or peer
+
+
+        //if client, we just send a 'say' message to any peer listed on the gossip for this namespace
+        //we must wait for a written to disk confirmation until we add it to in memory on our own instance
+        //client does not have to ask/generate all index nodes, peer does that.
+        //if client is offline we need to store offline messages for transmitting
+        //if we are offline it is beneficial to generate our own index lists, so everything works locally?
+
+
+        //peer must enforce permissions and deal with index enforcement (states, indices etc) and broadcast to other peers who have asked for this namespace
+
+        //so a client would run this put fn and it would send it to the peer
+        //then the peer, on receiving that message will run this same function
+        //depending on the ID type (if gossip) things will be handled differently
+
+        //owned data (enforce permissions)
+
+        //gossip, varies by type
+        //Might make a 'newUser' and 'newBase' special message, as I think they will need to be blockchained in some matter for syncronizing
+        //basically all gossip is treated the same whether a say or ask, since we can't trust any one peer.
+        //gossip is a lot like gun, where a get is responded to with a put, but since we differentiate, gossip puts will follow the gossip gets
+
+        //basically only clients will ever 'get' gossip, or peers that aren't syncing?? all?? some?? of the gossip?
+
+
+
+
+
+
+
+
+
+
+
 
     }
     root.route = function(msg){

@@ -34,7 +34,7 @@ export default function ResourceManager(root){
     }
     this.subResource = function(ido){
         let id = (ido instanceof snapID)?ido.toStr():ido
-        root.memStore.subNode(id,sub,Symbol())//we will unsub by nodeID not subID
+        root.store.subNode(id,sub,Symbol())//we will unsub by nodeID not subID
         function sub(nodePartial){
             self.processResourceNode(ido,nodePartial)
         }
@@ -64,7 +64,7 @@ export default function ResourceManager(root){
     }
     this.subPeerOwnership = function(ido){
         let id = (ido instanceof snapID)?ido.toStr():ido
-        root.memStore.subNode(id,sub,Symbol())//we will unsub by nodeID not subID
+        root.store.subNode(id,sub,Symbol())//we will unsub by nodeID not subID
         function sub(nodePartial){
             self.processPeerOwnershipNode(ido,nodePartial)
         }

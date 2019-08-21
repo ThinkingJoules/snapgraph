@@ -1,7 +1,7 @@
 import {encode,decode} from '@msgpack/msgpack'
 export const onDisConn = (root) =>(peer)=>{
     if(peer && peer.wire && peer.wire.close)peer.wire.close()
-    root.mesh.peers.delete(peer.id)
+    peer.connected = false
     root.on.peerDisconnect(peer)
 }
 export const onMsg = (root) => (raw,peer)=>{
@@ -19,7 +19,7 @@ export const onMsg = (root) => (raw,peer)=>{
         msg.from = peer
         root.on.in(msg); //start of the in chain
     } catch (error) {
-        root.opt.debug('wire.onMsg Error: '+error.toString())
+        root.opt.debug('wire.onMsg Error: ',error)
     }
 }
 export function Peer(socket,pid,initialPeer){
@@ -37,11 +37,11 @@ export function Peer(socket,pid,initialPeer){
     this.pendingMsgs = []//for handling things that are waiting for a state change?
     this.initialPeer = initialPeer || false
     this.send = function(msg){
-        console.log('sending')
+        let s = {m:msg.m,s:msg.s,r:msg.r}
         msg = encode(msg,{sortKeys:true})
         let self = this
-        if(self.wire.send instanceof Function){
-            console.log('sent')
+        if(self.connected && self.wire.send instanceof Function){
+            if(!['ack','ping'].includes(s.m))console.log('sent',s)
             self.wire.send(msg);
         }
     }

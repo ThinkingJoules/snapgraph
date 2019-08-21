@@ -14,6 +14,18 @@ export default function DiskStore(root){
             return self.data.getProps(nodeID)
         }
     }
+    this.get = function (things){
+        let out = {}
+        for (const id in things) {
+            const pvals = things[id];
+            let ido = snapID(id)
+            if(ido.is === 'gossip'){
+                out[id] = self.gossip.get({[nodeID]:pvals})
+            }else{
+                out[id] = self.data.get({[nodeID]:pvals})
+            }
+        }
+    }
     this.getProp = function(nodeID,pval){
         let ido = snapID(nodeID)
         if(ido.is === 'gossip'){

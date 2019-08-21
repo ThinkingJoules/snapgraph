@@ -16,16 +16,16 @@ export default function Resolver(root){
             }
             return Object.values(flatten)
         }
-        return arrOfMsgs
+        return arrOfBodies
     }
    this.resolveAsk = function(askReply){
         //{hasRoot:{id:pval:val},fromOwner:{id:pval:val},gossip:{id:pval:val},checkSigs:pid:msg.b}
         
         //WHERE TO HANDLE PERMISSION DENIED VALUES OR 'NOT FOUND' VALUES?
         if(askReply.hasRoot){
-            root.memStore.resolvedAsk(askReply.hasRoot)
+            root.store.resolvedAsk(askReply.hasRoot)
         }else if(askReply.fromOwner){
-            root.memStore.resolvedAsk(askReply.fromOwner)
+            root.store.resolvedAsk(askReply.fromOwner)
         }
         if(askReply.checkSigs){
             resolveAll(Object.values(askReply.checkSigs))
@@ -34,8 +34,8 @@ export default function Resolver(root){
             for (const id in askReply.gossip) {
                 const obj = askReply.gossip[id];
                 self.verifyGossip(id,obj,function(node){
-                    //root.memStore.handleGossip(ido,node)
-                    root.memStore.resolvedAsk({id:node})
+                    //root.store.handleGossip(ido,node)
+                    root.store.resolvedAsk({id:node})
                 })
             }
             
@@ -81,7 +81,7 @@ export default function Resolver(root){
         }
         function got(){
             toGet--
-            if(!toGet)root.memStore.resolvedAsk(batch)
+            if(!toGet)root.store.resolvedAsk(batch)
         }
     }
     //if this is an ask response we only need to check sigs on gossip
@@ -92,28 +92,27 @@ export default function Resolver(root){
     //if say, we only want to validate,merge,update on disk the values that changed
     //(in case they pass the whole object, and only 1 prop changed)
     this.resolveDeferred = function(nodeID,pval,valueObj){//NEED TO FINISH AFTER I HAVE 'SAY' GOING
-        let cur = root.memStore.get(nodeID,pval)
+        let cur = root.store.get(nodeID,pval)
         let changed = this.resolveVal(cur,valueObj)
-        if(changed)root.memStore.resolvedDeferred({[nodeID]:{[pval]:cur}})// .add?? needs to fire change cb
+        if(changed)root.store.resolvedDeferred({[nodeID]:{[pval]:cur}})// .add?? needs to fire change cb
     }
     this.resolveNode = function(id,curO,incO,pub,cb){
-        let now = root.util.encTime()
+        let now = Date.now()
         let toGet
         if(pub)toGet = Object.values(incO)
         for (const p in incO) {
             const incVase = incO[p];
             const curVase = curO[p] || (curO[p] = incVase)
             if(incVase.a>now){//defer
-                let then = root.util.decTime(incVase.a)
                 setTimeout(()=>{
                     self.resolveDeferred(id,p,incO)
-                },(then-Date.now()))
+                },(incVase.a-Date.now()))
                 continue
             }
             if(pub){
                 self.resolveVal(curVase,incVase,pub,done)
             }else{
-                if(self.resolveVal(curVase,incVase))root.opt.debug('value changed in reduce.diffs')//should mutate if needed
+                if(self.resolveVal(curVase,incVase))root.opt.debug('value changed in resolver')//should mutate if needed
             }            
         }
         function done(){
@@ -270,7 +269,7 @@ export default function Resolver(root){
         }
     }
 
-
+    
 
 
 }

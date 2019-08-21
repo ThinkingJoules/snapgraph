@@ -12,11 +12,9 @@ import {
     DATA_ADDRESS,
     RELATION_ADDRESS,
     INSTANCE_OR_ADDRESS,
-    isEnq,
-    toAddress,
+    isSub,
     gunGet,
     IS_STATE_INDEX,
-    removeP,
     IS_CONFIG,
     IS_CONFIG_SOUL,
     TIME_INDEX_PROP,
@@ -87,19 +85,19 @@ let typeGet, nodeGet, addressGet, getConfig,addLabel, importRelationships,perfor
 //     timeLog,} from '../chronicle/chronicle'
 // let qIndex,tIndex,tLog
 
-var isNode=new Function("try {return this===global;}catch(e){return false;}")()
+let isNode=new Function("try {return this===global;}catch(e){return false;}")()
 
 
 
 import Router from './router';
-import MemStore from './memStore'
+import Store from './store'
 import SG from './sg'
 import ResourceManager from './resources'
 import PeerManager from './peerManager'
 import commsInit from './peer/listen'
 import Resolver from './resolver'
 import addListeners from './events'
-import { create, auth, leave, verify } from './auth/auth';
+import Aegis from './aegis';
 import coreApi from './coreApi'
 import {encode,decode} from '@msgpack/msgpack'
 
@@ -130,9 +128,8 @@ export default function Snap(initialPeers,opts){
     if(isNode)mergeObj(defaultOpts,{maxConnections:300})//currently not implemented
     root.opt = defaultOpts
     mergeObj(root.opt,opts) //apply user's ops
-    root.verify = verify
 
-    root.memStore = new MemStore(root)
+    root.store = new Store(root)
     //root.sg = new SG(root)
     root.assets = new ResourceManager(root)
     root.mesh = new PeerManager(root)
@@ -141,17 +138,21 @@ export default function Snap(initialPeers,opts){
     if(isNode){
         commsInit(root)//listen on port
     }
+    root.aegis = new Aegis(self)
     coreApi(root)
     addListeners(root)
     //add diskStore
-    root.is = {}// not here, but need to get them so our intro/auth can send them
-    root.has = {}
+
+    //on startup, we need to know what baseids this peer should have, that way if we get 'notFound' we know not to send a network request?
+    root.is = {} //maybe just put the pubkey?
+    root.has = {} //maybe a set of baseID's this root has (according to ip)
+    //https://stackoverflow.com/questions/20273128/how-to-get-my-external-ip-address-with-node-js
 
     root.util = {getValue,setValue,rand,encode,decode}
     
-    // for (let i = 0; i < initialPeers.length; i++) {
-    //     root.connect(initialPeers[i])
-    // } can only connect from making a request?
+    for (let i = 0; i < initialPeers.length; i++) {
+        root.mesh.connect(initialPeers[i])
+    } 
         
     Object.assign(self,snapChainOpt(self))   
 }
@@ -321,9 +322,9 @@ const node = (path) =>{
 }
 function snapChainOpt(snap){
     return {snap,
-        signUp:create,
-        signIn:auth,
-        signOut:leave,
+        // signUp:create,
+        // signIn:auth,
+        // signOut:leave,
         //newBase, 
         //showgb, 
         //showcache, 
