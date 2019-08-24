@@ -98,6 +98,7 @@ import commsInit from './peer/listen'
 import Resolver from './resolver'
 import addListeners from './events'
 import Aegis from './aegis';
+import Aeon from './aeon'
 import coreApi from './coreApi'
 import {encode,decode} from '@msgpack/msgpack'
 
@@ -125,6 +126,7 @@ export default function Snap(initialPeers,opts){
     let root = this._
     root.snapID = snapID
     root.isPeer = isNode
+    root.util = {getValue,setValue,rand,encode,decode}
     if(isNode)mergeObj(defaultOpts,{maxConnections:300})//currently not implemented
     root.opt = defaultOpts
     mergeObj(root.opt,opts) //apply user's ops
@@ -138,7 +140,8 @@ export default function Snap(initialPeers,opts){
     if(isNode){
         commsInit(root)//listen on port
     }
-    root.aegis = new Aegis(self)
+    root.aegis = new Aegis(root)
+    root.aeon = new Aeon(root)
     coreApi(root)
     addListeners(root)
     //add diskStore
@@ -148,7 +151,6 @@ export default function Snap(initialPeers,opts){
     root.has = {} //maybe a set of baseID's this root has (according to ip)
     //https://stackoverflow.com/questions/20273128/how-to-get-my-external-ip-address-with-node-js
 
-    root.util = {getValue,setValue,rand,encode,decode}
     
     for (let i = 0; i < initialPeers.length; i++) {
         root.mesh.connect(initialPeers[i])

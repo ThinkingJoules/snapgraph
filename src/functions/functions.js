@@ -1,4 +1,4 @@
-import {evaluateAllFN, findTruth} from './function_utils'
+import {findTruth} from '../util'
 //GBase FN wrappers
 //all FN except IFERROR will recieve args already resolved of functions
 //args will always be an array

@@ -1369,6 +1369,357 @@ function parseIncrement(incr){
     }
 }
 
+//FUNCTION UTIL
+function findTruth(ifFirstArg,FILTERtruth){
+    if(!FILTERtruth){
+        let r = /IF\(/
+        let match = r.exec(ifFirstArg)
+        if(match !== null){
+            throw new Error('Cannot have an IF statement as the first argument in an IF Statement')
+        }
+    }
+    let containsInvalidChars = /[^()+\-*/0-9.\s<>=!]/g.test(ifFirstArg)
+    let valid = (containsInvalidChars) ? parseTruthStr(ifFirstArg, 'string') : parseTruthStr(ifFirstArg, 'number')
+    let solver = new MathSolver()
+    let output = solver.solveAndCompare(valid)
+    return output
+    function parseTruthStr(TFstr, compType){
+        //check to ensure there is only one logical operator
+        let operators = /(>=|=<|!=|>|<|=)/g
+        let str = TFstr.replace(/\s/g,"")
+        let found = [...str.matchAll(operators)]
+        if(found.length !== 1){
+            let err = 'Can only have one comparison operator per T/F block: '+ TFstr
+            throw new Error(err)
+        }
+        if(compType === 'number'){
+            str = str.slice(0,found[tok[0]])+')'+tok[0]+'('+str.slice(found[tok[0]]+ tok[0].length, str.length)
+            str = '(' + str
+            str += ')'
+        }
+        return str
+    }
+}
+function MathSolver() {
+
+    this.infixToPostfix = function(infix) {
+        var outputQueue = "";
+        var operatorStack = [];
+        var operators = {
+            "^": {
+                precedence: 4,
+                associativity: "Right"
+            },
+            "/": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "*": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "+": {
+                precedence: 2,
+                associativity: "Left"
+            },
+            "-": {
+                precedence: 2,
+                associativity: "Left"
+            }
+        }
+        infix = infix.replace(/\s+/g, "");
+        infix = clean(infix.split(/([\+\-\*\/\^\(\)])/))
+        for(var i = 0; i < infix.length; i++) {
+            var token = infix[i];
+            if(isNumeric(token)) {
+                outputQueue += token + " ";
+            } else if("^*/+-".indexOf(token) !== -1) {
+                var o1 = token;
+                var o2 = operatorStack[operatorStack.length - 1];
+                while("^*/+-".indexOf(o2) !== -1 && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
+                    outputQueue += operatorStack.pop() + " ";
+                    o2 = operatorStack[operatorStack.length - 1];
+                }
+                operatorStack.push(o1);
+            } else if(token === "(") {
+                operatorStack.push(token);
+            } else if(token === ")") {
+                while(operatorStack[operatorStack.length - 1] !== "(") {
+                    outputQueue += operatorStack.pop() + " ";
+                }
+                operatorStack.pop();
+            }
+        }
+        while(operatorStack.length > 0) {
+            outputQueue += operatorStack.pop() + " ";
+        }
+        return outputQueue;
+    }
+    this.solvePostfix = function postfixCalculator(expression) {
+        if (typeof expression !== 'string') {
+          if (expression instanceof String) {
+            expression = expression.toString();
+          } else {
+            return null;
+          }
+        }
+    
+        var result;
+        var tokens = expression.split(/\s+/);
+        var stack = [];
+        var first;
+        var second;
+        var containsInvalidChars = /[^()+\-*/0-9.\s]/gi.test(expression);
+    
+        if (containsInvalidChars) {
+          return null;
+        }
+        for (var i = 0; i < tokens.length; i++) {
+            var token = tokens[i];
+            if (token === '*') {
+                second = stack.pop();
+                first = stack.pop();
+        
+                if (typeof first === 'undefined') {
+                first = 1;
+                }
+        
+                if (typeof second === 'undefined') {
+                second = 1;
+                }
+        
+                stack.push(first * second);
+            } else if (token === '/') {
+                second = stack.pop();
+                first = stack.pop();
+                if(second === 0){//can't divide by 0...
+                    throw new Error('Cannot divide by zero')
+                }
+                stack.push(first / second);
+            } else if (token === '+') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first + second);
+            } else if (token === '-') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first - second);
+            } else {
+                if (isNumeric(token)) {
+                stack.push(Number(token));
+                }
+            }
+        }
+    
+        result = stack.pop();
+    
+        return result;
+    }
+    this.infixToPostfixCompare = function(infix) {
+        infix = this.swapOperators(infix)
+        var outputQueue = "";
+        var operatorStack = [];
+        var operators = {
+            "^": {
+                precedence: 4,
+                associativity: "Right"
+            },
+            "/": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "*": {
+                precedence: 3,
+                associativity: "Left"
+            },
+            "+": {
+                precedence: 2,
+                associativity: "Left"
+            },
+            "G": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "L": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "E": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "N": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "P": {
+                precedence: 1,
+                associativity: "Left"
+            },
+            "M": {
+                precedence: 1,
+                associativity: "Left"
+            }
+        }
+        infix = infix.replace(/\s+/g, "");
+        infix = clean(infix.split(/([\+\-\*\/\^\(\)GLENPM])/))
+        for(var i = 0; i < infix.length; i++) {
+            var token = infix[i];
+            if(isNumeric(token)) {
+                outputQueue += token + " ";
+            } else if("^*/+-GLENPM".indexOf(token) !== -1) {
+                var o1 = token;
+                var o2 = operatorStack[operatorStack.length - 1];
+                while("^*/+-GLENPM".indexOf(o2) !== -1 && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
+                    outputQueue += operatorStack.pop() + " ";
+                    o2 = operatorStack[operatorStack.length - 1];
+                }
+                operatorStack.push(o1);
+            } else if(token === "(") {
+                operatorStack.push(token);
+            } else if(token === ")") {
+                while(operatorStack[operatorStack.length - 1] !== "(") {
+                    outputQueue += operatorStack.pop() + " ";
+                }
+                operatorStack.pop();
+            }
+        }
+        while(operatorStack.length > 0) {
+            outputQueue += operatorStack.pop() + " ";
+        }
+        return outputQueue;
+    }
+    this.swapOperators = function(infix){
+        infix = infix.replace(/<=/g, 'M')
+        infix = infix.replace(/>=/g, 'P')
+        infix = infix.replace(/!=/g, 'N')
+        infix = infix.replace(/>/g, 'G')
+        infix = infix.replace(/</g, 'L')
+        infix = infix.replace(/=/g, 'E')
+        return infix
+    }
+    this.evaluatePostfix = function (expression) {
+        if (typeof expression !== 'string') {
+          if (expression instanceof String) {
+            expression = expression.toString();
+          } else {
+            return null;
+          }
+        }
+    
+        var result;
+        var tokens = expression.split(/\s+/);
+        var stack = [];
+        var first;
+        var second;
+        var containsInvalidChars = /[^()+\-*/0-9.\sGLENPM]/g.test(expression);
+        if (containsInvalidChars) {
+          return null;
+        }
+        for (var i = 0; i < tokens.length; i++) {
+            var token = tokens[i];
+            if("GLENPM".indexOf(token) !== -1){//should always be only one, at end of stack
+                second = stack.pop()
+                first = stack.pop()
+                if(token === 'G'){
+                    if(first > second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'L'){
+                    if(first < second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'E'){
+                    if(first === second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'N'){
+                    if(first !== second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'P'){
+                    if(first >= second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+                if(token === 'M'){
+                    if(first <= second){
+                        return true
+                    }else{
+                        return false
+                    }
+                }
+            }
+            if (token === '*') {
+                second = stack.pop();
+                first = stack.pop();
+        
+                if (typeof first === 'undefined') {
+                first = 1;
+                }
+        
+                if (typeof second === 'undefined') {
+                second = 1;
+                }
+        
+                stack.push(first * second);
+            } else if (token === '/') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first / second);
+            } else if (token === '+') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first + second);
+            } else if (token === '-') {
+                second = stack.pop();
+                first = stack.pop();
+                stack.push(first - second);
+            } else {
+                if (isNumeric(token)) {
+                stack.push(Number(token));
+                }
+            }
+        }
+    
+        result = stack.pop();
+    
+        return result;
+    }
+    this.solveAndCompare = function(infix){
+        let pf = this.infixToPostfixCompare(infix)
+        return this.evaluatePostfix(pf)
+    }
+    this.solve = function(infix){
+        let pf = this.infixToPostfix(infix)
+        return this.solvePostfix(pf)
+    }
+    function isNumeric(value){
+        return !isNaN(parseFloat(value)) && isFinite(value);
+    }
+    function clean(arr){
+        for(var i = 0; i < arr.length; i++) {
+            if(arr[i] === "") {
+                arr.splice(i, 1);
+            }
+        }
+        return arr;
+    }
+}
 
 //SNAP STUFF
 const on = function(tag,cb,opts){
@@ -2008,7 +2359,7 @@ const soulSchema = {//OUTDATED!
     "!#.$&[" : "Will have 'length', keys of 0,1..., and hashes as keys with the values of JSON"
     
     
-    }
+}
 
 
 
@@ -2069,5 +2420,7 @@ export {
     decTime,
     snapID,
     signChallenge,
-    notFound
+    notFound,
+    MathSolver,
+    findTruth
 }

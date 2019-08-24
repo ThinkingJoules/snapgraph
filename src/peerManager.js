@@ -41,14 +41,14 @@ export default function PeerManager(root){
             //that way on reconnect we are no long auth'd
         }
     }
-    this.connect = function(peer,cb){
+    this.connect = function(peer,intialPeer,cb){
         let wait = 2 * 1000;
         let doc = 'undefined' !== typeof document && document;
         if(!peer){ return }
         let ipAddr = (peer instanceof Peer) ? peer.id : peer
         let url = ipAddr.replace('http', 'ws');
         let wire = new root.WebSocket(url);
-        if(!(peer instanceof Peer))peer = new Peer(wire,ipAddr)
+        if(!(peer instanceof Peer))peer = new Peer(wire,ipAddr,intialPeer)
         else peer.wire = wire
         if(!root.isPeer)peer.wire.binaryType = 'arraybuffer'
         wire.onclose = function(){//if whoever we are connecting to closes

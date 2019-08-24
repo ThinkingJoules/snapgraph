@@ -1,20 +1,17 @@
 import {getValue,setValue,rand} from './util'
 import {encode,decode} from '@msgpack/msgpack'
-
-import {TextEncoder, TextDecoder} from 'text-encoding'
 import WebCrypto from 'node-webcrypto-ossl'
 import crypto from 'crypto'
 import atob from 'atob'
 import btoa from 'btoa'
 
 const isNode=new Function("try {return this===global;}catch(e){return false;}")()
-export default function Aegis(snap){
-    let root = snap._
+export default function Aegis(root){
     const aegis = this
     aegis.crypto = crypto || (!isNode && (window.msCrypto || window.webkitCrypto || window.mozCrypto))
     aegis.subtle = (aegis.crypto.subtle || aegis.crypto.webkitSubtle) || (isNode && new WebCrypto().subtle)
     aegis.random = (len) => Buffer.from(aegis.crypto.getRandomValues(new Uint8Array(Buffer.alloc(len))))
-    
+    const util = aegis.util = {}
     const s = aegis.settings = {};
     s.pbkdf2 = {hash: 'SHA-256', iter: 100000, ks: 64};
     s.ecdsa = {
@@ -24,7 +21,7 @@ export default function Aegis(snap){
     s.ecdh = {name: 'ECDH', namedCurve: 'P-256'};
     
     // This creates Web Cryptography API compliant JWK for sign/verify purposes
-    aegis.pairToJwk = function(pair,ecdh){  // d === priv
+    util.pairToJwk = function(pair){  // d === priv
         let {pub,priv:d} = pair
         pub = pub.split('.');
         const x = pub[0], y = pub[1];
@@ -33,38 +30,28 @@ export default function Aegis(snap){
         if(d){ jwk.d = d }
         return jwk;
     };
-    aegis.jwkToPair = function(jwk){
+    util.jwkToPair = function(jwk){
         const keys = {}
         const {x,y,d} = jwk
         keys.pub = x+'.'+y
         if(d){ keys.priv = d }
         return keys;
+    }    
+    aegis.pair = async function(){
+        return await aegis.subtle.generateKey(s.ecdsa.pair, true, [ 'sign', 'verify' ])
+        .then(async (keys) => {
+            let k = {}
+            k.priv = Buffer.from(await aegis.subtle.exportKey('pkcs8', keys.privateKey))
+            k.pub = Buffer.from(await aegis.subtle.exportKey('raw', keys.publicKey))
+            return k 
+        })    
     }
-    
-    
-    aegis.pair = async function(cb, opts){
-        try {
-            var sa = await aegis.subtle.generateKey(s.ecdsa.pair, true, [ 'sign', 'verify' ])
-            .then(async (keys) => {
-                return await aegis.subtle.exportKey('jwk', keys.privateKey)    
-            })
-            var dh = await aegis.subtle.generateKey(s.ecdh, true, ['deriveKey'])
-            .then(async (keys) => {
-               return await aegis.subtle.exportKey('jwk', keys.privateKey)
-            })
-            var r = {a:aegis.jwkToPair(sa), e:aegis.jwkToPair(dh)}
-            if(cb){ try{ cb(r) }catch(e){console.log(e)} }
-            return r;
-          } catch(e) {
-            console.log(e);
-            if(cb){ cb(e) }
-            return;
-          }
+    root.util.jsToStr = jsToStr
+    root.util.strToJs = strToJs
+    function jsToStr(js) {
+        return btoa(String.fromCharCode.apply(null, encode(js,{sortKeys:true})))
     }
-    function js2str(js) {
-        return btoa(String.fromCharCode.apply(null, encode(js)))
-    }
-    function strTojs(str){
+    function strToJs(str){
         str = atob(str)
         const buf = new ArrayBuffer(str.length);
         const bufView = new Uint8Array(buf);
@@ -73,71 +60,78 @@ export default function Aegis(snap){
         }
         return decode(bufView)
     }
-    aegis.hash = async function(value,cb){
-        let enc = encode(value)
-        let digest = await aegis.subtle.digest({name:'SHA-256'},enc)
-        if(cb && cb instanceof Function)cb(digest)
-        return digest
+    util.rawPubToJwkPub = async function(raw){
+        return await aegis.subtle.importKey('raw', raw, {name: 'ECDSA', namedCurve: 'P-256'}, true, ['verify'])
+        .then(async(cKey)=>{ return aegis.jwkToPair(await aegis.subtle.exportKey('jwk', cKey)).pub})
+    }
+
+    aegis.hash = async function(byteArray){
+        return Buffer.from(await aegis.subtle.digest({name:'SHA-256'},byteArray))
     }
     aegis.aes = async function(key,salt){//??? Not sure... 
         const combo = Buffer.concat([Buffer.from(key),((salt && Buffer.from(salt)) || aegis.random(8))])
         const hash = await aegis.subtle.digest({name:'SHA-256'},combo)
         return await aegis.subtle.importKey('raw', new Uint8Array(hash), 'AES-GCM', false, ['encrypt', 'decrypt'])
     }
-    aegis.extend = async function(jsThing,entropy,cb,opt){
-        //entropy is string
+    aegis.importSignKey = async function(keyBits){
+        return await aegis.subtle.importKey('pkcs8',keyBits,s.ecdsa.pair,false,['sign'])
+    }
+    aegis.extend = async function(jsThing,entropy,opt){
+        //entropy is string, but could be a buffer already
         //jsThing can be string (password), but could also be object, array, etc, as it will be encoded in bits
-        //passphrase+salt+pbkdf2 = secure-er bits
-        //uses pbkdf2 to derive output
-        var opt = opt || {};
-        var salt = entropy || opt.salt || rand(64)
+        //this returns bits for a key
+        opt = opt || {};
+        let salt = entropy || opt.salt
+        salt = (salt && Buffer.from(salt)) || aegis.random(16)
         let srcBits = encode(jsThing,{sortKeys:true})
-        var keyBits = await aegis.subtle.importKey('raw', srcBits, {name:'PBKDF2'}, false, ['deriveBits'])
+        let keyBits = await aegis.subtle.importKey('raw', srcBits, {name:'PBKDF2'}, false, ['deriveBits'])
         .then(async(key) =>{
             console.log(key)
-            return await aegis.subtle.deriveBits({
+            return Buffer.from(await aegis.subtle.deriveBits({
                 name: 'PBKDF2',
                 iterations: opt.iterations || 250000,
                 salt: Buffer.from(salt),
                 hash: {name: 'SHA-256'},
-              }, key, 256)
+              }, key, 256))
         })
-        if(cb && cb instanceof Function)cb(keyBits)
         return keyBits
     }
-    aegis.encrypt = async function(payload,passphrase,cb){
+    aegis.encrypt = async function(payload,keyBits,cb){
         let u
         if(u === payload){ console.warn('`undefined` not allowed. VALUE CHANGED TO `null`!!!') }
-        var encPayload = encode(payload)
-        var rand = {s: aegis.random(9), iv: aegis.random(15)}; // consider making this 9 and 15 or 18 or 12 to reduce == padding.
-        var ct = await aegis.aes(passphrase, rand.s)
+        let encPayload = encode(payload,{sortKeys:true})
+        let iv = aegis.random(12)
+        let ct = await aegis.subtle.importKey('raw', keyBits, 'AES-GCM', false, ['encrypt'])
         .then((aes) => aegis.subtle.encrypt(
-            { name: 'AES-GCM', iv: new Uint8Array(rand.iv)}, aes, encPayload)
+            { name: 'AES-GCM', iv}, aes, encPayload)
         );
-        var r = {
+        let r = {
           ct:Buffer.from(ct),
-          iv: rand.iv,
-          s: rand.s
+          iv,
         }
-        let b64 = js2str(r)
-        if(cb && cb instanceof Function)cb(b64)
-        return b64
+        if(cb && cb instanceof Function)cb(r)
+        return r
     }
-    aegis.decrypt = async function(b64Str,passphrase,cb){
-        let {ct,iv,s} = strTojs(b64Str)      
-        var pt = await aegis.aes(passphrase, s)
+    aegis.decrypt = async function(encObj,keyBits,cb){
+        let {ct,iv} = encObj
+        let pt =  await aegis.subtle.importKey('raw', keyBits, 'AES-GCM', false, ['decrypt'])
         .then((aes) => aegis.subtle.decrypt({ name: 'AES-GCM', iv}, aes, ct));
-        var plainJs = decode(pt)
+        let plainJs = decode(pt)
         if(cb && cb instanceof Function)cb(plainJs)
         return plainJs
     }
-    snap.pow = async function(jsTarget,cb,opt){
+    const powKey = Buffer.from([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16])
+    aegis.pow = async function(jsTarget,opt){
         let s = Date.now()
         if(jsTarget == undefined)throw new Error("Must specify something to prove work was performed on")
         opt = opt || {}
-        const trgt = opt.target&&Buffer.from(opt.target) || Buffer.from([0,0,128])//change to a bit value, 256 = [0], 284 = [0,128], 640 = [0,0,128]
-        var hash = await aegis.hash(jsTarget)
-        var cKey = await aegis.subtle.importKey('raw', aegis.random(16), 'AES-CBC', true, ['encrypt', 'decrypt'])
+        let difficulty = opt.target || 500
+        let len = Math.floor(difficulty/256)
+        let last = (difficulty%256) ? 256-difficulty%256 : 255
+        let bits = Array.from({length:len},()=>0).concat(last)
+        const trgt = Buffer.from(bits)
+        let hash = await aegis.hash(encode(jsTarget,{sortKeys:true}))
+        let cKey = await aegis.subtle.importKey('raw', powKey, 'AES-CBC', true, ['encrypt', 'decrypt'])
         let ct,iv,rounds = 0
         while (true) {
             rounds++
@@ -148,98 +142,34 @@ export default function Aegis(snap){
             }
         }
         let fin = Date.now()-s
-        var proof = {
-            pt:encode(jsTarget),
+        let proof = {
             ct,
             iv,
-            key: Buffer.from(await aegis.subtle.exportKey('raw',cKey))
         }
-        let b64 = js2str(proof)
-        console.log({proof},{fin,rounds,per:fin/rounds},{b64})
-        if(cb && cb instanceof Function)cb(proof)
-        return proof
+        root.opt.debug({proof},{fin,rounds,per:fin/rounds})
+        return iv
     }
-    snap.test = function(){
-        snap.create(function(strPair){
-            snap.auth(strPair,function(){
-                root.user.sign({abc:true,bob:'isBob'},function(sig){
-
-                    root.verify(root.user.pub,sig,{bob:'isBoba', abc: true},function(passed){
-                        console.log({passed})
-                    })
-                })
-            })
+    aegis.extendEncrypt = async function(jsTarget,passphrase){
+        let s = aegis.random(16)
+        let encObj = await aegis.extend(passphrase,s)
+        .then(async(keyBits) =>{
+            return Buffer.from(await aegis.encrypt(jsTarget,keyBits))
         })
-    }
-    snap.extend = function(password){
-        aegis.extend(password,false,function(keyBits){
-            aegis.pair(function(newPair){
-                console.log({newPair})
-                aegis.encrypt(newPair,keyBits,function(ct){
-                    aegis.decrypt(ct,keyBits,function(pt){
-                        console.log({pt})
-                    })
-                })
+        encObj.s = s
+        return encObj
 
-            })
-        })
     }
-
-    snap.create = function(cb){
-        aegis.pair(function(pair1){
-            let jsenc = js2str(pair1)
-            cb(jsenc)
-        })
+    aegis.outputStr = function(jsTarget,what){
+        const exportedAsBase64 = jsToStr(jsTarget)
+        return `-----BEGIN ${what}-----\n${exportedAsBase64}\n-----END ${what}-----`;
     }
-    snap.rotate = function(curHead,newKeys){
-        //this is in place of signin/auth
-    
-    }
-    
-    snap.leave = function(){
-        let snap = this
-        let root = snap._
-        root.on.signout()
-    }
-    snap.auth = async function(encStr,cb){
-        let {a,e} = strTojs(encStr)
-        let signPair = aegis.pairToJwk(a)
-        let signKey = await aegis.subtle.importKey('jwk',signPair,s.ecdsa.pair,true,["sign"])
-        let user = root.user = {pub:a.pub}
-        user.sign = sign(s.ecdsa.sign,signKey)
-        user.encrypt = encrypt(e)
-        user.decrypt = decrypt(e)
-        if(cb && cb instanceof Function) cb(user)
-        return user
-    }
-
-    function sign(algo,key){
-        return async function(data,cb){
-            var buff = encode(data,{sortKeys:true});
-            const sig = await aegis.subtle.sign(algo,key,buff)
-            let b64 = Buffer.from(sig,'binary').toString('base64')
-            if(cb && cb instanceof Function) cb(b64)
-            return b64
-        }
-    }
-    function decrypt(ePair){
-        return async function(ctB64,cb){
-            return await aegis.decrypt(ctB64,ePair.priv,cb)
-        }
-    }
-    function encrypt(ePair){
-        return async function(jsTarget,cb){
-            return await aegis.encrypt(jsTarget,ePair.priv,cb)
-        }
-    }
-    root.verify = async function(pub,b64sig,jsData,cb){
-        let data = encode(jsData,{sortKeys:true})
-        let sig = Buffer.from(b64sig,'base64')
-        let passed = await aegis.subtle.importKey('jwk',aegis.pairToJwk({pub}),s.ecdsa.pair,false,['verify'])
-        .then((key)=> aegis.subtle.verify(s.ecdsa.sign,key,sig,data))
-        if(cb && cb instanceof Function) cb(passed)
-        return passed
-    }
+    aegis.parseStr = function(headeredString){
+        //returns what was in the label 'what' and the contents
+        let r = /(?:-----BEGIN )(.+)(?:-----)/
+        let what = headeredString.match(r)[1]
+        let content = headeredString.split("\n")[1]
+        return {what,content}
+    }   
 }
 
 
@@ -253,22 +183,7 @@ function str2ab(str) {
     }
     return buf;
 }
-function pemToKey(pem,isPub){
-    let type = isPub ? 'PUBLIC' : 'PRIVATE'
-    const pemHeader = `-----BEGIN ${type} KEY-----`;
-    const pemFooter = `-----END ${type} KEY-----`;
-    const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length);
-    // base64 decode the string to get the binary data
-    const binaryDerString = atob(pemContents);
-    // convert from a binary string to an ArrayBuffer
-    return str2ab(binaryDerString);
-}
-function keyToPem(key,isPub){
-    let type = isPub ? 'PUBLIC' : 'PRIVATE'
-    const exportedAsString = ab2str(key);
-    const exportedAsBase64 = btoa(exportedAsString);
-    return `-----BEGIN ${type} KEY-----\n${exportedAsBase64}\n-----END ${type} KEY-----`;
-}
+
 function ab2str(buf) {
     return String.fromCharCode.apply(null, new Uint8Array(buf));
 }
