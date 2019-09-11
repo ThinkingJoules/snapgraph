@@ -5,12 +5,10 @@ export default function User(root){
 
     user.signUp = async function(wkn,password,cb,opt){//create a new aeon identity
         opt = opt || {}
-        let keys = opt.keys || [null]
         let proof = opt.proof || {}
-        let pair = await root.aegis.pair()
-        let chainID = await root.aegis.hash(pair.pub)
         if(root.user)throw new Error('You must logout before creating a new identity')
-        root.user = {cid:chainID}
+        let {authCreds,pair,msg,cid} = await root.aeon.create(password,{target:proof.identity})
+        root.user = {cid,pub:pair.pub}
 
 
 

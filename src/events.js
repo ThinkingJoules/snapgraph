@@ -25,15 +25,15 @@ export default function addListeners (root){
             temp(msg)
         }else if (r && (temp = root.router.pending.get(r))){//incoming response to a previously sent message
             if(m === 'ack'){
-                temp.on('ack',msg.ack)//only send the body to the tracker?
+                temp.ee.emit('ack',msg.b)//ack body is a timestamp
             }else if(m === 'error'){
-                temp.on('error',msg.b)
+                temp.ee.emit('error',msg.b)
             }else{
-                temp.on('reply',msg)//only send the body to the tracker?
+                temp.ee.emit('reply',msg)//only send the body to the tracker?
             }
         }else if (r && m == 'ask'){//msg expired, but we can merge this to graph as an update??
-            //maybe this is how subscrive vs retrieve works? NO, must specify an off message to stop updates (which should be 'say' not 'ask')
-            //WE COULD TREAT THIS AS A 'SAY' AND IT WOULD ACT LIKE A 'NEW' NODE WAS CREATED???
+            //maybe this is how subscrive vs retrieve works? NO, must specify an off message to stop updates (which should be 'put' not 'get')
+            //WE COULD TREAT THIS AS A 'PUT' AND IT WOULD ACT LIKE A 'NEW' NODE WAS CREATED???
             //doesn't really matter, if retrieve fired cb, then won't do anything, if sub'd, just merge and emit?
         }else{
             root.opt.debug('Could not route:',msg)

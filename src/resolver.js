@@ -18,7 +18,7 @@ export default function Resolver(root){
         }
         return arrOfBodies
     }
-   this.resolveAsk = function(askReply){
+   this.resolveGet = function(askReply){
         //{hasRoot:{id:pval:val},fromOwner:{id:pval:val},gossip:{id:pval:val},checkSigs:pid:msg.b}
         
         //WHERE TO HANDLE PERMISSION DENIED VALUES OR 'NOT FOUND' VALUES?
@@ -29,16 +29,6 @@ export default function Resolver(root){
         }
         if(askReply.checkSigs){
             resolveAll(Object.values(askReply.checkSigs))
-        }
-        if(askReply.gossip){
-            for (const id in askReply.gossip) {
-                const obj = askReply.gossip[id];
-                self.verifyGossip(id,obj,function(node){
-                    //root.store.handleGossip(ido,node)
-                    root.store.resolvedAsk({id:node})
-                })
-            }
-            
         }
         function resolveAll(arrOfBodies){
             arrOfBodies = self.flattenMsgs(arrOfBodies)
@@ -192,7 +182,7 @@ export default function Resolver(root){
             if(!toGet)cb(node)
         }
     }
-    this.verifyGossip = function(ido,node,cb){
+    this.verifyGossip = function(sig,block,cb){
         ido = (ido instanceof snapID)?ido:snapID(ido)
         //assumes node is the full node
         //will return properties that pass in the cb
@@ -268,7 +258,6 @@ export default function Resolver(root){
             if(!toGet)cb(node)
         }
     }
-
     
 
 

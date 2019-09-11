@@ -116,7 +116,7 @@ export default function PeerManager(root){
     this.getNonClients = function(){
         //used on certain updates
         //gets all connected peers that are not clients
-        return self.peers.values.filter(x=>x.isPeer)
+        return [...self.peers.values()].filter(x=>x.isPeer&&x.connected)
     }
     this.getConnectedNeedingUpdate = function(nodeID,pval){
         //updates on changes locally that need to be sent to others listening

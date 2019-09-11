@@ -1,42 +1,19 @@
 import lmdb from 'node-lmdb'
 import fs from 'fs'
 import {encode,decode} from '@msgpack/msgpack'
-import {removeFromArr,notFound} from '../util'
+import {removeFromArr,notFound,DataStore} from '../util'
 export default function DiskStore(root){
     //LMDB for k/v and snap data
     //fs for 'files'
-    //fs for 'git'
-    this.getProps = function(nodeID){
-        let ido = snapID(nodeID)
-        if(ido.is === 'gossip'){
-            return self.gossip.getProps(nodeID)
-        }else{
-            return self.data.getProps(nodeID)
-        }
-    }
-    this.get = function (things){
-        let out = {}
-        for (const id in things) {
-            const pvals = things[id];
-            let ido = snapID(id)
-            if(ido.is === 'gossip'){
-                out[id] = self.gossip.get({[nodeID]:pvals})
-            }else{
-                out[id] = self.data.get({[nodeID]:pvals})
-            }
-        }
-    }
-    this.getProp = function(nodeID,pval){
-        let ido = snapID(nodeID)
-        if(ido.is === 'gossip'){
-            return self.gossip.get({[nodeID]:[pval]})
-        }else{
-            return self.data.get({[nodeID]:[pval]})
-        }
-    }
-    this.gossip = new LMDB({path:__dirname+'/../../GOSSIP_STORE'},{name:'gossip',create:true})
-    this.data = new LMDB({path:__dirname+'/../../DATA_STORE'},{name:'data',create:true})
-    this.peer = new LMDB({path:__dirname+'/../../PEER_CONFIG'},{name:'peer',create:true,keyIsBuffer:true}) // ? not sure
+    //cli for 'git'
+    const gossipDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../GOSSIP_STORE'},{name:'gossip',create:true,keyIsBuffer:true})
+    this.gossip = false
+
+    const dataDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../DATA_STORE'},{name:'data',create:true,keyIsBuffer:true})
+    this.data = new DataStore(dataDisk.rTxn,dataDisk.rwTxn)
+
+    const peerDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../PEER_CONFIG'},{name:'peer',create:true,keyIsBuffer:true}) // ? not sure
+    this.peer = false
 }
 const NULL = String.fromCharCode(0)
 const IS_STRINGIFY = String.fromCharCode(1)
@@ -61,7 +38,6 @@ const prim = String.fromCharCode(2)
 const gs = String.fromCharCode(29)
 const us = String.fromCharCode(31)
 
-const ENCODING = 'utf8'
 function LMDB(envConfig,dbiConfig){
     this.env = new lmdb.Env()
     const self = this
@@ -72,79 +48,81 @@ function LMDB(envConfig,dbiConfig){
     }
     self.env.open(envConfig)
     this.dbi = self.env.openDbi(dbiConfig)
-    this.putData = function(root,nodeID,putO,msgs,cb){ //assumes read already, so 'created' is handles outside of dbcall
-        //puts = {soul:{[msgIDs]:[],putO:{gunPutObj(partial)}}
-        let txn = self.env.beginTxn()
+    this.rTxn = function(nameSpace,onerror){
+        let txn = self.env.beginTxn({readOnly:true})
+        return {
+            onerror,
+            get,
+            commit: function(){txn.commit()},
+            abort: function(){txn.abort()}
+        }
+    }
+    this.rwTxn = function(nameSpace,onerror){
+        let txn = self.env.beginTxn({readOnly:true})
+        return {
+            onerror,
+            get,
+            put,
+            del,
+            commit: function(){txn.commit()},
+            abort: function(){txn.abort()}
+        }
+    }
+    const get = function(txn,key,cb){
+        let data
         try {
-            putDataSoul(nodeID,putO)
-            txn.commit()
-            cb(false,true)
-            sendAcks(false)
-            return
+            data = decode(txn.getBinary(self.dbi,encode(key),{keyIsBuffer:true}))
         } catch (error) {
-            console.log("ERROR IN TXN",error)
-            txn.abort()
-            cb(error,false)
-            sendAcks(error)
+            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
+            return
         }
-        function sendAcks(error){
-            for (const msg of msgs) {
-                msg.from.send({
-                    'm': msg.m,
-                    'r': msg.s,
-                    'b':{
-                        ok: !error,
-                        err: (error === false) ? error : error.toString()
-                    }
-                   
-                })
-            }
-            
-        }
-        function putDataSoul(nodeID,put){
-            let soulKey = makeKey(nodeID)
-            let rawPs = txn.getBinary(self.dbi,soulKey,{keyIsBuffer:true})
-            let pvals = rawPs && btoj(rawPs) || []
-            let now = Date.now()
-            for (const p in put) {
-                let vase = put[p]
-                let addrKey = makeKey(nodeID,p)
-                if(vase !== null && !(vase.e && now>vase.e)){
-                    if(!pvals.includes(p))pvals.push(p)
-                    // we assumed to read the value outside the txn to know it changed and merge result
-                    // if we do cascade, we might want to do that within this txn...                  
-                    let encodedVal = jtob(vase)
-                    txn.putBinary(self.dbi,addrKey,encodedVal,{keyIsBuffer:true})
-                }else{
-                    self.removeExpired(addrKey)
-                }
-            }
-            pvals.sort()//make lexical??
-            txn.putBinary(self.dbi,soulKey,jtob(pvals),{keyIsBuffer:true})
-        }
+        if(cb instanceof Function)cb(data)
     }
-    this.getProps = function(nodeID){
-        let txn = self.env.beginTxn({readOnly:true})
-        let props = btoj((txn.getBinary(self.dbi,makeKey(nodeID),{keyIsBuffer:true}) || jtob([])))
-        txn.commit()
-        return props
-    }
-    this.get = function(batch){
-        let s = Date.now()
-        let out = {} //{soul:{validPutObj}}
-        let txn = self.env.beginTxn({readOnly:true})
-        let fromDisk = 0
+    function put(txn,key,value,cb){
         try {
-            for (const soul in batch) {
-                const arrOfProps = batch[soul];
-                if(!arrOfProps) arrOfProps= btoj((txn.getBinary(self.dbi,soulKey,{keyIsBuffer:true}) || jtob([]))) //want full nodes
-                out[soul] = {}
-                for (const prop of arrOfProps) {
-                    fromDisk++
-                    self.getProp(soul,prop,out,txn,s)
-                }
-            }
-            console.log('RETRIEVED FROM DISK IN',(Date.now()-s)+'ms',{fromDisk})
+            txn.putBinary(self.dbi,encode(key),encode(value),{keyIsBuffer:true})
+        } catch (error) {
+            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
+            return
+        }
+        if(cb instanceof Function)cb(true)
+    }
+    function del(txn,key,cb){
+        try {
+            txn.del(self.dbi,encode(key),{keyIsBuffer:true})
+        } catch (error) {
+            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
+            return
+        }
+        if(cb instanceof Function)cb(true)
+    }
+}
+
+function LMDB_GOSSIP(envConfig){
+    this.env = new lmdb.Env()
+    const self = this
+    const {path} = envConfig
+
+    if (!fs.existsSync(path)){
+        fs.mkdirSync(path);
+    }
+    self.bs = self.env.openDbi({name:'blockStore',create:true,keyIsBuffer:true})
+    self.cs = self.env.openDbi({name:'chainStore',create:true,keyIsBuffer:true})
+    self.pi = self.env.openDbi({name:'pubIdx',create:true,keyIsBuffer:true})
+    self.ri = self.env.openDbi({name:'resourceIdx',create:true,keyIsBuffer:true})
+    self.wkni = self.env.openDbi({name:'wknIdx',create:true,keyIsBuffer:true})
+
+    self.env.open(envConfig)
+    //getBlock,getChain,getPub,getResource,getWkn,putBlock
+
+    //make some sort of storing api that we can reuse in memory,nodeDisk,browserDisk??
+    //structures are all the same, but the actual storage api's are different
+    this.get = function(dbi,key){
+        let txn = self.env.beginTxn({readOnly:true})
+        let out
+        try {
+            key = jtob(key)
+            out = btoj(txn.getBinary(dbi,key,{keyIsBuffer:true}))
             txn.commit()
             return out
         } catch (error) {//how to handle errors..
@@ -152,38 +130,25 @@ function LMDB(envConfig,dbiConfig){
             return error
         }
     }
-    this.getProp = function (soul,prop,msgPut,txn,now){
-        //txn is readonly
-        let addr = makeKey(soul,prop)
-        let vase = btoj((txn.getBinary(self.dbi,addr,{keyIsBuffer:true}) || jtob({v:notFound})))//what to put for not found??
-        if(now<exp){
-            msgPut[soul][prop] = vase
-        }
-        console.log("REMOVING EXPIRED VALUE")
-        self.removeExpired(addr)
-    }
-    this.getLength = function(soul){//todo
-        let txn = self.env.beginTxn({ readOnly: true })
-        let val = txn.getBinary(self.dbi,makeKey(soul,'length'),{keyIsBuffer:true})
-        val = val && val.toString(ENCODING)*1 || 0
-        txn.commit()
-        return val
-    }
-    this.removeExpired = function(addrKey){
-        //seperate txn, so gets can be readonly
+    this.put = function(dbi,key,value){
+        keyArr = Array.isArray(keyArr)?keyArr:[keyArr]
         let txn = self.env.beginTxn()
-        let exists = txn.getBinary(self.dbi,addrKey,{keyIsBuffer:true})
-        if(exists !== null){
-            txn.del(self.dbi,addrKey,{keyIsBuffer:true})
-            removeFromArr(pvals,pvals.indexOf(p))
+        try {
+            key = jtob(key)
+            txn.putBinary(dbi,key,jtob(value),{keyIsBuffer:true})
+        } catch (error) {
+            txn.commit()
+            return error
         }
+        txn.commit()
+        return true
     }
 }
 function jtob(jsVal){
-    return Buffer.from(encode(jsVal))
+    return Buffer.from(encode(jsVal))//just encode?
 }
 function btoj(buff){
-    return decode(new Uint8Array(buff.buffer,buff.byteOffset,buff.byteLength / Uint8Array.BYTES_PER_ELEMENT))
+    return decode(new Uint8Array(buff.buffer,buff.byteOffset,buff.byteLength / Uint8Array.BYTES_PER_ELEMENT))//just decode?
 }
 function makeKey(id,prop){
     //console.log('MAKING',soul,prop)

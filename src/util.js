@@ -50,10 +50,6 @@ function configPathFromChainPath(thisPath){
 
 }
 
-//soul creators
-
-
-
 //alias-ID finders
 function findConfigFromID(gb,path,someID){
     //look through base, then nodeTypes, then Relations, then Groups, then Labels, if still not found, look through all props
@@ -2074,6 +2070,222 @@ function isLink(val){
 }
 const notFound = String.fromCharCode(21)
 
+function DataStore(rTxn,rwTxn){
+    let store = this
+    //xTxn accepts a nameSpace, returns object with methods get, put, commit, abort
+    store.rTxn = rTxn
+    store.rwTxn = rwTxn
+    this.getProps = function(nodeID,cb,openTxn){
+        let txn = openTxn || rTxn('dataStore')
+        txn.get(nodeID,function(props){
+            if(!openTxn)txn.commit()
+            if(cb instanceof Function)cb(props)
+        })
+    }
+    this.get = function (things,cb){
+        let out = {}
+        let now = Date.now()
+        things = Object.entries(things)
+        const txn = rTxn('dataStore')
+        const tracker = {
+            count:things.length,
+            out: {},
+            add: function(key,vase){
+                let exp = vase.e || Infinity
+                if(now<exp){
+                    let [id,p] = snapID(key)//is flatpack
+                    this.out[id][p] = vase
+                }else{
+                    store.removeExpired(key)
+                }
+               
+                this.count--
+                if(!this.count)this.done()
+            },
+            done:function(){
+                txn.commit()
+                if(cb instanceof Function)cb(this.out)
+            }
+        }
+        for (const [id,pvals] of things) {
+            out[id] = {}
+            if(!pvals || (Array.isArray(pvals) && !pvals.length)) self.getProps(id,find(id),txn)
+            else find(id)(pvals)
+            
+        }
+        function find(nodeID){
+            let ido = snapID(nodeID)
+            return function(pvalArr){
+                for (const prop of pvalArr) {
+                    txn.get(ido.toFlatPack(prop),function(vase){
+                        vase = vase || {v:notFound}//what to put for not found??
+                        tracker.add(key,vase)
+                    })
+                }
+            }
+        }
+    }
+    this.getProp = function(nodeID,pval,cb){
+        let txn = rTxn('dataStore')
+        let key = snapID(nodeID).toFlatPack(pval)
+        txn.get(key,function(vase){
+            vase = vase || {v:notFound}//what to put for not found??
+            txn.commit()
+            if(cb instanceof Function)cb(vase)
+        })
+    }
+    this.put = function(nodeID,putO,cb){ //assumes read already, so 'created' is handled outside of dbcall
+        //puts = {soul:{[msgIDs]:[],putO:{gunPutObj(partial)}}
+        let txn = rwTxn('dataStore')
+        txn.get(nodeID,function(pvals){
+            pvals = Array.isArray(pvals) ? pvals : [] 
+            let ido = snapID(nodeID)
+            for (const p in putO) {
+                let vase = putO[p]
+                let addrKey = ido.toFlatPack(p)
+                if(vase !== null && !(vase.e && now>vase.e)){
+                    if(!pvals.includes(p))pvals.push(p)
+                    // we assumed to read the value outside the txn to know it changed and merge result
+                    // if we do cascade, we might want to do that within this txn...                  
+                    txn.put(addrKey,vase)
+                }else{
+                    store.removeExpired(addrKey)
+                }
+            }
+            pvals.sort()//make lexical??
+            txn.put(nodeID,pvals)
+            txn.commit()
+            if(cb instanceof Function)cb(true)
+
+        })
+    }
+    this.removeExpired = function(addrKey){
+        //seperate txn, so gets can be readonly
+        let txn = rwTxn('dataStore')
+        txn.get(addrKey,function(exists){
+            if(exists !== null){
+               remove() 
+            }
+        })
+        function remove(){
+            let [id,p] = snapID(addrKey)
+            txn.get(id,function(pvals){
+                txn.del(addrKey)
+                removeFromArr(pvals,pvals.indexOf(p))
+                txn.put(id,pvals)
+            })
+        }
+    }
+}
+
+function GossipStore(rTxn,rwTxn){
+    let store = this
+    //xTxn accepts a nameSpace, returns object with methods get, put, commit, abort
+    store.rTxn = rTxn
+    store.rwTxn = rwTxn
+    this.getProps = function(nodeID,cb,openTxn){
+        let txn = openTxn || rTxn('dataStore')
+        txn.get(nodeID,function(props){
+            if(!openTxn)txn.commit()
+            if(cb instanceof Function)cb(props)
+        })
+    }
+    this.get = function (things,cb){
+        let out = {}
+        let now = Date.now()
+        things = Object.entries(things)
+        const txn = rTxn('dataStore')
+        const tracker = {
+            count:things.length,
+            out: {},
+            add: function(key,vase){
+                let exp = vase.e || Infinity
+                if(now<exp){
+                    let [id,p] = snapID(key)//is flatpack
+                    this.out[id][p] = vase
+                }else{
+                    store.removeExpired(key)
+                }
+               
+                this.count--
+                if(!this.count)this.done()
+            },
+            done:function(){
+                txn.commit()
+                if(cb instanceof Function)cb(this.out)
+            }
+        }
+        for (const [id,pvals] of things) {
+            out[id] = {}
+            if(!pvals || (Array.isArray(pvals) && !pvals.length)) self.getProps(id,find(id),txn)
+            else find(id)(pvals)
+            
+        }
+        function find(nodeID){
+            let ido = snapID(nodeID)
+            return function(pvalArr){
+                for (const prop of pvalArr) {
+                    txn.get(ido.toFlatPack(prop),function(vase){
+                        vase = vase || {v:notFound}//what to put for not found??
+                        tracker.add(key,vase)
+                    })
+                }
+            }
+        }
+    }
+    this.getProp = function(nodeID,pval,cb){
+        let txn = rTxn('dataStore')
+        let key = snapID(nodeID).toFlatPack(pval)
+        txn.get(key,function(vase){
+            vase = vase || {v:notFound}//what to put for not found??
+            txn.commit()
+            if(cb instanceof Function)cb(vase)
+        })
+    }
+    this.put = function(nodeID,putO,cb){ //assumes read already, so 'created' is handled outside of dbcall
+        //puts = {soul:{[msgIDs]:[],putO:{gunPutObj(partial)}}
+        let txn = rwTxn('dataStore')
+        txn.get(nodeID,function(pvals){
+            pvals = Array.isArray(pvals) ? pvals : [] 
+            let ido = snapID(nodeID)
+            for (const p in putO) {
+                let vase = putO[p]
+                let addrKey = ido.toFlatPack(p)
+                if(vase !== null && !(vase.e && now>vase.e)){
+                    if(!pvals.includes(p))pvals.push(p)
+                    // we assumed to read the value outside the txn to know it changed and merge result
+                    // if we do cascade, we might want to do that within this txn...                  
+                    txn.put(addrKey,vase)
+                }else{
+                    store.removeExpired(addrKey)
+                }
+            }
+            pvals.sort()//make lexical??
+            txn.put(nodeID,pvals)
+            txn.commit()
+            if(cb instanceof Function)cb(true)
+
+        })
+    }
+    this.removeExpired = function(addrKey){
+        //seperate txn, so gets can be readonly
+        let txn = rwTxn('dataStore')
+        txn.get(addrKey,function(exists){
+            if(exists !== null){
+               remove() 
+            }
+        })
+        function remove(){
+            let [id,p] = snapID(addrKey)
+            txn.get(id,function(pvals){
+                txn.del(addrKey)
+                removeFromArr(pvals,pvals.indexOf(p))
+                txn.put(id,pvals)
+            })
+        }
+    }
+}
+
 
 function signChallenge(root,peer){
     let challenge = peer.theirChallenge
@@ -2084,6 +2296,22 @@ function signChallenge(root,peer){
         console.log(m)
         peer.send(m)
     })
+}
+
+function intToBuff(num,signed){
+    let n = (num<0)?num*-1:num
+    let byteLength = n==0?1:(signed && Math.ceil(Math.log(2*n)/Math.log(256))) || Math.ceil(Math.sqrt(Math.pow(n,.125)))
+    let buff = Buffer.allocUnsafe(byteLength)
+    let op = (signed)?'writeIntBE':'writeUIntBE'
+    buff[op](num,0,byteLength)
+    
+    return buff
+
+}
+
+function buffToInt(buff,signed){
+    let op = (signed)?'readIntBE':'readUIntBE'
+    return buff[op](0,buff.length);
 }
 
 
@@ -2206,7 +2434,9 @@ function nodeHash(node){
         return 0;
     })))
 }
-
+function getBaseLog(x, y) {
+    return Math.log(y) / Math.log(x);
+}
 
 
 //SET STUFF
@@ -2422,5 +2652,10 @@ export {
     signChallenge,
     notFound,
     MathSolver,
-    findTruth
+    findTruth,
+    getBaseLog,
+    DataStore,
+    GossipStore,
+    intToBuff,
+    buffToInt
 }

@@ -10,12 +10,12 @@ export const onMsg = (root) => (raw,peer)=>{
     try {
         msg = decode(raw)
         if(msg.e){
-            if((msg.e+100) <= Date.now()){
+            if((peer.drift+msg.e+100) <= Date.now()){
                 root.opt.debug('Message expired, ignoring:',msg)
                 return 
             }//if we are within 100ms, then don't bother as our response will probably not make it back in time.
         }
-        if(msg.ack && msg.s)peer.send({m:'ack',r:msg.s})
+        if(msg.ack && msg.s)peer.send({m:'ack',r:msg.s,b:Date.now()})
         msg.from = peer
         root.on.in(msg); //start of the in chain
     } catch (error) {
@@ -28,7 +28,7 @@ export function Peer(socket,pid,initialPeer){
     this.ping = 1000
     this.challenge = false //our challenge to them for proof
     this.theirChallenge = false //they are challenging us, if we are not signed in yet, it waits here for our response
-    this.pub = false //their pubkey once they answer are challenge??
+    this.pub = false //their pubkey once they answer our challenge?? //CHAIN ID
     this.verified = false //this is if their pub is valid and authed
     this.connected = false //all peers are in the same list now...
     this.isPeer = false //server or browser
@@ -36,6 +36,8 @@ export function Peer(socket,pid,initialPeer){
     this.owns = new Set()//set of baseID's that this IP Owner === BaseIDOwners.includes(IP Owner)
     this.pendingMsgs = []//for handling things that are waiting for a state change?
     this.initialPeer = initialPeer || false
+    this.drift = 0
+    this.gossip = new Map() //batching gossip by peer
     this.send = function(msg){
         let s = {m:msg.m,s:msg.s,r:msg.r}
         msg = encode(msg,{sortKeys:true})

@@ -1,4 +1,5 @@
 import { on, setValue, getValue } from "./util";
+import EventEmitter from 'eventemitter3'
 const noop = function(){}
 export default function Router(root){
     //assume root has ws setup and bootstrap peers already listed/connected
@@ -13,6 +14,7 @@ export default function Router(root){
     const msgs = router.msgs = {send:{},recv:{}}
     batch.getCell = new GetBatch(sendCellReq)
     batch.getNode = new GetBatch(sendNodeReq)
+    batch.gossip = new GossipBatch(root)
     function sendCellReq(b){//direct to super peer(s??)
         let dataRequests = new Map()
         let gossipRequests = new Map()
@@ -54,15 +56,14 @@ export default function Router(root){
         if(!peer.met)peer.met = Date.now()
         root.opt.debug('sending intro',msg)
         peer.send(msg)
-        function onAck(v,next){
+        function onAck(v){
             if(this.acks === 1){//only on first ack
                 let n = Date.now()
                 peer.ping = n-this.sent //round trip
                 console.log(peer.ping)
             }
-            next()
         }
-        function onDone(value,next){//what to do with their response
+        function onDone(value){//what to do with their response
             console.log(value)
             let {isPeer,has} = value
             console.log('intro reply',{isPeer,has})
@@ -79,7 +80,6 @@ export default function Router(root){
                 }
                 
             }
-            next()
         }
     }
     msgs.send.intro = function(opts){
@@ -91,7 +91,6 @@ export default function Router(root){
         console.log('incoming intro')
         let {b} = msg
         let {isPeer} = b
-        //authcode would be an invite YOU sent to join your base,they are claiming it?, or like IoT (crypto-less) signin.
         let peer = msg.from
         peer.isPeer = isPeer
         let m = msgs.recv.intro(msg)
@@ -118,7 +117,7 @@ export default function Router(root){
         if(!peer.met)peer.met = Date.now()
         root.opt.debug('sending challenge',msg)
         peer.send(msg)
-        function onDone(value,next){//what to do with their response
+        function onDone(value){//what to do with their response
             console.log('HAS SIG',value,this)
             let {auth,pub,is} = value
             root.verify(auth,pub,function(valid){
@@ -144,11 +143,9 @@ export default function Router(root){
                     //if these are two servers then no one will know this has failed
                 }
             })
-            next()
         }
-        function onExpire(value,next){
+        function onExpire(value){
             peer.challenge = false
-            next()
         }
     }
     msgs.send.challenge = function(opts){
@@ -175,7 +172,7 @@ export default function Router(root){
         //if !root.isNode, handle 'has'
     }
     msgs.recv.challenge = function(chal,sig){
-        let m = {m:'auth',r:chal,},b
+        let m = {m:'auth',r:chal},b
         if(root.opt.authCode){
             b = {authCode:root.opt.authCode}
         }else{
@@ -191,8 +188,12 @@ export default function Router(root){
     }
     send.ping = function(peer){
         let msg = new SendMsg('ping',false,false,false,true)
-        track(msg,new TrackOpts(1,0,0,{onDone}))
+        track(msg,new TrackOpts(1,0,0,{onDone,onAck}))
         peer.send(msg)
+        function onAck(ts){
+            let n = Date.now()
+            peer.drift = ts-(n-((n-this.sent)/2))//theySent-(weGot-(1wayLatency))
+        }
         function onDone(value){
             let n = Date.now()
             peer.ping = n-this.sent //round trip
@@ -206,7 +207,7 @@ export default function Router(root){
     }
 
 
-    route.ask = function(reqMap){
+    route.ask = function(reqMap){//gossip only 'get'
         let body = {}
         reqMap.forEach(function(v,k){
             body[k] = v
@@ -217,6 +218,7 @@ export default function Router(root){
         }else if(peers.length >=2){
             router.send.ask([peers.slice(0,2)],body,{hops:2})
         }else{
+            //queue messages?
             root.opt.log('You must be offline, no peers to route request to.')
         }
     }
@@ -227,8 +229,8 @@ export default function Router(root){
         msg.to = peers.map(x=>x.id)
         let ons = {onError: opts.onError,onDone:[onDone,opts.onDone],onReply:[onReply,opts.onReply],onAck:[onAck,opts.onAck]}
         track(msg,new TrackOpts(opts.acks,(opts.replies || peers.length),{},ons))
-        peers.map(x=> (x.send && x.send(msg)))
-        function onReply(msg,next){
+        peers.forEach(x=> (x.send && x.send(msg)))
+        function onReply(msg){
             //{hasRoot:{id:pval:val},fromOwner:MAP{id:pval:val},checkSigs:{from:{id:pval:val},gossip:{id:pval:val}}}
             let val = this.value
             if(msg.from.hasRoot){//just merge the message down on receiving
@@ -260,11 +262,9 @@ export default function Router(root){
                     }
                 }
             }
-            next()
         }
-        function onDone(askReply,next){
+        function onDone(askReply){
             root.resolver.resolveAsk(askReply)
-            next()
         }
     }
     recv.ask = function(msg){
@@ -278,8 +278,50 @@ export default function Router(root){
         
 
     }
-    send.say = function(){}
-    recv.say = function(){}
+
+    send.say = function(body,cb,opts){
+        opts = opts || {}
+        let msg = msgs.send.say(body,opts)
+        let peers = root.mesh.getNonClients()
+        msg.to = peers.map(x=>x.id)
+        let ons = {onDone}
+        track(msg,new TrackOpts(1,1,{confirm:false},ons))
+        peers.forEach(x=> (x.send && x.send(msg)))
+        function onDone(value){//what to do with their response
+            let {confirm} = value
+            if(cb && cb instanceof Function)cb(confirm)//take the first response, all responses should match
+        }
+    }
+    msgs.send.say = function(b,opts){
+        let expireReq = opts.expire || (Date.now()+(1000*20))//shouldn't take too long
+        return new SendMsg('say',b,['confirm'],expireReq,true)
+    } 
+    recv.say = async function(msg){//new block to append to some cid
+        let {b,to,from} = msg || {}
+        let [sig,block] = b || []
+        let {pub} = block || {}
+        // if(!await root.verify(pub,sig,block)){
+        //     from.send(msgs.recv.say(msg,false))
+        //     return
+        // }
+        batch.gossip.add(sig,block,to)
+        from.send(msgs.recv.say(msg,true))//confirm without checking for tail conflict?? How do we know this peer is storing all data?
+        root.store.indexGossip([[sig,block]])
+    }
+    msgs.recv.say = function(incMsg,pass){
+        return new RespMsg(incMsg,{confirm:!!pass})
+    }
+    send.gossip = function(peer,body){
+        //for propagating 'say' messages
+        //we will want to send gossip in batches???
+        //really is batched by peer, since we may hear things that came from other peers
+        //or a message was already heard by the peer so we don't add it to their batch.
+        peer.send(msgs.send.gossip(body))
+    }
+    msgs.send.gossip = function(body){
+        return new SendMsg('gossip',body)
+    }
+    
     route.get = function(reqMap){//only for data requests, can be from getCell or getNode
         //analyze each soul and figure out if we can route to it
         //if not, we need to ask where to find it, and once we have that, we connect to it and then send the request
@@ -391,7 +433,7 @@ export default function Router(root){
         if(body)this.b = body
         if(expectResponse)this.e = expire ? expire : (Date.now()+(1000*30))//30 seconds as default?? should have default per msg type
         if(hops)this.h = hops*1
-        this.ack = !!ack //can ack a msg seperate from the reply, ack = acknowledge receipt
+        if(ack)this.ack = !!ack //can ack a msg seperate from the reply, ack = acknowledge receipt
     }
     function RespMsg(incMsg,body){
         this.m = incMsg.m
@@ -408,7 +450,7 @@ export default function Router(root){
         this.onAck = isArr(ons.onAck) || []
         this.onError = isArr(ons.onError) || [(err)=>{root.opt.log(err)}]
         this.onDone = isArr(ons.onDone) || []
-        this.onReply = isArr(ons.onReply) || [function(msg,next){this.value = msg.b;next()}]//we should always pass one in for internal messages
+        this.onReply = isArr(ons.onReply) || [function(msg){this.value = msg.b}]//we should always pass one in for internal messages
         function isArr(value){
             if(!Array.isArray(value) && value instanceof Function)return [value]
             if(Array.isArray(value))return value.filter(x => x instanceof Function)
@@ -422,27 +464,25 @@ export default function Router(root){
         let expire = msg.e || (Date.now()+(1000*9)) //default will only be set if we are not expecting a response? which we aren't tracking these anyway.
         let tracker = new Tracker(msg,opts)
         tracker.timer = (expire === Infinity) ? expire : setTimeout(()=>{
-            tracker.on('expire','MESSAGE EXPIRED: '+tracker.id)
+            tracker.ee.emit('expire','MESSAGE EXPIRED: '+tracker.id,tracker)
         },(expire-Date.now()))
-        tracker.on('ack',function(value,next){this.acks++;next()})
-        tracker.on('ack',opts.onAck)
-        tracker.on('ack',function(){
+        tracker.ee.on('ack',function(){this.acks++},tracker)
+        if(opts.onAck)opts.onAck.forEach(x=>tracker.ee.on('ack',x,tracker))
+        tracker.ee.on('ack',function(){
             this.test()
-        })
-        tracker.on('reply',function(newVal,next){this.replies++;next()})
-        tracker.on('reply',opts.onReply)
-        tracker.on('reply',function(){
+        },tracker)
+        tracker.ee.on('reply',function(newVal){this.replies++},tracker)
+        if(opts.onReply)opts.onReply.forEach(x=>tracker.ee.on('reply',x,tracker))
+        tracker.ee.on('reply',function(){
             this.test()
-        })//will always be last, no need for next
-        tracker.on('error',opts.onError)
-        tracker.on('error',function(){router.pending.delete(this.id)}) //bail on error?
-        tracker.on('done',opts.onDone)
-        tracker.on('done',function(){
+        },tracker)
+        if(opts.onError)opts.onError.forEach(x=>tracker.ee.on('error',x,tracker))
+        tracker.ee.on('error',function(){router.pending.delete(this.id)},tracker) //bail on error?
+        if(opts.onDone)opts.onDone.forEach(x=>tracker.ee.on('done',x,tracker))
+        tracker.ee.on('done',function(){
             router.pending.delete(this.id)
-        })
-        if(opts.onExpire){
-            tracker.on('expire',opts.onExpire)
-        }
+        },tracker)
+        if(opts.onExpire)opts.onExpire.forEach(x=>tracker.ee.on('expire',x,tracker))
         
         tracker.sent = Date.now()
         router.pending.set(tracker.id,tracker)
@@ -451,7 +491,7 @@ export default function Router(root){
         function Tracker(msg,opts){
             opts = opts || {}
             let self = this
-            this.on = on
+            this.ee = new EventEmitter()
             this.id = msg.s || msg.r
             this.acks = 0
             this.replies = 0
@@ -465,7 +505,7 @@ export default function Router(root){
                     try {
                         clearTimeout(this.timer)
                     }catch(e){}
-                    self.on('done',self.value)
+                    self.ee.emit('done',self.value)
                 }
             }
         }
@@ -474,7 +514,7 @@ export default function Router(root){
 
 function GetBatch(onFlush){
     let self = this
-    this.state = true //only for getCell calls
+    this.state = true 
     this.buffer = {}
     this.cbs = {} //{[addr:[[cb,raw]]]}
     this.onFlush = onFlush
@@ -495,6 +535,30 @@ function GetBatch(onFlush){
         }
         let cur = self.buffer[id] || (self.buffer[id] = [])
         cur.push(cbArgs)
+    }
+    
+}
+function GossipBatch(root){
+    let self = this
+    this.state = true 
+    this.done = function(){
+        self.state = true
+        let peers = root.mesh.getNonClients()
+        peers.forEach(p=>{
+            if(p.gossip.size){
+                root.router.send.gossip(p,[...p.gossip.entries])
+                p.gossip.clear()
+            }
+        })
+    }
+    //only runs the following when needing network request
+    this.add = function(sig,block,to){
+        if(self.state){
+            self.state = false
+            setTimeout(self.done,5000)
+        }
+        let peers = root.mesh.getNonClients()
+        peers.forEach(p=>{if(!to.includes(p.id))p.gossip.set(sig,block)})
     }
     
 }

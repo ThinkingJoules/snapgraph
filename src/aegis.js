@@ -46,20 +46,7 @@ export default function Aegis(root){
             return k 
         })    
     }
-    root.util.jsToStr = jsToStr
-    root.util.strToJs = strToJs
-    function jsToStr(js) {
-        return btoa(String.fromCharCode.apply(null, encode(js,{sortKeys:true})))
-    }
-    function strToJs(str){
-        str = atob(str)
-        const buf = new ArrayBuffer(str.length);
-        const bufView = new Uint8Array(buf);
-        for (let i = 0, strLen = str.length; i < strLen; i++) {
-          bufView[i] = str.charCodeAt(i);
-        }
-        return decode(bufView)
-    }
+
     util.rawPubToJwkPub = async function(raw){
         return await aegis.subtle.importKey('raw', raw, {name: 'ECDSA', namedCurve: 'P-256'}, true, ['verify'])
         .then(async(cKey)=>{ return aegis.jwkToPair(await aegis.subtle.exportKey('jwk', cKey)).pub})
@@ -120,56 +107,63 @@ export default function Aegis(root){
         if(cb && cb instanceof Function)cb(plainJs)
         return plainJs
     }
-    const powKey = Buffer.from([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16])
-    aegis.pow = async function(jsTarget,opt){
-        let s = Date.now()
-        if(jsTarget == undefined)throw new Error("Must specify something to prove work was performed on")
-        opt = opt || {}
-        let difficulty = opt.target || 500
-        let len = Math.floor(difficulty/256)
-        let last = (difficulty%256) ? 256-difficulty%256 : 255
-        let bits = Array.from({length:len},()=>0).concat(last)
-        const trgt = Buffer.from(bits)
-        let hash = await aegis.hash(encode(jsTarget,{sortKeys:true}))
-        let cKey = await aegis.subtle.importKey('raw', powKey, 'AES-CBC', true, ['encrypt', 'decrypt'])
-        let ct,iv,rounds = 0
-        while (true) {
-            rounds++
-            iv = aegis.random(16)
-            ct = Buffer.from(await aegis.subtle.encrypt({ name: 'AES-CBC', iv}, cKey, hash))
-            if(Buffer.compare(ct,trgt) === -1){
-                break
-            }
-        }
-        let fin = Date.now()-s
-        let proof = {
-            ct,
-            iv,
-        }
-        root.opt.debug({proof},{fin,rounds,per:fin/rounds})
-        return iv
-    }
+    
     aegis.extendEncrypt = async function(jsTarget,passphrase){
         let s = aegis.random(16)
         let encObj = await aegis.extend(passphrase,s)
         .then(async(keyBits) =>{
-            return Buffer.from(await aegis.encrypt(jsTarget,keyBits))
+            return await aegis.encrypt(jsTarget,keyBits)
         })
         encObj.s = s
         return encObj
 
     }
-    aegis.outputStr = function(jsTarget,what){
-        const exportedAsBase64 = jsToStr(jsTarget)
+    aegis.extendDecrypt = async function(encObj,passphrase){
+        let s = encObj.s
+        let jsThing = await aegis.extend(passphrase,s)
+        .then(async(keyBits) =>{
+            return Buffer.from(await aegis.decrypt(encObj,keyBits))
+        })
+        return jsThing
+    }
+    
+    root.verify = async function(pub,b64sig,jsData,cb){
+        let data = encode(jsData,{sortKeys:true})
+        let sig = Buffer.from(b64sig,'base64')
+        let passed = await root.aegis.subtle.importKey('raw',pub,root.aegis.settings.ecdsa.pair,false,['verify'])
+        .then((cKey)=> root.aegis.subtle.verify(root.aegis.settings.ecdsa.sign,cKey,sig,data))
+        if(cb && cb instanceof Function) cb(passed)
+        return passed
+    }
+
+    //not sure where to put this, its a general util with a dependencies(btoa,atob,encode,decode)
+    root.util.jsToStr = jsToStr
+    root.util.strToJs = strToJs
+    root.util.outputHeaderedStr = outputHeaderedStr
+    root.util.parseHeaderedStr = parseHeaderedStr
+    function jsToStr(js) {
+        return btoa(String.fromCharCode.apply(null, encode(js,{sortKeys:true})))
+    }
+    function strToJs(str){
+        str = atob(str)
+        const buf = new ArrayBuffer(str.length);
+        const bufView = new Uint8Array(buf);
+        for (let i = 0, strLen = str.length; i < strLen; i++) {
+          bufView[i] = str.charCodeAt(i);
+        }
+        return decode(bufView)
+    }
+    function outputHeaderedStr(jsTarget,what){
+        const exportedAsBase64 = root.util.jsToStr(jsTarget)
         return `-----BEGIN ${what}-----\n${exportedAsBase64}\n-----END ${what}-----`;
     }
-    aegis.parseStr = function(headeredString){
+    function parseHeaderedStr(headeredString){
         //returns what was in the label 'what' and the contents
         let r = /(?:-----BEGIN )(.+)(?:-----)/
         let what = headeredString.match(r)[1]
         let content = headeredString.split("\n")[1]
         return {what,content}
-    }   
+    }
 }
 
 

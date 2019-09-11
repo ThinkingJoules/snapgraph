@@ -1,21 +1,36 @@
-import { snapID, isLink,isSub, getValue, notFound } from "./util";
+import { snapID,isSub, getValue, notFound } from "./util";
 import Disk from './peer/disk'
 import BrowserStore from './browser/disk'
 
-export default function Store(root){
+export default function DataManager(root){
     let self = this
     this.mem = new Map()
     this.disk = root.opt.persist && ((root.isPeer && new Disk(root)) || new BrowserStore(root)) || false
     this.addrSubs = {}
     this.nodeSubs = {}
-    this.askCBs = {}
-    this.addAskCB = function(id,p,argsArr){
-        let thing = self.askCBs[id] || (self.askCBs[id] = {node:[],props:{}})
+    this.getCBs = {}
+
+    //gossip handling
+    this.indexGossip = function(data){
+        let cids = {}
+        for (const [sig,block] of data) {
+            let cid = cids[block.cid] || (cids[block.cid]={})
+            cid[sig] = block
+        }
+        //if we are storing 
+    }
+
+
+
+
+    //data handling
+    this.addGetCB = function(id,p,argsArr){
+        let thing = self.getCBs[id] || (self.getCBs[id] = {node:[],props:{}})
         if(!p){thing.node.push(argsArr);return}
         let prop = thing.props[p] || (thing.props[p] = [])
         prop.push(argsArr)
     }
-    this.fulfillAsk = function(id,p,value){
+    this.fulfillGet = function(id,p,value){
         let thing = self.askCBs[id]
         if(!p && !thing.node.length){return}
         if(!p){
@@ -103,16 +118,16 @@ export default function Store(root){
     this.subNode = function(id,cb,subID){
 
     }
-    this.resolvedAsk = function(things){
+    this.resolvedGet = function(things){
         //these are not currently in mem
         //just need to add them to store, fire cb's, and (opt) send to persist
         for (const id in things) {
             const obj = things[id];
-            self.fulfillAsk(id,false,obj)
+            self.fulfillGet(id,false,obj)
             for (const prop in obj) {
                 const vase = obj[prop];
                 self.sendToCache(id,prop,vase)
-                self.fulfillAsk(id,prop,vase.v)
+                self.fulfillGet(id,prop,vase.v)
             } 
         }
     }

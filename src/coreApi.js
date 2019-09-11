@@ -27,7 +27,7 @@ export default function coreApi(root){
         if(cVal !== undefined){
             //what does raw mean??
             cb(root.store.extractVals(cVal))
-            return cVal //for using getCell without cb, assuming data is in cache??
+            return cVal //for assuming data is in cache??
         }
         //only runs the following when needing network request
         root.router.batch.getNode.add(nodeID,[cb,raw])

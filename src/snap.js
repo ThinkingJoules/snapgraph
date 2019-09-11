@@ -25,7 +25,9 @@ import {
     on,
     encTime,
     decTime,
-    snapID
+    snapID,
+    intToBuff,
+    buffToInt
 } from './util.js'
 let gbGet
 
@@ -90,7 +92,7 @@ let isNode=new Function("try {return this===global;}catch(e){return false;}")()
 
 
 import Router from './router';
-import Store from './store'
+import DataManager from './dataManager'
 import SG from './sg'
 import ResourceManager from './resources'
 import PeerManager from './peerManager'
@@ -105,13 +107,10 @@ import {encode,decode} from '@msgpack/msgpack'
 
 const defaultOpts = {
     persist: {
-        gossip:isNode,
-        data:isNode, //would be nice to give it a namespace of things to persist (if this peer was only watching 1 db?)
+        gossip:{},
+        data:{}, //would be nice to give it a namespace of things to persist (if this peer was only watching 1 db?)
     },
-    inMemory: {
-        gossip:true,
-        data:true, 
-    },
+    allocate: isNode ? Infinity : 1024*1024*1024,//max on server, 1 gig in indexddb
     log: console.log,
     debug: function(){},
 }
@@ -126,12 +125,12 @@ export default function Snap(initialPeers,opts){
     let root = this._
     root.snapID = snapID
     root.isPeer = isNode
-    root.util = {getValue,setValue,rand,encode,decode}
+    root.util = {getValue,setValue,rand,encode,decode,Buffer:Buffer,intToBuff,buffToInt}
     if(isNode)mergeObj(defaultOpts,{maxConnections:300})//currently not implemented
     root.opt = defaultOpts
     mergeObj(root.opt,opts) //apply user's ops
 
-    root.store = new Store(root)
+    root.store = new DataManager(root)
     //root.sg = new SG(root)
     root.assets = new ResourceManager(root)
     root.mesh = new PeerManager(root)
@@ -144,6 +143,7 @@ export default function Snap(initialPeers,opts){
     root.aeon = new Aeon(root)
     coreApi(root)
     addListeners(root)
+    //initializeSnap(root)//who are we, are we persistent, who do we bootstrap with, what is our ip
     //add diskStore
 
     //on startup, we need to know what baseids this peer should have, that way if we get 'notFound' we know not to send a network request?
