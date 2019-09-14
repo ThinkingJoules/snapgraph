@@ -57,7 +57,7 @@ export default function Aeon(root){
             return await root.aegis.extendDecrypt(content,passphrase)
         }
         async function authSnap(content){
-            let {cid,priv,pub} = content
+            let {cid,priv,pub} = decode(Buffer.from(content,'base64'))
             root.user = {}
             root.user.is = cid
             root.user.pub = pub

@@ -1,3 +1,5 @@
+import { decode, encode } from "@msgpack/msgpack";
+
 //REGEX STUFF
 const regOr = (regArr) =>{
     let eval2 = eval
@@ -15,11 +17,8 @@ const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const USER_SUB = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
 const LABEL_ID = /\d+l[a-z0-9]+/i
 
-const LINK_LOOKUP = /^\u{5}![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/iu
-const LINK = String.fromCharCode(5) //enquiry NP char. enquire again for next node
-
-const SUB_LOOKUP = /^\u{26}![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+/iu
-const SUB = String.fromCharCode(26) //substitute NP char. direct replacement, this value is inherited from another.
+const LINK_LOOKUP = /^\${((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)}$/
+const IS_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
 
 //gb CONFIG HELPERS
@@ -1353,6 +1352,26 @@ function tsvJSONgb(tsv){//Need to make better so it can be a csv, tsv, \r || \r\
     //return JSON.stringify(result); //JSON
 }
 
+function isObj(val,isLiteral) {
+    if (typeof val !== "object" || val === null)
+    return false;
+    if(!isLiteral)return (typeof val === "object" && !Array.isArray(val) && val !== null);
+
+    var hasOwnProp = Object.prototype.hasOwnProperty,
+    ObjProto = val;
+
+    // get obj's Object constructor's prototype
+    while (Object.getPrototypeOf(ObjProto = Object.getPrototypeOf(ObjProto)) !== null);
+
+    if (!Object.getPrototypeOf.isNative) // workaround if non-native Object.getPrototypeOf
+        for (var prop in val)
+            if (!hasOwnProp.call(val, prop) && !hasOwnProp.call(ObjProto, prop)) // inherited elsewhere
+                return false;
+
+    return Object.getPrototypeOf(val) === ObjProto;
+}
+
+
 //CONFIG STUFF
 function parseIncrement(incr){
     let out = {}
@@ -1746,33 +1765,6 @@ const on = function(tag,cb,opts){
         }
     }
 }
-const encTime = function(unix){
-    //state only, so we know length will always be 13 and `a` will never start with 0
-    unix = unix || Date.now()
-    if(typeof unix === 'number' && (unix = String(unix)).length === 13){//should ignore Infinity or other low numeric values
-        let a = String.fromCharCode(unix.slice(0,5))
-        let b = String.fromCharCode(checkZeros(unix.slice(5,9)))
-        let c = String.fromCharCode(checkZeros(unix.slice(9)))
-        return a+b+c
-    }
-    return unix
-    function checkZeros(subS){
-        let i = 0
-        while (subS[i] == 0) {
-            subS = subS.slice(i)
-            i++
-        }
-        return (subS || 0) //if it is all zeros we need to return atleast one
-    }
-}
-const decTime = function(str){
-    let a = String(str.charCodeAt(0))
-    let b = [...String(str.charCodeAt(1))]
-    let c = [...String(str.charCodeAt(2))]
-    while(b.length !==4){b.unshift('0')}
-    while(c.length !==4){c.unshift('0')}
-    return +(a+b.join('')+c.join(''))
-}
 
 const ALIAS_LIST = /^~@.+/
 const LOGIN_AUTH_INFO = /^~\*[^@>]+$/
@@ -1900,78 +1892,107 @@ const IS_GOSSIP = (id) =>{
     }
     return is
 }
-
+function toBuffer(val,fixedLen){
+    if(val === undefined)return
+    let temp
+    if(val instanceof Buffer){
+        return val
+    }else if(Array.isArray(val)){
+        return Buffer.from(val)
+    }else if(typeof val === 'string'){ //must be base64
+        if((temp = isLink(val)))val = temp //extract base64
+        return Buffer.from(val,IS_BASE64.test(val)?'base64':false)
+    }else if(typeof val === 'number'){ //to signed or usig int
+        let sig = (val<0)
+        return intToBuff(val,fixedLen,sig)
+    }else{
+        throw new Error('Could not parse input to binary.')
+    }
+}
 function snapID(id,opts){
     if(!new.target){ return new snapID(id,opts) }
     
-    const SOUL_ALIAS = {'!':'b','#':'t','-':'r','$':'i','.':'p','^':'g','&':'l','*':'pub','~':'gos'}//makes it easier to type out...
-    const SOUL_SYM_ORDER = '~!#-><.$&^*|%[};:/?@' // "," is used internally for splitting souls, _ is reserved for simple splits in ids
+    const SOUL_SYM_ORDER = 'btpilgu'
+    const len = {b:false,t:9,p:10,i:14,l:14,g:14,u:false}
     const self = this
-    
-    //opts? will have regex match 'extract', for better performance?
-    if(typeof id === 'string'){
-        if(LINK_LOOKUP.test(id) || SUB_LOOKUP.test(id))id = id.slice(1)//trim first char
-        self.string = id
-        whatIs()
-        let parse = stoo(id)
-        if(Array.isArray(parse))return parse
-        else Object.assign(this,parse)
-        cPath()
-    }else{//? should never need???
-        Object.assign(this,stoo(otos(id)))
-    }
-    function stoo(str){//parse string
-        let out = {}
-        let last = 0
-        let [id,p] = str.split(String.fromCharCode(30))//shouldn't ever send a flatpack string in?
-        if(p)return [id,p] //will return the split instead of the ido?
-        let curSym = [id[0]]
-        let idx
-        for (const char of SOUL_SYM_ORDER) {
-            if(char === id[0])continue
-            idx = id.indexOf(char)
-            if(idx !== -1){
-                toOut()
-                last = idx
-                curSym.push(char)
-            }
-        }
-        //get last segment out, since the end of string will not find add last arg to info
-        toOut(id.length)
-        return out
-        function toOut (toIdx){
-            toIdx = toIdx || idx
-            let s = curSym.pop()
-            let al = SOUL_ALIAS[s]
-            let args = id.slice(last+1,toIdx) || true 
-            out[s] = args
-            if(al)out[al] = args //put both names in output?
-        }
-    }
-    function otos(argObj){//make string
-        //no type uses current state
-        argObj = argObj || self
-        let id = ''
+    if(isObj(id,true)){
+        let val
         for (const sym of SOUL_SYM_ORDER) {
-            let val = argObj[sym] || argObj[SOUL_ALIAS[sym]]
-            if(val !== undefined){
-                id += sym
-                if((typeof val === 'string' && val !== '') || typeof val === 'number'){//if no val for key, then val will be boolean `true` like just adding | or % for permission or config flag
-                    id += val
-                }
+            if((val = id[sym])){
+                self[sym]=(val===true)?newID(sym):toBuffer(val,len[sym])
             }
         }
-        return id
+    }else{
+        self.binary = toBuffer(id)
+        parseID()
     }
-    function whatIs(){
-        let temp
-        if((temp = IS_CONFIG(id)))self.is = 'config' 
-        else if((temp = IS_PERM(id)))self.is = 'perm' 
-        else if((temp = IS_INDEX(id))) self.is = 'index' 
-        else if((temp = IS_NODE(id)))self.is = 'node'   
-        else if((temp = IS_GOSSIP(id)))self.is = 'gossip' 
-        self.type = temp
+    
+    function newID(sym){
+        const r = ()=>randInt(0,255)
+        if(sym === 't')return Array.from({length:9},r)
+        if(sym === 'p')return Array.from({length:10},r)
+        if(sym === 'i')return Array.from({length:14},r)
     }
+    function parseID(){
+        let id = self.binary
+        self.b = id.slice(0,32)
+        self.c = id.slice(32,33)[0]
+        self.rest = (id.length>33)?decode(id.slice(33,id.length)):[]
+        parseRest()//will use c to parse rest
+    }
+    function parseRest(){
+        let c = self.c
+        if([34,35,64,65,66,92,93,94,95,96].includes(c)){//extract t
+            self.t = self.rest[0]
+        }
+        if([34,35,94,95].includes(c)){//extract p
+            self.p = self.rest[1]
+        }
+        if([92,93,94,95].includes(c)){//extract i
+            self.i = (c>93)?self.rest[2]:self.rest[1]
+        }
+        if([64,65,66].includes(c)){//extract tag
+            self.l = self.rest[1]
+        }
+        if([33,35].includes(c)){//extract blockUnix
+            self.u = c==33?self.rest[0]:self.rest[2]
+        }
+        if(c==96){//flatpack property
+            self.i = self.rest[1]
+            //2 is null byte
+            self.p = self.rest[3]
+        }
+    }
+    function output(argObj,c,b64){
+        argObj = argObj || self
+        c = c || self.c
+        if(c == undefined)throw new Error('Must specify an ID case')
+        let order
+        switch (c) {
+            case 33:order = ['u'];break;
+            case 34:order = ['t','p'];break;
+            case 35:order = ['t','p','u'];break;
+            case 66:order = ['t','l'];break;
+            case 64:
+            case 65:
+            case 66:order = ['t','l'];break;
+            case 92:
+            case 93:order = ['t','i'];break;
+            case 94:order = ['t','p','i'];break;
+            case 95:
+            case 96:order = ['t','i',[0],'p'];break;
+            case 97:order = ['t','p','i',[0],'key'];break;
+            default:
+                break;
+        }
+        let rest = []
+        for (const sym of order) {
+            let val = (typeof sym === 'string')?argObj[sym]:sym
+            rest.push([...val])//make sure they are array and not buffer
+        }
+        let id = Buffer.from([...self.b,c,...encode(rest)])
+        return (b64)?id.toString('base64'):id
+    }   
     function cPath(){
         //valid paths: !, !#, !-, !^, !&, !#., !-.
         let {b,t,r,p,g,l} = self
@@ -1997,78 +2018,60 @@ function snapID(id,opts){
         self.cPath = configpath
     
     }
-    this.toStr = function(){return otos(self)}
-    this.toSnapID = function(){//only for returning the base node !#$ !-$
-        return otos({b:self.b,t:self.t,r:self.r,i:self.i})
+    this.toBin = function(sym){return (sym)?output():Buffer.from(self[sym]||[])}
+    this.toB64 = function(sym){return (sym)?output(self,false,true):Buffer.from(self[sym]||[]).toString('base64')}
+    this.toSnapID = function(str){//only for returning the base node !#$ !-$
+        return output({b:self.b,t:self.t,i:self.i},92,str)
     }
-    this.toAddress = function(pval){
-        return otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval})
+    this.toPropList = function(pval,str){
+        let p = toBuffer(pval,10) || self.p
+        if(!p)throw new Error('Property required to build id for list')
+        return output({b:self.b,t:self.t,i:self.i,p},94,str)
     }
-    this.toFlatPack = function(pval){
-        let first = (!pval)?self.toNodeID():otos(self)
-        let p = pval || self.p
-        if(!p)throw new Error('Invalid flat pack')
-        return first+String.fromCharCode(30)+p
+    this.toAddress = function(pval,str){
+        let p = toBuffer(pval,10) || self.p
+        if(!p)throw new Error('Property required to build address')
+        return output({b:self.b,t:self.t,i:self.i,p},96,str)
     }
-    this.toNodeID = function(){//in case there is other meta data on soul, and we just want the p stripped
-        let copy = JSON.parse(JSON.stringify(self))
-        delete copy.p
-        delete copy['.']
-        return otos(copy)
+    this.toFlatPack = function(key,str){
+        let c = (self.p)?97:96
+        key = toBuffer(key,(self.p)?false:10)
+        if(!key)throw new Error('Key required to make flat pack ID')
+        return output({b:self.b,t:self.t,i:self.i,p:(self.p)?self.p:key,key:(self.p)?key:false},c,str)
     }
-    this.toLink = function(){
-        return (LINK+otos({b:self.b,t:self.t,r:self.r,i:self.i}))
+    this.toLink = function(pval){
+        let p = toBuffer(pval,10) || self.p
+        let b64 = (p)?self.toAddress(p,true):self.toSnapID(true)
+        return '${'+b64+'}'
     }
-    this.toSub = function(pval){
-        pval = pval || self.p
-        return (SUB+otos({b:self.b,t:self.t,r:self.r,i:self.i,p:pval}))
+    this.toUpRefs = function(pval){
+        let p = toBuffer(pval,10) || self.p
+        let c = (p)?95:93
+        return output({b:self.b,t:self.t,i:self.i,p},c)
     }
-    this.toConfigSoul = function(){
+    this.toConfigSoul = function(){//TODO
         //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
-        return otos(Object.assign({},self,{'%':true}))
+        return output(Object.assign({},self,{'%':true}))
     }
-    this.toNameSpaceID = function(){
-        return otos({b:self.b,'~':true})
+    this.toDateIndex = function(blockUnix){
+        let u = blockUnix || self.u || false
+        let c = (u && 35) || 34
+        return output({b:self.b,t:self.t,p:self.p,u},c)
     }
-    this.toStateIndex = function(){
-        return otos({b:self.b,t:self.t,r:self.r,'$':true,'}':true})
-    }
-    this.toLabelIndex = function(labelID,targetType){
-        if(self.t){
-            return otos({b:self.b,t:self.t,l:labelID,'}':true})
-        }
-        return otos({b:self.b,r:self.r,'>':labelID,'<':targetType,'}':true})
-    }
-    this.toDateIndex = function(created){
-        let base = {b:self.b,t:self.t,':':true,'}':true}
-        return otos(Object.assign(base,(created?{}:{p:self.p})))
-    }
-
-    this.newDataNodeID = function(id,unix_ms){//assumes you passed in all other symbols
-        let i = (id !== undefined) ? id : rand(3)
-        let t = unix_ms || Date.now()
-        return otos({b:self.b,t:self.t,r:self.r,i:(i+'_'+t)})
-    }
-    this.newRelationID = function(src,trgt){
-        return otos({b:self.b,t:self.t,r:self.r,i:(hash64(src+trgt))})
-    }
-}
-function isSub(val){
-    if(SUB_LOOKUP.test(val)){
-        return snapID(val.slice(1))
-    }
-    return false
 }
 function isLink(val){
     if(typeof val === 'string'){
-        if(LINK_LOOKUP.test(val)){
-            return val.slice(1)
+        let temp
+        if((temp = LINK_LOOKUP.exec(val))){
+            return temp[1]
         }
         return false
     }
     return false
 }
 const notFound = String.fromCharCode(21)
+
+
 
 function DataStore(rTxn,rwTxn){
     let store = this
@@ -2298,12 +2301,13 @@ function signChallenge(root,peer){
     })
 }
 
-function intToBuff(num,signed){
+function intToBuff(num,fixedLen,signed){
     let n = (num<0)?num*-1:num
     let byteLength = n==0?1:(signed && Math.ceil(Math.log(2*n)/Math.log(256))) || Math.ceil(Math.sqrt(Math.pow(n,.125)))
-    let buff = Buffer.allocUnsafe(byteLength)
+    let buff = Buffer.allocUnsafe(fixedLen || byteLength)
     let op = (signed)?'writeIntBE':'writeUIntBE'
-    buff[op](num,0,byteLength)
+    if(fixedLen && fixedLen<byteLength)console.warn('value exceeds buffersize. Buffer represents end bytes.')
+    buff[op](num,fixedLen?fixedLen-byteLength:0,byteLength)
     
     return buff
 
@@ -2311,6 +2315,7 @@ function intToBuff(num,signed){
 
 function buffToInt(buff,signed){
     let op = (signed)?'readIntBE':'readUIntBE'
+    if(typeof buff === 'string')buff=Buffer.from(buff,'base64')
     return buff[op](0,buff.length);
 }
 
@@ -2353,6 +2358,9 @@ function rand(len, charSet,all){
     while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
     return s;
 }
+function randInt(min, max) { // min and max included 
+    return Math.floor(Math.random() * (max - min + 1) + min);
+  }
 function hash64(string){
     let h1 = hash(string)
     return h1 + hash(h1 + string)
@@ -2618,10 +2626,8 @@ export {
     ISO_DATE_PATTERN,
     newID,
     hash64,
-    SUB,
     INSTANCE_OR_ADDRESS,
     IS_CONFIG_SOUL,
-    isSub,
     isLink,
     lookupID,
     getAllActiveNodeTypes,
@@ -2646,8 +2652,6 @@ export {
     getLength,
     nodeHash,
     on,
-    encTime,
-    decTime,
     snapID,
     signChallenge,
     notFound,
@@ -2657,5 +2661,8 @@ export {
     DataStore,
     GossipStore,
     intToBuff,
-    buffToInt
+    buffToInt,
+    toBuffer,
+    isObj,
+    randInt
 }

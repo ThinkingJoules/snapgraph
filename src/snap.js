@@ -22,9 +22,6 @@ import {
     StringCMD,
     rand,
     mergeObj,
-    on,
-    encTime,
-    decTime,
     snapID,
     intToBuff,
     buffToInt
@@ -103,7 +100,7 @@ import Aegis from './aegis';
 import Aeon from './aeon'
 import coreApi from './coreApi'
 import {encode,decode} from '@msgpack/msgpack'
-
+import {initNewGraph} from './configs'
 
 const defaultOpts = {
     persist: {
@@ -125,7 +122,7 @@ export default function Snap(initialPeers,opts){
     let root = this._
     root.snapID = snapID
     root.isPeer = isNode
-    root.util = {getValue,setValue,rand,encode,decode,Buffer:Buffer,intToBuff,buffToInt}
+    root.util = {getValue,setValue,rand,encode,decode,Buffer:Buffer,intToBuff,buffToInt,initNewGraph}
     if(isNode)mergeObj(defaultOpts,{maxConnections:300})//currently not implemented
     root.opt = defaultOpts
     mergeObj(root.opt,opts) //apply user's ops

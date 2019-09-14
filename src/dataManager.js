@@ -1,4 +1,4 @@
-import { snapID,isSub, getValue, notFound } from "./util";
+import { snapID, getValue, notFound } from "./util";
 import Disk from './peer/disk'
 import BrowserStore from './browser/disk'
 

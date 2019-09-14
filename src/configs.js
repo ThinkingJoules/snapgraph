@@ -12,11 +12,152 @@ import {convertValueToType,
     ALL_INSTANCE_NODES,
     CONFIG_SOUL,
     lookupID,
-    throwError
+    throwError,
+    snapID,
+    toBuffer,
+    intToBuff,
+    randInt
 } from './util'
 
 import {verifyLinksAndFNs, ALL_LINKS_PATTERN} from './functions/function_utils'
 
+
+const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
+const validNodePropTypes = ["data", "date", "pickList", "function", "linkTo"]
+const validRelationPropTypes = ["data", "date", "pickList", "file","source","target","state","function"]
+let things = [
+    {_ALIAS:"_THINGS",_PROPS:['_ALIAS','_STATE','_ID','_PROPS','_HID','_LOG','_ACTIVE','_ARCHIVED','_CLASS'],_CLASS:'data',_ID:0},
+    {_ALIAS:"_PROPS",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID',"_PROPTYPE","_DATATYPE","_HIDDEN","_SORT","_DEFVAL","_UNIQUE","_FN","_FORMAT","_OPTIONS","_MANY","_REQUIRED","_INC",],_ID:1},
+    {_ALIAS:"_CLASSES",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID','_REQPROPS'],_ID:2},
+    {_ALIAS:"TAGS",_CLASS:'data',_PROPS:['_ID','_STATE','_ALIAS','_HASTAG'],_ID:3},
+    {_ALIAS:"PEOPLE",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT','_PUBS','_PEERS','_WKN','_SAID','_STMTS','_TAIL'],_ID:4},
+    {_ALIAS:"_STMTS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','PUBKEY','_PREV','WORK','_HEADER'],_ID:4},
+    {_ALIAS:"PEERS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT'],_ID:5}
+]
+let props = [
+    {_ALIAS:"_ID",_REQUIRED:true,_PROPTYPE:'_ID',_DATATYPE:'array',_UNIQUE:true,_ID:0},
+    {_ALIAS:"_ALIAS",_REQUIRED:true,_PROPTYPE:'_ALIAS',_UNIQUE:true,_ID:1},//unique for the nodetype, not all of props?
+    {_ALIAS:"_STATE",_REQUIRED:true,_PROPTYPE:'pickList',_DEFVAL:'active',_OPTIONS:['active','archived','deleted'],_ID:2},
+    {_ALIAS:"_CREATED",_REQUIRED:true,_PROPTYPE:'date',_ID:3},
+    {_ALIAS:"_TAGS",_PROPTYPE:'linkTo',_OPTIONS:['TAGS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:4},
+    {_ALIAS:"_IN",_PROPTYPE:'_IN',_DATATYPE:'LINK',_ID:5},
+    {_ALIAS:"_OUT",_PROPTYPE:'_OUT',_DATATYPE:'LINK',_ID:6},
+    {_ALIAS:"_PROPTYPE",_PROPTYPE:'pickList',_DEFVAL:'data',_OPTIONS:validNodePropTypes,_ID:7},
+    {_ALIAS:"_DATATYPE",_PROPTYPE:'pickList',_DEFVAL:'string',_OPTIONS:validDataTypes,_ID:8},
+    {_ALIAS:"_HIDDEN",_DEFVAL:false,_DATATYPE:'boolean',_ID:9},
+    {_ALIAS:"_SORT",_DEFVAL:0,_DATATYPE:'number',_ID:10},
+    {_ALIAS:"_DEFVAL",_DEFVAL:null,_PROPTYPE:"_DEFVAL",_DATATYPE:validDataTypes,_ID:11},
+    {_ALIAS:"_UNIQUE",_DEFVAL:false,_DATATYPE:'boolean',_ID:12},
+    {_ALIAS:"_FN",_DEFVAL:[],_PROPTYPE:"_FN",_DATATYPE:'array',_ID:13},
+    {_ALIAS:"_FORMAT",_DEFVAL:'',_PROPTYPE:"_FORMAT",_DATATYPE:['string','object'],_ID:14},
+    {_ALIAS:"_OPTIONS",_DEFVAL:false,_PROPTYPE:"_OPTIONS",_DATATYPE:'array',_ID:15},
+    {_ALIAS:"_MANY",_DEFVAL:false,_DATATYPE:'boolean',_ID:16},
+    {_ALIAS:"_REQUIRED",_DEFVAL:false,_DATATYPE:'boolean',_ID:17},
+    {_ALIAS:"_INC",_DEFVAL:'',_PROPTYPE:"_INC",_ID:18},
+    {_ALIAS:"_XID",_UNIQUE:true,_DATATYPE:['string','number'],_ID:19},
+    {_ALIAS:"_HID",_PROPTYPE:"_HID",_DATATYPE:'_ID',_ID:20},
+    {_ALIAS:"_LOG",_DEFVAL:false,_DATATYPE:'boolean',_ID:21},
+    {_ALIAS:"_PROPS",_PROPTYPE:"_PROPS",_DATATYPE:'unorderedSet',_ID:22},
+    {_ALIAS:"_ACTIVE",_PROPTYPE:"_ACTIVE",_DATATYPE:'unorderedSet',_ID:23},
+    {_ALIAS:"_ARCHIVED",_PROPTYPE:"_ARCHIVED",_DATATYPE:'unorderedSet',_ID:24},
+    {_ALIAS:"_CLASS",_PROPTYPE:'linkTo',_OPTIONS:['_CLASSES'],_ID:25},
+    {_ALIAS:"_REQPROPS",_DATATYPE:'array',_ID:26},
+    {_ALIAS:"_PUBS",_DATATYPE:'unorderedSet',_ID:27},
+    {_ALIAS:"_WKN",_DATATYPE:'array',_ID:28},
+    {_ALIAS:"_PEERS",_PROPTYPE:'linkTo',_OPTIONS:['PEERS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:29},
+    {_ALIAS:"_STMTS",_PROPTYPE:'linkTo',_OPTIONS:['_STMTS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:30},
+    {_ALIAS:"_TAIL",_DATATYPE:'array',_ID:31},
+    {_ALIAS:"_HASTAG",_DATATYPE:'unorderedSet',_ID:32},
+    {_ALIAS:"PUBKEY",_DATATYPE:'array',_ID:33},
+    {_ALIAS:"_PREV",_DATATYPE:'array',_ID:34},
+    {_ALIAS:"WORK",_DATATYPE:'number',_ID:35},
+    {_ALIAS:"_HEADER",_DATATYPE:'array',_ID:36},
+    {_ALIAS:"_SAID",_DATATYPE:'unorderedSet',_ID:37},
+]
+let classes = [
+    {_ALIAS:'data',_ID:0,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']},
+    {_ALIAS:'relation',_ID:1,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']},
+    {_ALIAS:'file',_ID:2,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']},//TODO, figure out props for new classes of nodes...
+    {_ALIAS:'repo',_ID:3,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']},
+    {_ALIAS:'stream',_ID:4,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']}
+]
+const TVALS={},PVALS={},CLASSES={}
+;(function(){
+    for (const config of things) {
+        let b64ID = intToBuff(config._ID,9).toString('base64');
+        TVALS[config._ALIAS]=b64ID
+    }
+    for (const config of props) {
+        let b64ID = intToBuff(config._ID,10).toString('base64');
+        PVALS[config._ALIAS]=b64ID
+    }
+    for (const config of classes) {
+        let b64ID = intToBuff(config._ID,4).toString('base64');
+        CLASSES[config._ALIAS]=b64ID
+    }
+})()
+function initNewGraph(cid){
+    cid = toBuffer(cid)
+    let nodes = {}
+    const thingsT = intToBuff(0,9)
+    const propsT = intToBuff(1,9)
+    const classesT = intToBuff(2,9)
+    for (const config of props) {
+        let pval = intToBuff(config._ID,10)
+        let ido = snapID({b:cid,t:propsT,i:pval})
+        let node = nodes[ido.toSnapID(true)] = {}
+        for (const key in config) {
+            if(key === '_ID'){
+                node[PVALS[key]]=intToBuff(config[key],10)
+            }else{
+                node[PVALS[key]]=config[key]
+            }
+        }
+    }
+    for (const config of things) {
+        let tval = intToBuff(config._ID,9)
+        let ido = snapID({b:cid,t:thingsT,i:tval})
+        let node = nodes[ido.toSnapID(true)] = {}
+        for (const key in config) {
+            if(key === '_PROPS'){
+                let listID = ido.toPropList(PVALS[key],true)
+                node[PVALS[key]]=snapID(listID).toLink()
+                let list = nodes[listID] = {}
+                for (const pval of config[key]) {
+                    list[PVALS[pval]]=snapID({b:cid,t:propsT,i:PVALS[pval]}).toLink()
+                }
+            }else if(key === '_CLASS'){
+                node[PVALS[key]]=snapID({b:cid,t:classesT,i:CLASSES[config[key]]}).toLink()
+            }else if(key === '_ID'){
+                node[PVALS[key]]=intToBuff(config[key],9)
+            }else{
+                node[PVALS[key]]=config[key]
+            }
+        }
+        
+    }
+    for (const config of classes) {
+        let cval = intToBuff(config._ID,9)
+        let ido = snapID({b:cid,t:classesT,i:cval})
+        let node = nodes[ido.toSnapID(true)] = {}
+        for (const key in config) {
+            if(key === '_REQPROPS'){
+                let listID = ido.toPropList(PVALS[key],true)
+                node[PVALS[key]]=snapID(listID).toLink()
+                let list = nodes[listID] = {}
+                for (const pval of config[key]) {
+                    list[PVALS[pval]]=snapID({b:cid,t:propsT,i:PVALS[pval]}).toLink()
+                }
+            }else if(key === '_ID'){
+                node[PVALS[key]]=intToBuff(config[key],4)
+            }else{
+                node[PVALS[key]]=config[key]
+            }
+        }
+        
+    }
+    return nodes
+}
 //CONFIG FUNCTIONS
 const newBaseConfig = (config) =>{
     config = config || {}
@@ -26,44 +167,53 @@ const newBaseConfig = (config) =>{
     let inheritPermissions = config.inheritPermissions || true
     return {alias, archived, deleted, inheritPermissions}
 }
-const newNodeTypeConfig = (config) =>{
+const newClassConfig = config =>{
     config = config || {}
-    let alias = config.alias || 'New Node Type ' + rand(2)
-    let archived = config.archived || false
-    let deleted = config.deleted || false
-    let log = config.log || false
-    let externalID = config.externalID || '' //pval of which prop is an ID
-    let humanID = config.humanID || ''
-    return {alias, log, archived, deleted, externalID, humanID}
+    let out = {}
+    out._ALIAS = config.alias || config._ALIAS || 'New Class ' + rand(2)
+    out._STATE = 'active'
+    out._REQPROPS = config._REQPROPS || false
+    out._ID = config._ID
+    return out
 }
-const newNodePropConfig = (config) =>{
+function newNodeTypeConfig(config){
+    config = config || {}
+    let out = {}
+    out._ALIAS = config.alias || config._ALIAS || 'New nodeType ' + rand(2)
+    out._STATE = 'active'
+    out._LOG = config._LOG || false
+    out._HID = config.humanID || config._HID || '' //pval of which prop is an ID
+    out._ID = config._ID
+    return out
+}
+function newNodePropConfig(config){
     config = config || {}
     let defType = {data:'string',date:'number',pickList:'string',file:'string'}
-
-    let alias = config.alias || 'New property ' + rand(2)
-    let archived = config.archived || false
-    let deleted = config.deleted || false
-    let hidden = config.hidden || false
-    let propType = config.propType || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids
-    let allowMultiple = config.allowMultiple || false
-    let required = config.required || false 
-    let sortval = config.sortval || 0
-    let defaultval = config.defaultval || null //null represents no default. Anything other than null will be injected at node creation.
-    let autoIncrement = config.autoIncrement || "" // must be a number, value after comma is optional start value. ie: 1,11500 (11500,11501,etc)
-    let enforceUnique = config.enforceUnique || false // used to ensure unique values, must be 'string' or 'number'
-    let fn = config.fn || "" 
-    let usedIn = JSON.stringify([])
-    let format = config.format || ""
-    let pickOptions = config.pickOptions || JSON.stringify([])
-    let dataType = config.dataType || defType[propType] || 'string' //string,number,boolean,set
-    if(['labels','state'].includes(propType))hidden = true
-    if(allowMultiple || propType === 'labels'){
-        dataType = 'unorderedSet'
-    }else if(autoIncrement){
-        dataType = 'number'
+    let out = {}
+    out._ALIAS = config.alias || config._ALIAS || 'New property ' + rand(2)
+    out._STATE = 'active'
+    out._HIDDEN = config.hidden || config._HIDDEN || false
+    out._PROPTYPE = config.propType || config._PROPTYPE || 'data' //data, date, pickList, pickMultiple, prev ,next, lookup, ids
+    out._MANY = config.allowMultiple || config._MANY || false
+    out._REQUIRED = config.required || config._REQUIRED || false 
+    out._SORT = config.sortval || config._SORT || 0
+    out._DEFVAL = config.defaultval || config._DEFVAL || null //null represents no default. Anything other than null will be injected at node creation.
+    out._INC = config.autoIncrement || config._INC || "" // must be a number, value after comma is optional start value. ie: 1,11500 (11500,11501,etc)
+    out._UNIQUE = config.enforceUnique || config._UNIQUE || false // used to ensure unique values, must be 'string' or 'number'
+    out._FN = config._FN || "" 
+    out._FORMAT = config._FORMAT || ""
+    out._OPTIONS = config.pickOptions || config._OPTIONS || false
+    out._DATATYPE = config.dataType || config._DATATYPE || defType[out._PROPTYPE] || 'string' //string,number,boolean,set
+    out._ID = config._ID
+    if(['_TAGS','_STATE','_IN','_OUT','_CREATED'].includes(out._PROPTYPE))out._HIDDEN = true
+    if(out._MANY || out._PROPTYPE === '_TAGS'){
+        out._DATATYPE = 'unorderedSet'
+    }else if(out._INC){
+        out._DATATYPE = 'number'
     }
+    if(out._PROPTYPE === 'linkTo')out._DATATYPE = '_ID'
 
-    return {alias, archived, deleted, hidden, propType, dataType, sortval, required, defaultval, autoIncrement, enforceUnique, fn, usedIn, pickOptions, format, allowMultiple}
+    return out
 }
 const newRelationshipConfig = (config) =>{
     config = config || {}
@@ -90,9 +240,8 @@ const newRelationshipPropConfig = (config) =>{
     if(['state'].includes(propType))hidden = true
     return {alias, archived, deleted, hidden,sortval, propType, dataType, required, defaultval, pickOptions, format, allowMultiple}
 }
-const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
-const validNodePropTypes = ["data", "date", "pickList", "labels", "state", "function", "file"]
-const validRelationPropTypes = ["data", "date", "pickList", "file","source","target","state","function"]
+const validClasses = ["data","file","repo","stream"]
+
 const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj, type) =>{//use for new configs, or update to configs
     if(!type)throw new Error('Must specify whether this is a node or a relation')
@@ -1144,5 +1293,6 @@ export {
     checkConfig,
     basicFNvalidity,
     gbGet,
-    loadAllConfigs
+    loadAllConfigs,
+    initNewGraph
 }
