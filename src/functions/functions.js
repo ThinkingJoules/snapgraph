@@ -59,14 +59,11 @@ const fnExamples = {
     TEST:       ['TEST("Some String",/Some/) => TRUE()', 'TEST("Some String",/some/) => FALSE()', 'TEST("Some String",/some/i) => TRUE()']
 }
 function fnHelp(fn){
-    let out = []
     if(fnExamples[fn]){
-        out.push(fnArgHelpText[fn])
-        out.push(fnExamples[fn])
+        return [fnArgHelpText[fn],fnExamples[fn]]
     }else{
         return console.log('Cannot find fn requested. Should be one of: ' + Object.keys(fnExamples).join(', '))
     }
-    return out
 }
 function IF(args){
     if(args.length !== 3){

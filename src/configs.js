@@ -21,58 +21,69 @@ import {convertValueToType,
 
 import {verifyLinksAndFNs, ALL_LINKS_PATTERN} from './functions/function_utils'
 
+const validEncodings = ['ascii','utf8','uft16le','hex','base64','latin1'] //for Buffer.from( ,encoding)
+const validDataTypes = ["string", "number", "boolean", "array","set","map","binary","nodeID","address","function"] //binary and map are handled internally
+//const validStructures = ["id","nodeID","address"]
+const validNodePropTypes = ["data", "date", "pickList","function","linkTo","thing","things"]
 
-const validDataTypes = ["string", "number", "boolean", "unorderedSet", "array"]
-const validNodePropTypes = ["data", "date", "pickList", "function", "linkTo"]
-const validRelationPropTypes = ["data", "date", "pickList", "file","source","target","state","function"]
 let things = [
-    {_ALIAS:"_THINGS",_PROPS:['_ALIAS','_STATE','_ID','_PROPS','_HID','_LOG','_ACTIVE','_ARCHIVED','_CLASS'],_CLASS:'data',_ID:0},
-    {_ALIAS:"_PROPS",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID',"_PROPTYPE","_DATATYPE","_HIDDEN","_SORT","_DEFVAL","_UNIQUE","_FN","_FORMAT","_OPTIONS","_MANY","_REQUIRED","_INC",],_ID:1},
-    {_ALIAS:"_CLASSES",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID','_REQPROPS'],_ID:2},
-    {_ALIAS:"TAGS",_CLASS:'data',_PROPS:['_ID','_STATE','_ALIAS','_HASTAG'],_ID:3},
-    {_ALIAS:"PEOPLE",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT','_PUBS','_PEERS','_WKN','_SAID','_STMTS','_TAIL'],_ID:4},
-    {_ALIAS:"_STMTS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','PUBKEY','_PREV','WORK','_HEADER'],_ID:4},
-    {_ALIAS:"PEERS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT'],_ID:5}
+    {_ALIAS:"_PROPS",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID',"_PROPTYPE","_DATATYPE","_HIDDEN","_SORT","_DEFVAL","_UNIQUE","_FN","_FORMAT","_OPTIONS","_MANY","_REQUIRED","_INC",],_TVAL:0},
+    {_ALIAS:"_THINGS",_PROPS:['_ALIAS','_STATE','_ID','_PROPS','_HID','_LOG','_ACTIVE','_ARCHIVED','_CLASS'],_CLASS:'data',_TVAL:1},
+
+    // {_ALIAS:"_CLASSES",_CLASS:'data',_PROPS:['_ALIAS','_STATE','_ID','_REQPROPS'],_ID:2},
+    // {_ALIAS:"TAGS",_CLASS:'data',_PROPS:['_ID','_STATE','_ALIAS','_HASTAG'],_ID:3},
+    // {_ALIAS:"PEOPLE",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT','_PUBS','_PEERS','_WKN','_SAID','_STMTS','_TAIL'],_ID:4},
+    // {_ALIAS:"_STMTS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','PUBKEY','_PREV','WORK','_HEADER'],_ID:4},
+    // {_ALIAS:"PEERS",_CLASS:'data',_PROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT'],_ID:5}
 ]
 let props = [
-    {_ALIAS:"_ID",_REQUIRED:true,_PROPTYPE:'_ID',_DATATYPE:'array',_UNIQUE:true,_ID:0},
-    {_ALIAS:"_ALIAS",_REQUIRED:true,_PROPTYPE:'_ALIAS',_UNIQUE:true,_ID:1},//unique for the nodetype, not all of props?
-    {_ALIAS:"_STATE",_REQUIRED:true,_PROPTYPE:'pickList',_DEFVAL:'active',_OPTIONS:['active','archived','deleted'],_ID:2},
-    {_ALIAS:"_CREATED",_REQUIRED:true,_PROPTYPE:'date',_ID:3},
-    {_ALIAS:"_TAGS",_PROPTYPE:'linkTo',_OPTIONS:['TAGS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:4},
-    {_ALIAS:"_IN",_PROPTYPE:'_IN',_DATATYPE:'LINK',_ID:5},
-    {_ALIAS:"_OUT",_PROPTYPE:'_OUT',_DATATYPE:'LINK',_ID:6},
-    {_ALIAS:"_PROPTYPE",_PROPTYPE:'pickList',_DEFVAL:'data',_OPTIONS:validNodePropTypes,_ID:7},
-    {_ALIAS:"_DATATYPE",_PROPTYPE:'pickList',_DEFVAL:'string',_OPTIONS:validDataTypes,_ID:8},
-    {_ALIAS:"_HIDDEN",_DEFVAL:false,_DATATYPE:'boolean',_ID:9},
-    {_ALIAS:"_SORT",_DEFVAL:0,_DATATYPE:'number',_ID:10},
-    {_ALIAS:"_DEFVAL",_DEFVAL:null,_PROPTYPE:"_DEFVAL",_DATATYPE:validDataTypes,_ID:11},
-    {_ALIAS:"_UNIQUE",_DEFVAL:false,_DATATYPE:'boolean',_ID:12},
-    {_ALIAS:"_FN",_DEFVAL:[],_PROPTYPE:"_FN",_DATATYPE:'array',_ID:13},
-    {_ALIAS:"_FORMAT",_DEFVAL:'',_PROPTYPE:"_FORMAT",_DATATYPE:['string','object'],_ID:14},
-    {_ALIAS:"_OPTIONS",_DEFVAL:false,_PROPTYPE:"_OPTIONS",_DATATYPE:'array',_ID:15},
-    {_ALIAS:"_MANY",_DEFVAL:false,_DATATYPE:'boolean',_ID:16},
-    {_ALIAS:"_REQUIRED",_DEFVAL:false,_DATATYPE:'boolean',_ID:17},
-    {_ALIAS:"_INC",_DEFVAL:'',_PROPTYPE:"_INC",_ID:18},
-    {_ALIAS:"_XID",_UNIQUE:true,_DATATYPE:['string','number'],_ID:19},
-    {_ALIAS:"_HID",_PROPTYPE:"_HID",_DATATYPE:'_ID',_ID:20},
-    {_ALIAS:"_LOG",_DEFVAL:false,_DATATYPE:'boolean',_ID:21},
-    {_ALIAS:"_PROPS",_PROPTYPE:"_PROPS",_DATATYPE:'unorderedSet',_ID:22},
-    {_ALIAS:"_ACTIVE",_PROPTYPE:"_ACTIVE",_DATATYPE:'unorderedSet',_ID:23},
-    {_ALIAS:"_ARCHIVED",_PROPTYPE:"_ARCHIVED",_DATATYPE:'unorderedSet',_ID:24},
-    {_ALIAS:"_CLASS",_PROPTYPE:'linkTo',_OPTIONS:['_CLASSES'],_ID:25},
-    {_ALIAS:"_REQPROPS",_DATATYPE:'array',_ID:26},
-    {_ALIAS:"_PUBS",_DATATYPE:'unorderedSet',_ID:27},
-    {_ALIAS:"_WKN",_DATATYPE:'array',_ID:28},
-    {_ALIAS:"_PEERS",_PROPTYPE:'linkTo',_OPTIONS:['PEERS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:29},
-    {_ALIAS:"_STMTS",_PROPTYPE:'linkTo',_OPTIONS:['_STMTS'],_MANY:true,_DATATYPE:'unorderedSet',_ID:30},
-    {_ALIAS:"_TAIL",_DATATYPE:'array',_ID:31},
-    {_ALIAS:"_HASTAG",_DATATYPE:'unorderedSet',_ID:32},
-    {_ALIAS:"PUBKEY",_DATATYPE:'array',_ID:33},
-    {_ALIAS:"_PREV",_DATATYPE:'array',_ID:34},
-    {_ALIAS:"WORK",_DATATYPE:'number',_ID:35},
-    {_ALIAS:"_HEADER",_DATATYPE:'array',_ID:36},
-    {_ALIAS:"_SAID",_DATATYPE:'unorderedSet',_ID:37},
+    {_ALIAS:"_ID",_REQUIRED:true,_PROPTYPE:'id',_ENCODING:'base64',_DEFVAL:'~(MAKEID(14))',_UNIQUE:true,_PVAL:0},
+    {_ALIAS:"_PVAL",_REQUIRED:true,_PROPTYPE:'id',_ENCODING:'base64',_DEFVAL:'~(MAKEID(10))',_UNIQUE:true,_PVAL:1},
+    {_ALIAS:"_TVAL",_REQUIRED:true,_PROPTYPE:'id',_ENCODING:'base64',_DEFVAL:'~(MAKEID(9))',_UNIQUE:true,_PVAL:2},
+    {_ALIAS:"_ALIAS",_REQUIRED:true,_UNIQUE:true,_PVAL:3},//unique for the nodetype, not all of props?
+    {_ALIAS:"_STATE",_REQUIRED:true,_PROPTYPE:'pickList',_DEFVAL:'active',_OPTIONS:['active','archived','deleted'],_PVAL:4},
+    {_ALIAS:"_CREATED",_REQUIRED:true,_PROPTYPE:'date',_PVAL:5},
+    {_ALIAS:"_TAGS",_PROPTYPE:'pickList',_OPTIONS:['TAGS'],_MANY:true,_DATATYPE:'set',_VALUETEST:'isNodeID(x)',_PVAL:6},
+    {_ALIAS:"_IN",_PROPTYPE:'things',_DATATYPE:'set',_VALUETEST:'isNodeID(x)',_PVAL:7},
+    {_ALIAS:"_OUT",_PROPTYPE:'things',_DATATYPE:'set',_VALUETEST:'isNodeID(x)',_PVAL:8},
+    {_ALIAS:"_SRC",_PROPTYPE:'thing',_DATATYPE:'nodeID',_PVAL:9},
+    {_ALIAS:"_TRGT",_PROPTYPE:'thing',_DATATYPE:'nodeID',_PVAL:10},
+    {_ALIAS:"_PROPTYPE",_PROPTYPE:'pickList',_DEFVAL:'data',_OPTIONS:validNodePropTypes,_PVAL:11},
+    {_ALIAS:"_DATATYPE",_PROPTYPE:'pickList',_DEFVAL:'string',_OPTIONS:validDataTypes,_PVAL:12},
+    {_ALIAS:"_ENCODING",_PROPTYPE:'pickList',_DEFVAL:'utf8',_OPTIONS:validEncodings,_PVAL:13},
+    {_ALIAS:"_KEYTEST",_PROPTYPE:'data',_DATATYPE:'function',_PVAL:14},
+    {_ALIAS:"_VALUETEST",_PROPTYPE:'data',_DATATYPE:'function',_PVAL:15},
+    {_ALIAS:"_HIDDEN",_DEFVAL:false,_DATATYPE:'boolean',_PVAL:16},
+    {_ALIAS:"_SORT",_DEFVAL:0,_DATATYPE:'number',_PVAL:17},
+    {_ALIAS:"_DEFVAL",_DEFVAL:null,_PROPTYPE:"data",_DATATYPE:validDataTypes,_PVAL:18},
+    {_ALIAS:"_UNIQUE",_DEFVAL:false,_DATATYPE:'boolean',_PVAL:19},
+    {_ALIAS:"_FN",_DEFVAL:'',_PROPTYPE:"data",_DATATYPE:'function',_PVAL:20},
+    {_ALIAS:"_FORMAT",_DEFVAL:'',_PROPTYPE:"_FORMAT",_DATATYPE:['string','map'],_PVAL:21},
+    {_ALIAS:"_OPTIONS",_DEFVAL:false,_PROPTYPE:"_OPTIONS",_DATATYPE:'set',_PVAL:22},
+    {_ALIAS:"_MANY",_DEFVAL:false,_DATATYPE:'boolean',_PVAL:23},
+    {_ALIAS:"_REQUIRED",_DEFVAL:false,_DATATYPE:'boolean',_PVAL:24},
+    {_ALIAS:"_INC",_DEFVAL:'',_PROPTYPE:"_INC",_PVAL:18},
+    {_ALIAS:"_XID",_UNIQUE:true,_DATATYPE:['string','number'],_PVAL:25},
+    {_ALIAS:"_HID",_PROPTYPE:"data",_DATATYPE:'binary',_PVAL:26},
+    {_ALIAS:"_LOG",_DEFVAL:false,_DATATYPE:'boolean',_PVAL:27},
+    {_ALIAS:"_PROPS",_PROPTYPE:"_PROPS",_DATATYPE:'map',_PVAL:28},
+
+
+    // {_ALIAS:"_ACTIVE",_PROPTYPE:"_ACTIVE",_DATATYPE:'map',_PVAL:23},
+    // {_ALIAS:"_ARCHIVED",_PROPTYPE:"_ARCHIVED",_DATATYPE:'map',_PVAL:24},
+    // {_ALIAS:"_CLASS",_PROPTYPE:'linkTo',_OPTIONS:['_CLASSES'],_PVAL:25},
+    // {_ALIAS:"_REQPROPS",_DATATYPE:'array',_PVAL:26},
+    // {_ALIAS:"_PUBS",_DATATYPE:'map',_PVAL:27},
+    // {_ALIAS:"_WKN",_DATATYPE:'array',_PVAL:28},
+    // {_ALIAS:"_PEERS",_PROPTYPE:'linkTo',_OPTIONS:['PEERS'],_MANY:true,_DATATYPE:'map',_PVAL:29},
+    // {_ALIAS:"_STMTS",_PROPTYPE:'linkTo',_OPTIONS:['_STMTS'],_MANY:true,_DATATYPE:'map',_PVAL:30},
+    // {_ALIAS:"_TAIL",_DATATYPE:'array',_PVAL:31},
+    // {_ALIAS:"_HASTAG",_DATATYPE:'map',_PVAL:32},
+    // {_ALIAS:"PUBKEY",_DATATYPE:'array',_PVAL:33},
+    // {_ALIAS:"_PREV",_DATATYPE:'array',_PVAL:34},
+    // {_ALIAS:"WORK",_DATATYPE:'number',_PVAL:35},
+    // {_ALIAS:"_HEADER",_DATATYPE:'array',_PVAL:36},
+    // {_ALIAS:"_SAID",_DATATYPE:'map',_PVAL:37},
 ]
 let classes = [
     {_ALIAS:'data',_ID:0,_REQPROPS:['_STATE','_CREATED','_TAGS','_IN','_OUT']},
@@ -84,7 +95,7 @@ let classes = [
 const TVALS={},PVALS={},CLASSES={}
 ;(function(){
     for (const config of things) {
-        let b64ID = intToBuff(config._ID,9).toString('base64');
+        let b64ID = intToBuff(config._TVAL).toString('base64');
         TVALS[config._ALIAS]=b64ID
     }
     for (const config of props) {
@@ -207,7 +218,7 @@ function newNodePropConfig(config){
     out._ID = config._ID
     if(['_TAGS','_STATE','_IN','_OUT','_CREATED'].includes(out._PROPTYPE))out._HIDDEN = true
     if(out._MANY || out._PROPTYPE === '_TAGS'){
-        out._DATATYPE = 'unorderedSet'
+        out._DATATYPE = 'map'
     }else if(out._INC){
         out._DATATYPE = 'number'
     }
@@ -224,7 +235,7 @@ const newRelationshipConfig = (config) =>{
 }
 const newRelationshipPropConfig = (config) =>{
     config = config || {}
-    let defType = {data:'string',date:'number',pickList:'string',labels:'unorderedSet'}
+    let defType = {data:'string',date:'number',pickList:'string',labels:'map'}
     let alias = config.alias || 'New property ' + rand(2)
     let archived = config.archived || false
     let deleted = config.deleted || false
@@ -245,7 +256,7 @@ const validClasses = ["data","file","repo","stream"]
 const validNumberFormats = ['AU', '%',]
 const checkConfig = (validObj, testObj, type) =>{//use for new configs, or update to configs
     if(!type)throw new Error('Must specify whether this is a node or a relation')
-    let validPropTypes = (type === 'node') ? validNodePropTypes : validRelationPropTypes
+    let validPropTypes = validNodePropTypes
     //whichConfig = base, table, column, ..row?
     let nullValids = {string: true, number: true, boolean: true, null: true, object: false, function: false}
     for (const key in testObj) {
@@ -349,9 +360,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
         changeDataType: function(toType){//only used to convert all values for property this config() was called for. any others need manual conversion
             let from = thisConfig.dataType
             let toSingle = (configObj.allowMultiple === false && thisConfig.allowMultiple === true) ? true : false
-            if(['unorderedSet','array'].includes(from) && !['unorderedSet','string','array'].includes(toType)){
+            if(['map','array'].includes(from) && !['map','string','array'].includes(toType)){
                 //would not be running this call if from === to
-                err = throwError(cb,'Can only change unorderedSet to: "array" or "string". Can only change an array to: "unorderedSet" or "string"')
+                err = throwError(cb,'Can only change map to: "array" or "string". Can only change an array to: "map" or "string"')
                 return
             }
             getList(function(list){
@@ -690,9 +701,9 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 if(pType === 'date')return ['number']
                 throw new Error('An enforceUnique property must be of type "data" or "date".')
             }
-            if(pType === 'data')return ['string','number','boolean','unorderedSet','array','file']
+            if(pType === 'data')return ['string','number','boolean','map','array','file']
             if(pType === 'date')return ['number']
-            if((pType === 'pickList' && allowMultiple) || pType === 'labels')return ['unorderedSet']
+            if((pType === 'pickList' && allowMultiple) || pType === 'labels')return ['map']
             if((pType === 'pickList' && !allowMultiple) || pType === 'function')return ['string','number']
             return ['string']
         }
@@ -1156,7 +1167,7 @@ const handleImportColCreation = (altgb, path, colHeaders, datarow, opts)=>{
             //overrides vvvv
             if(labelIDidx === i){
                 propType = 'labels'
-                dataType = 'unorderedSet'
+                dataType = 'map'
                 p = 'LABELS'
             }else if(sourceIDidx === i){
                 propType = 'source'

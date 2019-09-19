@@ -99,7 +99,7 @@ function evaluateAllFN(FNstr){
     let resolvedArgs = []
     let result
     if(!match){//no functions in this string
-        return FNstr
+        return attemptSolve(FNstr)
     }
     if(!gfn[match[0]]){
         let err = 'Invalid Function: '+ match[0]
@@ -124,24 +124,10 @@ function evaluateAllFN(FNstr){
         let val = argsArr[i]
         let more = r.exec(val)
         if(more){//arg contains a FN
-            console.log('more',val)
+            //console.log('more',val)
             resolvedArgs.push(evaluateAllFN(val))
         }else{
-            let hasMath = /[0-9=+*/^-]+/gi.test(val);
-            let hasletters = /[a-z]/i.test(val)
-            let pureMath = hasMath && !hasletters
-            let compare = /[<>!=+*/^-]+/gi.test(val)
-            let reg = /(\/[^\n\r]+\/)([gimuy]+)?/.test(val)
-            console.log('math:',pureMath, 'compare:',compare, 'reg:',reg)
-            if(pureMath && !compare && !reg){
-                let solver = new MathSolver()
-                resolvedArgs.push(solver.solve(val))
-            }else if(compare && !reg){
-                let solver = new MathSolver()
-                resolvedArgs.push(solver.solveAndCompare(val))
-            }else{
-                resolvedArgs.push(val)
-            }
+            resolvedArgs.push(attemptSolve(val))
         }
     }
     result = gfn[match[0]](resolvedArgs)
@@ -150,7 +136,23 @@ function evaluateAllFN(FNstr){
         FNstr = JSON.parse(FNstr)//need to eval to get string 'true' to boolean `true` if it is just a string or number then it remains
     } catch (error) {}
     
-    return FNstr
+    return attemptSolve(FNstr)//not sure this works in all situations... might need to check things more
+    function attemptSolve(val){
+        let hasMath = /[0-9+*/^-]+/gi.test(val);
+        let hasletters = /[a-z]/i.test(val)
+        let pureMath = hasMath && !hasletters
+        let compare = /[<>!=]+/gi.test(val)
+        //let reg = /(\/[^\n\r\s]+\/)([gimuy]+)?/.test(val)//?? No idea what this is for...
+        //console.log('math:',pureMath, 'compare:',compare)
+        let solver = new MathSolver()
+        if(pureMath && !compare ){//&& !reg
+            return solver.solve(val)
+        }else if(compare){//&& !reg
+            return solver.solveAndCompare(val)
+        }else{
+            return val
+        }
+    }
 }
 
 //FUNCTION UTILS

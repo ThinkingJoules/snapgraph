@@ -17,7 +17,7 @@ const ISO_DATE_PATTERN = /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+Z/
 const USER_SUB = /\$\{(![a-z0-9]+(?:#|-)[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+)\}/i
 const LABEL_ID = /\d+l[a-z0-9]+/i
 
-const LINK_LOOKUP = /^\${((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)}$/
+const LINK_LOOKUP = /~{((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)}$/
 const IS_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
 
@@ -1531,7 +1531,6 @@ function MathSolver() {
         return result;
     }
     this.infixToPostfixCompare = function(infix) {
-        infix = this.swapOperators(infix)
         var outputQueue = "";
         var operatorStack = [];
         var operators = {
@@ -1551,41 +1550,52 @@ function MathSolver() {
                 precedence: 2,
                 associativity: "Left"
             },
-            "G": {
+            "-": {
+                precedence: 2,
+                associativity: "Left"
+            },
+            ">": {
                 precedence: 1,
                 associativity: "Left"
             },
-            "L": {
+            "<": {
                 precedence: 1,
                 associativity: "Left"
             },
-            "E": {
+            "=": {
                 precedence: 1,
                 associativity: "Left"
             },
-            "N": {
+            "!=": {
                 precedence: 1,
                 associativity: "Left"
             },
-            "P": {
+            ">=": {
                 precedence: 1,
                 associativity: "Left"
             },
-            "M": {
+            "<=": {
                 precedence: 1,
                 associativity: "Left"
             }
         }
         infix = infix.replace(/\s+/g, "");
-        infix = clean(infix.split(/([\+\-\*\/\^\(\)GLENPM])/))
+        infix = clean(infix.split(/([\+\-\*\/\^\(\)]|>=|<=|!=|=|>|<)/))
         for(var i = 0; i < infix.length; i++) {
             var token = infix[i];
+            let isMath = ["^","*","/","+","-"].includes(token)
+            if(isMath && ![infix[i-1],infix[i+1]].includes(undefined) && (isNaN(infix[i-1]*1) || isNaN(infix[i+1]*1))){//math operator inside of a string, ignore the operator and join these 3 elements together
+                outputQueue = outputQueue.slice(0,-1)
+                outputQueue += token + infix[i+1] + " "
+                i++
+                continue
+            }
             if(isNumeric(token)) {
                 outputQueue += token + " ";
-            } else if("^*/+-GLENPM".indexOf(token) !== -1) {
+            } else if(["^","*","/","+","-",">","<","=",">=","<="].includes(token)) {
                 var o1 = token;
                 var o2 = operatorStack[operatorStack.length - 1];
-                while("^*/+-GLENPM".indexOf(o2) !== -1 && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
+                while(["^","*","/","+","-",">","<","=",">=","<="].includes(token) && operators[o2] && ((operators[o1].associativity === "Left" && operators[o1].precedence <= operators[o2].precedence) || (operators[o1].associativity === "Right" && operators[o1].precedence < operators[o2].precedence))) {
                     outputQueue += operatorStack.pop() + " ";
                     o2 = operatorStack[operatorStack.length - 1];
                 }
@@ -1597,21 +1607,14 @@ function MathSolver() {
                     outputQueue += operatorStack.pop() + " ";
                 }
                 operatorStack.pop();
+            }else if(typeof token === 'string'){
+                outputQueue += token + " ";
             }
         }
         while(operatorStack.length > 0) {
             outputQueue += operatorStack.pop() + " ";
         }
         return outputQueue;
-    }
-    this.swapOperators = function(infix){
-        infix = infix.replace(/<=/g, 'M')
-        infix = infix.replace(/>=/g, 'P')
-        infix = infix.replace(/!=/g, 'N')
-        infix = infix.replace(/>/g, 'G')
-        infix = infix.replace(/</g, 'L')
-        infix = infix.replace(/=/g, 'E')
-        return infix
     }
     this.evaluatePostfix = function (expression) {
         if (typeof expression !== 'string') {
@@ -1627,51 +1630,51 @@ function MathSolver() {
         var stack = [];
         var first;
         var second;
-        var containsInvalidChars = /[^()+\-*/0-9.\sGLENPM]/g.test(expression);
+        var containsInvalidChars = /[^A-Za-z()+\-*/0-9.\s!=<>]/g.test(expression);
         if (containsInvalidChars) {
           return null;
         }
         for (var i = 0; i < tokens.length; i++) {
             var token = tokens[i];
-            if("GLENPM".indexOf(token) !== -1){//should always be only one, at end of stack
+            if([">","<","=",">=","<="].includes(token)){//should always be only one, at end of stack
                 second = stack.pop()
                 first = stack.pop()
-                if(token === 'G'){
+                if(token === '>'){
                     if(first > second){
                         return true
                     }else{
                         return false
                     }
                 }
-                if(token === 'L'){
+                if(token === '<'){
                     if(first < second){
                         return true
                     }else{
                         return false
                     }
                 }
-                if(token === 'E'){
+                if(token === '='){
                     if(first === second){
                         return true
                     }else{
                         return false
                     }
                 }
-                if(token === 'N'){
+                if(token === '!='){
                     if(first !== second){
                         return true
                     }else{
                         return false
                     }
                 }
-                if(token === 'P'){
+                if(token === '>='){
                     if(first >= second){
                         return true
                     }else{
                         return false
                     }
                 }
-                if(token === 'M'){
+                if(token === '<='){
                     if(first <= second){
                         return true
                     }else{
@@ -1706,7 +1709,9 @@ function MathSolver() {
                 stack.push(first - second);
             } else {
                 if (isNumeric(token)) {
-                stack.push(Number(token));
+                    stack.push(Number(token));
+                }else if(typeof token == 'string'){
+                    stack.push(token);
                 }
             }
         }
@@ -1892,7 +1897,7 @@ const IS_GOSSIP = (id) =>{
     }
     return is
 }
-function toBuffer(val,fixedLen){
+function toBuffer(val,fixedLen,encoding){
     if(val === undefined)return
     let temp
     if(val instanceof Buffer){
@@ -1901,7 +1906,7 @@ function toBuffer(val,fixedLen){
         return Buffer.from(val)
     }else if(typeof val === 'string'){ //must be base64
         if((temp = isLink(val)))val = temp //extract base64
-        return Buffer.from(val,IS_BASE64.test(val)?'base64':false)
+        return Buffer.from(val,encoding)
     }else if(typeof val === 'number'){ //to signed or usig int
         let sig = (val<0)
         return intToBuff(val,fixedLen,sig)
@@ -1909,17 +1914,40 @@ function toBuffer(val,fixedLen){
         throw new Error('Could not parse input to binary.')
     }
 }
+const ID_SCHEMA = (c) => {
+    //case: [sym,idx]
+    switch (c) {
+        //handle 32,33 on per peer/subnet connection basis
+        //case 32:return false //this is a single node per CID (for peer state syncing non-ID data) -> Set(Block_Unix_Time)
+        //case 33:return[['u',0]] //event time block -> Set(NodeIDs that have been altered) ArrMap
+        // case 34:return ['t','p'] //list of timeblocks for this index -> Set(Block_Unix_Time)
+        // case 35:return ['t','p','u'] //data index time block -> [[unix,nodeID],...etc] ArrMap
+        // case 64://tag join -> List of nodes that have this tag
+        // case 65://relations idx of src type 'l' (l=t) -> List of relation nodes that have this node type on src
+        // case 66:return ['t','l'];//relations idx of trgt type 'l' (l=t) -> List of relation nodes that have this node type on trgt
+        case 92://node root, -> Set(Array of Pvals)
+        case 93:return ['t','i'];//node meta -> [Number(props),Number(Unix:LAST ACCESSED),Set(UP NodeIDs)]
+        case 94://property value -> [VALUE, Number(Altered unix), OPT_Number(Expire Unix), OPT_Array(Binary SIG), OPT_Array(Binary PUB KEY)]
+        case 95://property UP refs ->Set(UP Addresses)
+        case 96:// Prop List -> Set(Array of Keys in list)
+        case 97:return ['t','i','p'];// Prop List Length -> Number()
+        case 98:return ['t','i','p','k'];//list value -> [VALUE, Number(Altered unix), OPT_Number(Expire Unix), OPT_Array(Binary SIG), OPT_Array(Binary PUB KEY)]
+    
+        default:return false;
+    }
+}
 function snapID(id,opts){
     if(!new.target){ return new snapID(id,opts) }
     
-    const SOUL_SYM_ORDER = 'btpilgu'
+    const SOUL_SYM_ORDER = 'btpilgukc'
     const len = {b:false,t:9,p:10,i:14,l:14,g:14,u:false}
     const self = this
     if(isObj(id,true)){
         let val
         for (const sym of SOUL_SYM_ORDER) {
             if((val = id[sym])){
-                self[sym]=(val===true)?newID(sym):toBuffer(val,len[sym])
+                val = (val===true)?newID(sym):toBuffer(val,len[sym])
+                self[sym]=(sym==='c')?val[0]:val
             }
         }
     }else{
@@ -1938,59 +1966,27 @@ function snapID(id,opts){
         self.b = id.slice(0,32)
         self.c = id.slice(32,33)[0]
         self.rest = (id.length>33)?decode(id.slice(33,id.length)):[]
-        parseRest()//will use c to parse rest
+        if(rest.length)parseRest()//will use c to parse rest
     }
     function parseRest(){
         let c = self.c
-        if([34,35,64,65,66,92,93,94,95,96].includes(c)){//extract t
-            self.t = self.rest[0]
-        }
-        if([34,35,94,95].includes(c)){//extract p
-            self.p = self.rest[1]
-        }
-        if([92,93,94,95].includes(c)){//extract i
-            self.i = (c>93)?self.rest[2]:self.rest[1]
-        }
-        if([64,65,66].includes(c)){//extract tag
-            self.l = self.rest[1]
-        }
-        if([33,35].includes(c)){//extract blockUnix
-            self.u = c==33?self.rest[0]:self.rest[2]
-        }
-        if(c==96){//flatpack property
-            self.i = self.rest[1]
-            //2 is null byte
-            self.p = self.rest[3]
+        let rest = self.rest
+        let parse = ID_SCHEMA(c)
+        for (let i = 0, l=parse.length; i < l; i++) {
+            self[parse[i]] = rest[i]
         }
     }
     function output(argObj,c,b64){
         argObj = argObj || self
         c = c || self.c
         if(c == undefined)throw new Error('Must specify an ID case')
-        let order
-        switch (c) {
-            case 33:order = ['u'];break;
-            case 34:order = ['t','p'];break;
-            case 35:order = ['t','p','u'];break;
-            case 66:order = ['t','l'];break;
-            case 64:
-            case 65:
-            case 66:order = ['t','l'];break;
-            case 92:
-            case 93:order = ['t','i'];break;
-            case 94:order = ['t','p','i'];break;
-            case 95:
-            case 96:order = ['t','i',[0],'p'];break;
-            case 97:order = ['t','p','i',[0],'key'];break;
-            default:
-                break;
-        }
+        let order = ID_SCHEMA(c) || []
         let rest = []
         for (const sym of order) {
             let val = (typeof sym === 'string')?argObj[sym]:sym
-            rest.push([...val])//make sure they are array and not buffer
+            if(val)rest.push(val instanceof Buffer?val:[...val])
         }
-        let id = Buffer.from([...self.b,c,...encode(rest)])
+        let id = Buffer.from([...self.b,c,...(rest.length && encode(rest) || [])])
         return (b64)?id.toString('base64'):id
     }   
     function cPath(){
@@ -2020,43 +2016,49 @@ function snapID(id,opts){
     }
     this.toBin = function(sym){return (sym)?output():Buffer.from(self[sym]||[])}
     this.toB64 = function(sym){return (sym)?output(self,false,true):Buffer.from(self[sym]||[]).toString('base64')}
-    this.toSnapID = function(str){//only for returning the base node !#$ !-$
-        return output({b:self.b,t:self.t,i:self.i},92,str)
+    this.toSnapID = function(meta,str){
+        let c = self.p?[97,96]:[93,92]
+        return output({b:self.b,t:self.t,i:self.i,p:self.p},meta?c[0]:c[1],str)
     }
-    this.toPropList = function(pval,str){
+    this.toPropList = function(pval,len,str){
         let p = toBuffer(pval,10) || self.p
         if(!p)throw new Error('Property required to build id for list')
-        return output({b:self.b,t:self.t,i:self.i,p},94,str)
+        return output({b:self.b,t:self.t,i:self.i,p},len?97:96,str)
     }
-    this.toAddress = function(pval,str){
-        let p = toBuffer(pval,10) || self.p
+    this.toAddress = function(key,upRefs,str){
+        let c = self.p?98:94
+        let p = self.p || toBuffer(key)
+        let k = self.p?toBuffer(key):false
         if(!p)throw new Error('Property required to build address')
-        return output({b:self.b,t:self.t,i:self.i,p},96,str)
+        if(self.p && !k)throw new Error('Property AND Key required to get List Value')
+        return output({b:self.b,t:self.t,i:self.i,p,k},upRefs?95:c,str)
     }
-    this.toFlatPack = function(key,str){
-        let c = (self.p)?97:96
-        key = toBuffer(key,(self.p)?false:10)
-        if(!key)throw new Error('Key required to make flat pack ID')
-        return output({b:self.b,t:self.t,i:self.i,p:(self.p)?self.p:key,key:(self.p)?key:false},c,str)
+    this.toListValue = function(key,str){
+        let p = self.p
+        let k = toBuffer(key)
+        if(!k || !p)throw new Error('Property AND Key required to get List Value')
+        return output({b:self.b,t:self.t,i:self.i,p,k},98,str)
     }
-    this.toLink = function(pval){
-        let p = toBuffer(pval,10) || self.p
-        let b64 = (p)?self.toAddress(p,true):self.toSnapID(true)
-        return '${'+b64+'}'
+    this.toLink = function(pval,propList){
+        let p = toBuffer(pval) || self.p
+        let c = p?94:92
+        if(!p && propList)throw new Error('Must specify a property to make a link to a list node')//this should be an internal only thing
+        let b64 = output({b:self.b,t:self.t,i:self.i,p},propList?96:c,true)
+        return '~{'+b64+'}'
     }
-    this.toUpRefs = function(pval){
-        let p = toBuffer(pval,10) || self.p
-        let c = (p)?95:93
-        return output({b:self.b,t:self.t,i:self.i,p},c)
+    this.toDateIndex = function(blockUnix){
+        let u = blockUnix || self.u || false
+        let c = u?35:34
+        return output({b:self.b,t:self.t,p:self.p,u},c)
     }
     this.toConfigSoul = function(){//TODO
         //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
         return output(Object.assign({},self,{'%':true}))
     }
-    this.toDateIndex = function(blockUnix){
-        let u = blockUnix || self.u || false
-        let c = (u && 35) || 34
-        return output({b:self.b,t:self.t,p:self.p,u},c)
+    if(opts.split){
+        if(self.k && self.p)return [self.toSnapID(),self.k]//this is a list node, k is the pval
+        if(self.p)return [self.toSnapID(),self.p]//this is a regular node, p is the pval
+        throw new Error('Cannot split ID, please provide a pval or a p and k value')
     }
 }
 function isLink(val){
@@ -2071,38 +2073,36 @@ function isLink(val){
 }
 const notFound = String.fromCharCode(21)
 
-
-
 function DataStore(rTxn,rwTxn){
     let store = this
-    //xTxn accepts a nameSpace, returns object with methods get, put, commit, abort
+    //xTxn accepts a nameSpace, returns object with methods get, put, del, commit, abort
+    //ERROR HANDLING?? HOW?
     store.rTxn = rTxn
     store.rwTxn = rwTxn
     this.getProps = function(nodeID,cb,openTxn){
         let txn = openTxn || rTxn('dataStore')
-        txn.get(nodeID,function(props){
+        txn.get(nodeID,function(err,props){
             if(!openTxn)txn.commit()
-            if(cb instanceof Function)cb(props)
+            if(cb instanceof Function)cb(props||[])
         })
     }
     this.get = function (things,cb){
-        let out = {}
         let now = Date.now()
-        things = Object.entries(things)
+        let req = Object.entries(things)
         const txn = rTxn('dataStore')
         const tracker = {
-            count:things.length,
+            count:req.length,
+            toGet:things,
             out: {},
-            add: function(key,vase){
+            add: function(id,p,vase){
                 let exp = vase.e || Infinity
-                if(now<exp){
-                    let [id,p] = snapID(key)//is flatpack
+                if(now<exp && vase){
+                    this.out[id] = this.out[id] || {}
                     this.out[id][p] = vase
                 }else{
                     store.removeExpired(key)
                 }
-               
-                this.count--
+                if(!(this.toGet[id]--))this.count--
                 if(!this.count)this.done()
             },
             done:function(){
@@ -2110,19 +2110,18 @@ function DataStore(rTxn,rwTxn){
                 if(cb instanceof Function)cb(this.out)
             }
         }
-        for (const [id,pvals] of things) {
-            out[id] = {}
+        for (const [id,pvals] of req) {
             if(!pvals || (Array.isArray(pvals) && !pvals.length)) self.getProps(id,find(id),txn)
             else find(id)(pvals)
-            
         }
         function find(nodeID){
             let ido = snapID(nodeID)
             return function(pvalArr){
+                tracker.toGet[nodeID] = pvalArr.length
                 for (const prop of pvalArr) {
-                    txn.get(ido.toFlatPack(prop),function(vase){
-                        vase = vase || {v:notFound}//what to put for not found??
-                        tracker.add(key,vase)
+                    txn.get(ido.toFlatPack(prop),function(err,vase){
+                        vase = vase || {v:notFound}//what to put for not found?? //put something different for err?
+                        tracker.add(nodeID,key,vase)
                     })
                 }
             }
@@ -2130,7 +2129,7 @@ function DataStore(rTxn,rwTxn){
     }
     this.getProp = function(nodeID,pval,cb){
         let txn = rTxn('dataStore')
-        let key = snapID(nodeID).toFlatPack(pval)
+        let key = snapID(nodeID).toAddress(pval)
         txn.get(key,function(vase){
             vase = vase || {v:notFound}//what to put for not found??
             txn.commit()
@@ -2138,16 +2137,15 @@ function DataStore(rTxn,rwTxn){
         })
     }
     this.put = function(nodeID,putO,cb){ //assumes read already, so 'created' is handled outside of dbcall
-        //puts = {soul:{[msgIDs]:[],putO:{gunPutObj(partial)}}
         let txn = rwTxn('dataStore')
-        txn.get(nodeID,function(pvals){
-            pvals = Array.isArray(pvals) ? pvals : [] 
+        txn.get(nodeID,function(err,keys){
+            keys = Array.isArray(keys) ? keys : [] 
             let ido = snapID(nodeID)
-            for (const p in putO) {
-                let vase = putO[p]
-                let addrKey = ido.toFlatPack(p)
+            for (const key in putO) {
+                let vase = putO[key]
+                let addrKey = ido.toAddress(key)
                 if(vase !== null && !(vase.e && now>vase.e)){
-                    if(!pvals.includes(p))pvals.push(p)
+                    if(!keys.includes(key))keys.push(key)
                     // we assumed to read the value outside the txn to know it changed and merge result
                     // if we do cascade, we might want to do that within this txn...                  
                     txn.put(addrKey,vase)
@@ -2155,8 +2153,8 @@ function DataStore(rTxn,rwTxn){
                     store.removeExpired(addrKey)
                 }
             }
-            pvals.sort()//make lexical??
-            txn.put(nodeID,pvals)
+            keys.sort()//make lexical??
+            txn.put(nodeID,keys)
             txn.commit()
             if(cb instanceof Function)cb(true)
 
@@ -2171,7 +2169,7 @@ function DataStore(rTxn,rwTxn){
             }
         })
         function remove(){
-            let [id,p] = snapID(addrKey)
+            let [id,p] = snapID(addrKey,{split:true})
             txn.get(id,function(pvals){
                 txn.del(addrKey)
                 removeFromArr(pvals,pvals.indexOf(p))
@@ -2303,14 +2301,13 @@ function signChallenge(root,peer){
 
 function intToBuff(num,fixedLen,signed){
     let n = (num<0)?num*-1:num
-    let byteLength = n==0?1:(signed && Math.ceil(Math.log(2*n)/Math.log(256))) || Math.ceil(Math.sqrt(Math.pow(n,.125)))
+    let byteLength = Math.ceil(Math.log((signed?2:1*n)+1)/Math.log(256)) || 1
+    if(byteLength > 6){throw new Error('Integer must be 48bit or less')}
     let buff = Buffer.allocUnsafe(fixedLen || byteLength)
     let op = (signed)?'writeIntBE':'writeUIntBE'
     if(fixedLen && fixedLen<byteLength)console.warn('value exceeds buffersize. Buffer represents end bytes.')
     buff[op](num,fixedLen?fixedLen-byteLength:0,byteLength)
-    
     return buff
-
 }
 
 function buffToInt(buff,signed){
@@ -2318,7 +2315,25 @@ function buffToInt(buff,signed){
     if(typeof buff === 'string')buff=Buffer.from(buff,'base64')
     return buff[op](0,buff.length);
 }
-
+function incBuffer (buffer,amt) {
+    amt = intToBuff(amt || 1)
+    let amtEnd = amt.length - 1
+    for (var i = amtEnd; i >= 0; i--) {
+        let j =  buffer.length - 1 - amtEnd+i
+        buffer = addBits(buffer,j,amt[i])
+    }
+    return buffer
+    function addBits(b,j,m){
+        if(j<0){return Buffer.from([m,...b])}
+        let ovf = (b[j]+m)>255
+        b[j]+= m
+        if(ovf){
+            return addBits(b,j-1,1)//increment next thing by 1
+        }else{
+            return b
+        }
+    }
+}
 
 function buildPermObj(type, curPubKey, usersObj,checkOnly){
     curPubKey = curPubKey || false
@@ -2350,17 +2365,16 @@ function buildPermObj(type, curPubKey, usersObj,checkOnly){
     return out
 }
 
-const allChars = Array.from({length:65535},(v,i)=>String.fromCharCode(i)).join('')
 function rand(len, charSet,all){
     var s = '';
     len = len || 24;
-    charSet = charSet || (all && allChars) || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
+    charSet = charSet || '0123456789ABCDEFGHIJKLMNOPQRSTUVWXZabcdefghijklmnopqrstuvwxyz'
     while(len > 0){ s += charSet.charAt(Math.floor(Math.random() * charSet.length)); len-- }
     return s;
 }
 function randInt(min, max) { // min and max included 
     return Math.floor(Math.random() * (max - min + 1) + min);
-  }
+}
 function hash64(string){
     let h1 = hash(string)
     return h1 + hash(h1 + string)

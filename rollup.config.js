@@ -19,8 +19,6 @@ export default [
 			sourceMap: 'inline',
 			globals : {
 				ws: 'WebSockets',
-				'text-encoding': 'TextEncoder',
-				'text-encoding': 'TextDecoder',
 				crypto: 'crypto',
 				atob:'atob',
 				btoa:'btoa'

@@ -58,7 +58,7 @@ function LMDB(envConfig,dbiConfig){
         }
     }
     this.rwTxn = function(nameSpace,onerror){
-        let txn = self.env.beginTxn({readOnly:true})
+        let txn = self.env.beginTxn()
         return {
             onerror,
             get,
@@ -68,33 +68,30 @@ function LMDB(envConfig,dbiConfig){
             abort: function(){txn.abort()}
         }
     }
-    const get = function(txn,key,cb){
+    function get(txn,key,cb){
         let data
         try {
             data = decode(txn.getBinary(self.dbi,encode(key),{keyIsBuffer:true}))
+            if(cb instanceof Function)cb(false,data)
         } catch (error) {
-            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
-            return
+            if(cb instanceof Function)cb(error)
         }
-        if(cb instanceof Function)cb(data)
     }
     function put(txn,key,value,cb){
         try {
             txn.putBinary(self.dbi,encode(key),encode(value),{keyIsBuffer:true})
+            if(cb instanceof Function)cb(false,true)
         } catch (error) {
-            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
-            return
+            if(cb instanceof Function)cb(error)
         }
-        if(cb instanceof Function)cb(true)
     }
     function del(txn,key,cb){
         try {
             txn.del(self.dbi,encode(key),{keyIsBuffer:true})
+            if(cb instanceof Function)cb(false,true)
         } catch (error) {
-            if(this.onerror && this.onerror instanceof Function)this.onerror(error)
-            return
+            if(cb instanceof Function)cb(error)
         }
-        if(cb instanceof Function)cb(true)
     }
 }
 

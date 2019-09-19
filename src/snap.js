@@ -21,6 +21,7 @@ import {
     ALL_ADDRESSES,
     StringCMD,
     rand,
+    randInt,
     mergeObj,
     snapID,
     intToBuff,
@@ -75,8 +76,8 @@ let typeGet, nodeGet, addressGet, getConfig,addLabel, importRelationships,perfor
 //const showgunsub = makeshowgunsub(gunSubs)
 
 
-// import {makesolve} from './functions/function_utils'
-// let solve
+import {makesolve,evaluateAllFN} from './functions/function_utils'
+let solve
 
 
 // import {timeIndex,
@@ -122,7 +123,7 @@ export default function Snap(initialPeers,opts){
     let root = this._
     root.snapID = snapID
     root.isPeer = isNode
-    root.util = {getValue,setValue,rand,encode,decode,Buffer:Buffer,intToBuff,buffToInt,initNewGraph}
+    root.util = {getValue,setValue,rand,randInt,encode,decode,Buffer:Buffer,intToBuff,buffToInt,initNewGraph,evaluateAllFN}
     if(isNode)mergeObj(defaultOpts,{maxConnections:300})//currently not implemented
     root.opt = defaultOpts
     mergeObj(root.opt,opts) //apply user's ops

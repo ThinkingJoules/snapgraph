@@ -1,6 +1,9 @@
 import {onDisConn,onMsg,Peer} from './wire'
 import { snapID, isLink, isSub, notFound } from './util';
 export default function coreApi(root){
+    root.initGraph = function(cid){
+        
+    }
     root.getCell = function(nodeID,p,cb,raw,exact){
         //need to store all the params in the 
         // buffer should be //Map{nodeID: Map{p:[]}}
