@@ -1,4 +1,4 @@
-import { decode, encode } from "@msgpack/msgpack";
+import { decode as dec, encode as enc } from "@msgpack/msgpack";
 
 //REGEX STUFF
 const regOr = (regArr) =>{
@@ -304,7 +304,7 @@ const gbForUI = (gb) =>{
     let output = {}
     for (const bid in gb) {
         output[bid] = {}
-        const tableobj = Gun.obj.copy(gb[bid].props);
+        //const tableobj = Gun.obj.copy(gb[bid].props);
         for (const tval in tableobj) {
             let tvis = tableobj[tval].vis
             if(tvis){
@@ -325,9 +325,9 @@ const gbForUI = (gb) =>{
     return output
 }
 const gbByAlias = (gb) =>{
-    let output = Gun.obj.copy(gb)
+    //let output = Gun.obj.copy(gb)
     for (const bid in gb) {
-        const tableobj = Gun.obj.copy(gb[bid].props);
+        //const tableobj = Gun.obj.copy(gb[bid].props);
         for (const tval in tableobj) {
             let tconfig = tableobj[tval]
             //byAlias
@@ -348,7 +348,7 @@ const gbByAlias = (gb) =>{
                 }
             }
 
-            const columnobj = Gun.obj.copy(tableobj[tval].props);
+            //const columnobj = Gun.obj.copy(tableobj[tval].props);
         
             for (const pval in columnobj) {
                 const palias = columnobj[pval].alias;
@@ -1352,24 +1352,7 @@ function tsvJSONgb(tsv){//Need to make better so it can be a csv, tsv, \r || \r\
     //return JSON.stringify(result); //JSON
 }
 
-function isObj(val,isLiteral) {
-    if (typeof val !== "object" || val === null)
-    return false;
-    if(!isLiteral)return (typeof val === "object" && !Array.isArray(val) && val !== null);
 
-    var hasOwnProp = Object.prototype.hasOwnProperty,
-    ObjProto = val;
-
-    // get obj's Object constructor's prototype
-    while (Object.getPrototypeOf(ObjProto = Object.getPrototypeOf(ObjProto)) !== null);
-
-    if (!Object.getPrototypeOf.isNative) // workaround if non-native Object.getPrototypeOf
-        for (var prop in val)
-            if (!hasOwnProp.call(val, prop) && !hasOwnProp.call(ObjProto, prop)) // inherited elsewhere
-                return false;
-
-    return Object.getPrototypeOf(val) === ObjProto;
-}
 
 
 //CONFIG STUFF
@@ -1742,6 +1725,7 @@ function MathSolver() {
 }
 
 //SNAP STUFF
+
 const on = function(tag,cb,opts){
     const onObj = this
     opts = opts || {}
@@ -1770,163 +1754,21 @@ const on = function(tag,cb,opts){
         }
     }
 }
-
-const ALIAS_LIST = /^~@.+/
-const LOGIN_AUTH_INFO = /^~\*[^@>]+$/
-const PUBKEY_OWNED_PEERS = /^~\*[^@>]+>$/
-const NAMESPACE_LOCATION = /^~!.+/
-
-const TYPE_INDEX = /^![a-z0-9]+#}$/i
-const BASE_CONFIG =/^![a-z0-9]+%$/i
-const NODE_STATE = /^![a-z0-9]+#[a-z0-9]+\$}$/i
-const RELATION_STATE = /^![a-z0-9]+-[a-z0-9]+\$}$/i
-const BASE = /^![a-z0-9]+$/i
-const NODE_TYPE = /^![a-z0-9]+#[a-z0-9]+$/i
-const RELATION_TYPE = /^![a-z0-9]+-[a-z0-9]+$/i
-const GROUP_TYPE = /^![a-z0-9]+\^[a-z0-9]+$/i
-const LABEL_INDEX = /^![a-z0-9]+&}$/i
-const LABEL_TYPE = /^![a-z0-9]+&[a-z0-9]+$/i
-const TYPE_CONFIG = /^![a-z0-9]+#[a-z0-9]+%$/i
-const TYPE_LABEL_INDEX = /^![a-z0-9]+#[a-z0-9]+&}$/i
-const RELATION_INDEX = /^![a-z0-9]+-[a-z0-9]+>[a-z0-9]+<[a-z0-9]+}$/i
-
-const RELATION_CONFIG =/^![a-z0-9]+-[a-z0-9]+%$/i
-const PROP_CONFIG = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+%$/i
-const TYPE_PROP_INDEX = /^![a-z0-9]+#[a-z0-9]+.}$/i
-const RELATION_PROP_INDEX = /^![a-z0-9]+-[a-z0-9]+.}$/i
-const PROP_TYPE = /^![a-z0-9]+(?:#|-)[a-z0-9]+.[a-z0-9]+$/i
-
-const DATA_INSTANCE_NODE = /^![a-z0-9]+#[a-z0-9]+\$[a-z0-9_]+/i
-const RELATION_INSTANCE_NODE = /^![a-z0-9]+-[a-z0-9]+\$[a-z0-9_]+/i
-const DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
-const RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+[^|:;/?]+$/i
-const TIME_DATA_ADDRESS = /^![a-z0-9]+#[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
-const TIME_RELATION_ADDRESS = /^![a-z0-9]+-[a-z0-9]+\.[a-z0-9]+\$[a-z0-9_]+:/i
-
-const BASE_PERM = /^![a-zA-Z0-9]+\|(?:[crud])?$/
-const NT_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\|(?:[crud])?$/
-const PROP_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+.[a-zA-Z0-9]+\|(?:[crud])?$/
-const NODE_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\$[a-zA-Z0-9_]+\|(?:[crud])?$/
-const LABEL_INDEX_PERM = /^![a-zA-Z0-9]+&}\|(?:[crud])?$/
-const TYPE_INDEX_PERM = /^![a-zA-Z0-9]+#}\|(?:[crud])?$/
-const TYPE_PROP_INDEX_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+.}\|(?:[crud])?$/
-const NODE_STATE_PERM = /^![a-zA-Z0-9]+#[a-zA-Z0-9]+\$}\|(?:[crud])?$/i
-
-
-const TIME_INDEX_PROP = regOr([TIME_DATA_ADDRESS,TIME_RELATION_ADDRESS])
-const IS_STATE_INDEX = regOr([NODE_STATE,RELATION_STATE])
-const INSTANCE_OR_ADDRESS = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE,DATA_ADDRESS,RELATION_ADDRESS])
-const NON_INSTANCE_PATH = regOr([BASE,NODE_TYPE,RELATION_TYPE,PROP_TYPE])
-const ALL_ADDRESSES = regOr([DATA_ADDRESS,RELATION_ADDRESS])
-const ALL_TYPE_PATHS = regOr([NODE_TYPE,RELATION_TYPE,LABEL_TYPE])
-const ALL_INSTANCE_NODES = regOr([DATA_INSTANCE_NODE,RELATION_INSTANCE_NODE])
-const IS_CONFIG_SOUL = regOr([BASE_CONFIG,TYPE_INDEX,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG,TYPE_PROP_INDEX,RELATION_PROP_INDEX,LABEL_INDEX])
-const CONFIG_SOUL = regOr([BASE_CONFIG,LABEL_TYPE,TYPE_CONFIG,RELATION_CONFIG,PROP_CONFIG])
-const IS_CONFIG = (id) =>{
-    const ALL = {
-        typeIndex: TYPE_INDEX,
-        baseConfig: BASE_CONFIG,
-        propIndex: regOr([TYPE_PROP_INDEX,RELATION_PROP_INDEX]),
-        thingConfig: regOr([TYPE_CONFIG,RELATION_CONFIG]),
-        propConfig: PROP_CONFIG,
-        label: LABEL_TYPE,
-        labelIndex: LABEL_INDEX
-    }
-    let is = false
-    for (const idType in ALL) {
-        const r = ALL[idType];
-        if(is = r.test(id))return idType
-    }
-    return is
-}
-const IS_PERM = (id) =>{
-    const ALL = {
-        base: BASE_PERM,
-        type: NT_PERM,
-        prop: PROP_PERM,
-        node: NODE_PERM,
-        labelIndex: LABEL_INDEX_PERM,
-        typeIndex: TYPE_INDEX_PERM,
-        typePropIndex: TYPE_PROP_INDEX_PERM,
-        nodeStateIndex: NODE_STATE_PERM
-        //created/time index/blocks?
-    }
-    let is = false
-    for (const idType in ALL) {
-        const r = ALL[idType];
-        if(is = r.test(id))return idType
-    }
-    return is
-}
-const IS_NODE = (id) =>{
-    const ALL = {
-        node: regOr([DATA_INSTANCE_NODE,DATA_ADDRESS]),
-        relation: regOr([RELATION_INSTANCE_NODE,RELATION_ADDRESS]),
-    }
-    let is = false
-    for (const idType in ALL) {
-        const r = ALL[idType];
-        if(is = r.test(id))return idType
-    }
-    return is
-}
-const IS_INDEX = (id) =>{
-    //need this so we check premissions on the keys within the node and not the node id itself
-    const ALL = {
-        state: regOr([NODE_STATE,RELATION_STATE]),
-        label: regOr([TYPE_LABEL_INDEX,RELATION_INDEX]),
-    }
-    let is = false
-    for (const idType in ALL) {
-        const r = ALL[idType];
-        if(is = r.test(id))return idType
-    }
-    return is
-}
-const IS_GOSSIP = (id) =>{
-    const ALL = {
-        alias: ALIAS_LIST,
-        auth: LOGIN_AUTH_INFO,
-        owns: PUBKEY_OWNED_PEERS,
-        resource: NAMESPACE_LOCATION,
-    }
-    let is = false
-    for (const idType in ALL) {
-        const r = ALL[idType];
-        if(is = r.test(id))return idType
-    }
-    return is
-}
-function toBuffer(val,fixedLen,encoding){
-    if(val === undefined)return
-    let temp
-    if(val instanceof Buffer){
-        return val
-    }else if(Array.isArray(val)){
-        return Buffer.from(val)
-    }else if(typeof val === 'string'){ //must be base64
-        if((temp = isLink(val)))val = temp //extract base64
-        return Buffer.from(val,encoding)
-    }else if(typeof val === 'number'){ //to signed or usig int
-        let sig = (val<0)
-        return intToBuff(val,fixedLen,sig)
-    }else{
-        throw new Error('Could not parse input to binary.')
-    }
-}
 const ID_SCHEMA = (c) => {
     //case: [sym,idx]
     switch (c) {
-        //handle 32,33 on per peer/subnet connection basis
-        //case 32:return false //this is a single node per CID (for peer state syncing non-ID data) -> Set(Block_Unix_Time)
-        //case 33:return[['u',0]] //event time block -> Set(NodeIDs that have been altered) ArrMap
-        // case 34:return ['t','p'] //list of timeblocks for this index -> Set(Block_Unix_Time)
-        // case 35:return ['t','p','u'] //data index time block -> [[unix,nodeID],...etc] ArrMap
-        // case 64://tag join -> List of nodes that have this tag
-        // case 65://relations idx of src type 'l' (l=t) -> List of relation nodes that have this node type on src
-        // case 66:return ['t','l'];//relations idx of trgt type 'l' (l=t) -> List of relation nodes that have this node type on trgt
+        case 0:return ['pid']
+        case 2:return ['ts']
+        case 4:return ['wants']
+
+        case 24:return ['header']
+        case 28: //wkn hash
+        case 80:return ['hash'] //unique val hash
+        
+        case 64:return['b']
+        
         case 92://node root, -> Set(Array of Pvals)
-        case 93:return ['t','i'];//node meta -> [Number(props),Number(Unix:LAST ACCESSED),Set(UP NodeIDs)]
+        case 93:return ['t','i'];//node nodeUP -> Set(UP NodeIDs)
         case 94://property value -> [VALUE, Number(Altered unix), OPT_Number(Expire Unix), OPT_Array(Binary SIG), OPT_Array(Binary PUB KEY)]
         case 95://property UP refs ->Set(UP Addresses)
         case 96:// Prop List -> Set(Array of Keys in list)
@@ -1936,141 +1778,7 @@ const ID_SCHEMA = (c) => {
         default:return false;
     }
 }
-function snapID(id,opts){
-    if(!new.target){ return new snapID(id,opts) }
-    
-    const SOUL_SYM_ORDER = 'btpilgukc'
-    const len = {b:false,t:9,p:10,i:14,l:14,g:14,u:false}
-    const self = this
-    if(isObj(id,true)){
-        let val
-        for (const sym of SOUL_SYM_ORDER) {
-            if((val = id[sym])){
-                val = (val===true)?newID(sym):toBuffer(val,len[sym])
-                self[sym]=(sym==='c')?val[0]:val
-            }
-        }
-    }else{
-        self.binary = toBuffer(id)
-        parseID()
-    }
-    
-    function newID(sym){
-        const r = ()=>randInt(0,255)
-        if(sym === 't')return Array.from({length:9},r)
-        if(sym === 'p')return Array.from({length:10},r)
-        if(sym === 'i')return Array.from({length:14},r)
-    }
-    function parseID(){
-        let id = self.binary
-        self.b = id.slice(0,32)
-        self.c = id.slice(32,33)[0]
-        self.rest = (id.length>33)?decode(id.slice(33,id.length)):[]
-        if(rest.length)parseRest()//will use c to parse rest
-    }
-    function parseRest(){
-        let c = self.c
-        let rest = self.rest
-        let parse = ID_SCHEMA(c)
-        for (let i = 0, l=parse.length; i < l; i++) {
-            self[parse[i]] = rest[i]
-        }
-    }
-    function output(argObj,c,b64){
-        argObj = argObj || self
-        c = c || self.c
-        if(c == undefined)throw new Error('Must specify an ID case')
-        let order = ID_SCHEMA(c) || []
-        let rest = []
-        for (const sym of order) {
-            let val = (typeof sym === 'string')?argObj[sym]:sym
-            if(val)rest.push(val instanceof Buffer?val:[...val])
-        }
-        let id = Buffer.from([...self.b,c,...(rest.length && encode(rest) || [])])
-        return (b64)?id.toString('base64'):id
-    }   
-    function cPath(){
-        //valid paths: !, !#, !-, !^, !&, !#., !-.
-        let {b,t,r,p,g,l} = self
-        let configpath = [b]
-        if(t){//nodeType
-            configpath = [...configpath, 'props']
-            if(typeof t === 'string')configpath.push(t)
-        }else if(r){
-            configpath = [...configpath, 'relations']
-            if(typeof r === 'string')configpath.push(r)
-        }
-        if(p){
-            configpath = [...configpath, 'props']
-            if(typeof p === 'string')configpath.push(p)
-        }else if(g){
-            configpath = [...configpath, 'groups']
-            if(typeof g === 'string')configpath.push(g)
-        }else if(l){
-            configpath = [...configpath, 'labels']
-            if(typeof l === 'string')configpath.push(l)
-        }
-    
-        self.cPath = configpath
-    
-    }
-    this.toBin = function(sym){return (sym)?output():Buffer.from(self[sym]||[])}
-    this.toB64 = function(sym){return (sym)?output(self,false,true):Buffer.from(self[sym]||[]).toString('base64')}
-    this.toSnapID = function(meta,str){
-        let c = self.p?[97,96]:[93,92]
-        return output({b:self.b,t:self.t,i:self.i,p:self.p},meta?c[0]:c[1],str)
-    }
-    this.toPropList = function(pval,len,str){
-        let p = toBuffer(pval,10) || self.p
-        if(!p)throw new Error('Property required to build id for list')
-        return output({b:self.b,t:self.t,i:self.i,p},len?97:96,str)
-    }
-    this.toAddress = function(key,upRefs,str){
-        let c = self.p?98:94
-        let p = self.p || toBuffer(key)
-        let k = self.p?toBuffer(key):false
-        if(!p)throw new Error('Property required to build address')
-        if(self.p && !k)throw new Error('Property AND Key required to get List Value')
-        return output({b:self.b,t:self.t,i:self.i,p,k},upRefs?95:c,str)
-    }
-    this.toListValue = function(key,str){
-        let p = self.p
-        let k = toBuffer(key)
-        if(!k || !p)throw new Error('Property AND Key required to get List Value')
-        return output({b:self.b,t:self.t,i:self.i,p,k},98,str)
-    }
-    this.toLink = function(pval,propList){
-        let p = toBuffer(pval) || self.p
-        let c = p?94:92
-        if(!p && propList)throw new Error('Must specify a property to make a link to a list node')//this should be an internal only thing
-        let b64 = output({b:self.b,t:self.t,i:self.i,p},propList?96:c,true)
-        return '~{'+b64+'}'
-    }
-    this.toDateIndex = function(blockUnix){
-        let u = blockUnix || self.u || false
-        let c = u?35:34
-        return output({b:self.b,t:self.t,p:self.p,u},c)
-    }
-    this.toConfigSoul = function(){//TODO
-        //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
-        return output(Object.assign({},self,{'%':true}))
-    }
-    if(opts.split){
-        if(self.k && self.p)return [self.toSnapID(),self.k]//this is a list node, k is the pval
-        if(self.p)return [self.toSnapID(),self.p]//this is a regular node, p is the pval
-        throw new Error('Cannot split ID, please provide a pval or a p and k value')
-    }
-}
-function isLink(val){
-    if(typeof val === 'string'){
-        let temp
-        if((temp = LINK_LOOKUP.exec(val))){
-            return temp[1]
-        }
-        return false
-    }
-    return false
-}
+
 const notFound = String.fromCharCode(21)
 
 function DataStore(rTxn,rwTxn){
@@ -2179,126 +1887,189 @@ function DataStore(rTxn,rwTxn){
     }
 }
 
-function GossipStore(rTxn,rwTxn){
-    let store = this
-    //xTxn accepts a nameSpace, returns object with methods get, put, commit, abort
-    store.rTxn = rTxn
-    store.rwTxn = rwTxn
-    this.getProps = function(nodeID,cb,openTxn){
-        let txn = openTxn || rTxn('dataStore')
-        txn.get(nodeID,function(props){
-            if(!openTxn)txn.commit()
-            if(cb instanceof Function)cb(props)
-        })
-    }
-    this.get = function (things,cb){
-        let out = {}
-        let now = Date.now()
-        things = Object.entries(things)
-        const txn = rTxn('dataStore')
-        const tracker = {
-            count:things.length,
-            out: {},
-            add: function(key,vase){
-                let exp = vase.e || Infinity
-                if(now<exp){
-                    let [id,p] = snapID(key)//is flatpack
-                    this.out[id][p] = vase
-                }else{
-                    store.removeExpired(key)
-                }
-               
-                this.count--
-                if(!this.count)this.done()
-            },
-            done:function(){
-                txn.commit()
-                if(cb instanceof Function)cb(this.out)
-            }
-        }
-        for (const [id,pvals] of things) {
-            out[id] = {}
-            if(!pvals || (Array.isArray(pvals) && !pvals.length)) self.getProps(id,find(id),txn)
-            else find(id)(pvals)
-            
-        }
-        function find(nodeID){
-            let ido = snapID(nodeID)
-            return function(pvalArr){
-                for (const prop of pvalArr) {
-                    txn.get(ido.toFlatPack(prop),function(vase){
-                        vase = vase || {v:notFound}//what to put for not found??
-                        tracker.add(key,vase)
-                    })
-                }
-            }
-        }
-    }
-    this.getProp = function(nodeID,pval,cb){
-        let txn = rTxn('dataStore')
-        let key = snapID(nodeID).toFlatPack(pval)
-        txn.get(key,function(vase){
-            vase = vase || {v:notFound}//what to put for not found??
-            txn.commit()
-            if(cb instanceof Function)cb(vase)
-        })
-    }
-    this.put = function(nodeID,putO,cb){ //assumes read already, so 'created' is handled outside of dbcall
-        //puts = {soul:{[msgIDs]:[],putO:{gunPutObj(partial)}}
-        let txn = rwTxn('dataStore')
-        txn.get(nodeID,function(pvals){
-            pvals = Array.isArray(pvals) ? pvals : [] 
-            let ido = snapID(nodeID)
-            for (const p in putO) {
-                let vase = putO[p]
-                let addrKey = ido.toFlatPack(p)
-                if(vase !== null && !(vase.e && now>vase.e)){
-                    if(!pvals.includes(p))pvals.push(p)
-                    // we assumed to read the value outside the txn to know it changed and merge result
-                    // if we do cascade, we might want to do that within this txn...                  
-                    txn.put(addrKey,vase)
-                }else{
-                    store.removeExpired(addrKey)
-                }
-            }
-            pvals.sort()//make lexical??
-            txn.put(nodeID,pvals)
-            txn.commit()
-            if(cb instanceof Function)cb(true)
-
-        })
-    }
-    this.removeExpired = function(addrKey){
-        //seperate txn, so gets can be readonly
-        let txn = rwTxn('dataStore')
-        txn.get(addrKey,function(exists){
-            if(exists !== null){
-               remove() 
-            }
-        })
-        function remove(){
-            let [id,p] = snapID(addrKey)
-            txn.get(id,function(pvals){
-                txn.del(addrKey)
-                removeFromArr(pvals,pvals.indexOf(p))
-                txn.put(id,pvals)
-            })
-        }
-    }
-}
-
-
 function signChallenge(root,peer){
     let challenge = peer.theirChallenge
     root.sign(challenge,function(sig){
         peer.theirChallenge = false
         if(peer.pub)root.on.pairwise(peer)
-        let m = msgs.recv.challenge(challenge,sig)
+        let m = root.router.msgs.recv.challenge(challenge,sig)
         console.log(m)
         peer.send(m)
     })
 }
 
+
+
+function isObj(val,isLiteral) {
+    if (typeof val !== "object" || val === null)
+    return false;
+    if(!isLiteral)return (typeof val === "object" && !Array.isArray(val) && val !== null);
+
+    var hasOwnProp = Object.prototype.hasOwnProperty,
+    ObjProto = val;
+
+    // get obj's Object constructor's prototype
+    while (Object.getPrototypeOf(ObjProto = Object.getPrototypeOf(ObjProto)) !== null);
+
+    if (!Object.getPrototypeOf.isNative) // workaround if non-native Object.getPrototypeOf
+        for (var prop in val)
+            if (!hasOwnProp.call(val, prop) && !hasOwnProp.call(ObjProto, prop)) // inherited elsewhere
+                return false;
+
+    return Object.getPrototypeOf(val) === ObjProto;
+}
+function encode(val,toStr,sortKeys){
+    val = (val instanceof Set || val instanceof Map)?[...val]:val
+    let e = enc(val,{sortKeys})
+    return toStr?Buffer.from(e.buffer,e.byteOffset,e.byteLength).toString('base64'):Buffer.from(e.buffer,e.byteOffset,e.byteLength)
+}
+function decode(binArrOrB64){
+    binArrOrB64 = (typeof binArrOrB64 === 'string')?Buffer.from(binArrOrB64,'base64'):binArrOrB64
+    let val = dec(binArrOrB64)
+    return (val instanceof Uint8Array)?Buffer.from(val.buffer,val.byteOffset,val.byteLength):val
+}
+function snapID(id,opts){
+    if(!new.target){ return new snapID(id,opts) }
+    opts = opts || {}
+    const SOUL_SYM_ORDER = ['b','t','i','p','l','g','u','k','c','header','hash']
+    const self = this
+    if(isObj(id,true)){
+        let val
+        for (const sym of SOUL_SYM_ORDER) {
+            if((val = id[sym])){
+                val = (val===true)?newID(sym):toBuffer(val,false,'base64')
+                self[sym]=(sym==='c')?val[0]:val
+            }
+        }
+    }else{
+        self.binary = toBuffer(id)
+        parseID()
+    }
+    
+    function newID(sym){
+        const r = ()=>randInt(0,255)
+        if(sym === 't')return Buffer.from(Array.from({length:9},r))
+        if(sym === 'p')return Buffer.from(Array.from({length:10},r))
+        if(sym === 'i')return Buffer.from(Array.from({length:14},r))
+    }
+    function parseID(){
+        let id = self.binary
+        self.c = id[0]
+        self.rest = decode(id.slice(1,id.length))
+        if(rest.length)parseRest()//will use c to parse rest
+    }
+    function parseRest(){
+        let c = self.c
+        let rest = self.rest
+        let parse = ID_SCHEMA(c)
+        for (let i = 0, l=parse.length; i < l; i++) {
+            self[parse[i]] = rest[i]
+        }
+    }
+    function output(argObj,c,b64){
+        argObj = argObj || self
+        c = c || self.c
+        if(c == undefined)throw new Error('Must specify an ID case')
+        let order = ID_SCHEMA(c) || []
+        let rest = []
+        for (const sym of order) {
+            let val = (typeof sym === 'string')?argObj[sym]:sym
+            if(val)rest.push(val instanceof Buffer?val:[...val])
+        }
+        let id = Buffer.from([c,...(rest.length && encode(rest) || [])])
+        return (b64)?id.toString('base64'):id
+    }   
+    function cPath(){
+        //valid paths: !, !#, !-, !^, !&, !#., !-.
+        let {b,t,r,p,g,l} = self
+        let configpath = [b]
+        if(t){//nodeType
+            configpath = [...configpath, 'props']
+            if(typeof t === 'string')configpath.push(t)
+        }else if(r){
+            configpath = [...configpath, 'relations']
+            if(typeof r === 'string')configpath.push(r)
+        }
+        if(p){
+            configpath = [...configpath, 'props']
+            if(typeof p === 'string')configpath.push(p)
+        }else if(g){
+            configpath = [...configpath, 'groups']
+            if(typeof g === 'string')configpath.push(g)
+        }else if(l){
+            configpath = [...configpath, 'labels']
+            if(typeof l === 'string')configpath.push(l)
+        }
+    
+        self.cPath = configpath
+    
+    }
+    this.toBin = function(sym){return (sym)?output():Buffer.from(self[sym]||[])}
+    this.toB64 = function(sym){return (sym)?output(self,false,true):Buffer.from(self[sym]||[]).toString('base64')}
+    this.toSnapID = function(nodeUPorListLen,str){
+        let c = self.p?[97,96]:[93,92]
+        return output({b:self.b,t:self.t,i:self.i,p:self.p},nodeUPorListLen?c[0]:c[1],str)
+    }
+    this.toPropList = function(pval,listLen,str){
+        let p = toBuffer(pval,10) || self.p
+        if(!p)throw new Error('Property required to build id for list')
+        return output({b:self.b,t:self.t,i:self.i,p},listLen?97:96,str)
+    }
+    this.toAddress = function(key,upRefs,str){
+        let c = self.p?98:94
+        let p = self.p || toBuffer(key)
+        let k = self.p?toBuffer(key):false
+        if(!p)throw new Error('Property required to build address')
+        if(self.p && !k)throw new Error('Property AND Key required to get List Value')
+        return output({b:self.b,t:self.t,i:self.i,p,k},upRefs?95:c,str)
+    }
+    this.toListValue = function(key,str){
+        let p = self.p
+        let k = toBuffer(key)
+        if(!k || !p)throw new Error('Property AND Key required to get List Value')
+        return output({b:self.b,t:self.t,i:self.i,p,k},98,str)
+    }
+    this.toLink = function(pval,propList){
+        let p = toBuffer(pval) || self.p
+        let c = p?94:92
+        if(!p && propList)throw new Error('Must specify a property to make a link to a list node')//this should be an internal only thing
+        let b64 = output({b:self.b,t:self.t,i:self.i,p},propList?96:c,true)
+        return '~{'+b64+'}'
+    }
+    this.toConfigSoul = function(){//TODO
+        //assumes path id passed is a valid config base: !, !#, !-, !#., !-.
+        return output(Object.assign({},self,{'%':true}))
+    }
+    
+}
+function isLink(val){
+    if(typeof val === 'string'){
+        let temp
+        if((temp = LINK_LOOKUP.exec(val))){
+            return temp[1]
+        }
+        return false
+    }
+    return false
+}
+
+function toBuffer(val,fixedLen,encoding){
+    if(val === undefined)return
+    let temp
+    if(val instanceof Buffer){
+        return val
+    }else if(Array.isArray(val)){
+        return Buffer.from(val)
+    }else if(typeof val === 'string'){
+        if((temp = isLink(val)))val = temp //extract base64
+        return Buffer.from(val,encoding)
+    }else if(typeof val === 'number'){ //to signed or usig int
+        let sig = (val<0)
+        return intToBuff(val,fixedLen,sig)
+    }else{
+        throw new Error('Could not parse input to binary.')
+    }
+}
 function intToBuff(num,fixedLen,signed){
     let n = (num<0)?num*-1:num
     let byteLength = Math.ceil(Math.log((signed?2:1*n)+1)/Math.log(256)) || 1
@@ -2309,13 +2080,12 @@ function intToBuff(num,fixedLen,signed){
     buff[op](num,fixedLen?fixedLen-byteLength:0,byteLength)
     return buff
 }
-
 function buffToInt(buff,signed){
     let op = (signed)?'readIntBE':'readUIntBE'
     if(typeof buff === 'string')buff=Buffer.from(buff,'base64')
     return buff[op](0,buff.length);
 }
-function incBuffer (buffer,amt) {
+function incBuffer (buffer,amt) {//increment buffer
     amt = intToBuff(amt || 1)
     let amtEnd = amt.length - 1
     for (var i = amtEnd; i >= 0; i--) {
@@ -2335,35 +2105,7 @@ function incBuffer (buffer,amt) {
     }
 }
 
-function buildPermObj(type, curPubKey, usersObj,checkOnly){
-    curPubKey = curPubKey || false
-    let types = ['base','table','row','group']
-    usersObj = usersObj || {}
-    if(!types.includes(type)){
-        throw new Error('First Argument must be one of: '+types.join(', '))
-    }
-    if(typeof usersObj !== 'object')usersObj = {}
-    let defaults = {}
-    defaults.base = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
-    defaults.table = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
-    defaults.row = {owner:curPubKey,create:null,read:null,update:null,destroy:null,chp:null}
-    defaults.group = {add: 'admin', remove: 'admin', chp: 'admin'}
-    let valid = Object.keys(defaults[type])
-    for (const key in usersObj) {
-        const putKey = usersObj[key];
-        if(!valid.includes(putKey)){
-            delete usersObj[putKey]
-        }
 
-    }
-    let out
-    if(!checkOnly){//add missing properties
-        out = Object.assign({},defaults[type],usersObj)
-    }else{
-        out = usersObj
-    }
-    return out
-}
 
 function rand(len, charSet,all){
     var s = '';
@@ -2461,6 +2203,35 @@ function getBaseLog(x, y) {
 }
 
 
+function buildPermObj(type, curPubKey, usersObj,checkOnly){
+    curPubKey = curPubKey || false
+    let types = ['base','table','row','group']
+    usersObj = usersObj || {}
+    if(!types.includes(type)){
+        throw new Error('First Argument must be one of: '+types.join(', '))
+    }
+    if(typeof usersObj !== 'object')usersObj = {}
+    let defaults = {}
+    defaults.base = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
+    defaults.table = {owner:curPubKey,create:'admin',read:'admin',update:'admin',destroy:'admin',chp:'admin'}
+    defaults.row = {owner:curPubKey,create:null,read:null,update:null,destroy:null,chp:null}
+    defaults.group = {add: 'admin', remove: 'admin', chp: 'admin'}
+    let valid = Object.keys(defaults[type])
+    for (const key in usersObj) {
+        const putKey = usersObj[key];
+        if(!valid.includes(putKey)){
+            delete usersObj[putKey]
+        }
+
+    }
+    let out
+    if(!checkOnly){//add missing properties
+        out = Object.assign({},defaults[type],usersObj)
+    }else{
+        out = usersObj
+    }
+    return out
+}
 //SET STUFF
 function intersect(setA, setB) {
     var _intersection = new Set();
@@ -2632,16 +2403,9 @@ export {
     buildPermObj,
     rand,
     putData,
-    ALL_INSTANCE_NODES,
-    DATA_INSTANCE_NODE,
-    RELATION_INSTANCE_NODE,
-    DATA_ADDRESS,
-    RELATION_ADDRESS,
     ISO_DATE_PATTERN,
     newID,
     hash64,
-    INSTANCE_OR_ADDRESS,
-    IS_CONFIG_SOUL,
     isLink,
     lookupID,
     getAllActiveNodeTypes,
@@ -2649,18 +2413,10 @@ export {
     collectPropIDs,
     intersect,
     union,
-    IS_STATE_INDEX,
-    ALL_TYPE_PATHS,
     naturalCompare,
-    IS_CONFIG,
     grabThingPropPaths,
-    NON_INSTANCE_PATH,
-    ALL_ADDRESSES,
     grabAllIDs,
     StringCMD,
-    BASE,
-    CONFIG_SOUL,
-    TIME_INDEX_PROP,
     throwError,
     mergeObj,
     getLength,
@@ -2672,11 +2428,12 @@ export {
     MathSolver,
     findTruth,
     getBaseLog,
-    DataStore,
-    GossipStore,
     intToBuff,
     buffToInt,
     toBuffer,
+    incBuffer,
     isObj,
-    randInt
+    randInt,
+    encode,
+    decode
 }

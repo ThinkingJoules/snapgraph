@@ -30,7 +30,7 @@ export default function PeerManager(root){
             let isInitial = peer.initialPeer && peer.id
             peer.wire.close()
             peer.connected = false
-            root.on.peerDisconnect(peer)//need to setup subs at a new peer if we were relying on things from this peer
+            root.event.emit('peerDisconnect',peer)//need to setup subs at a new peer if we were relying on things from this peer
             if(isInitial){
                 //want to reconnect so there are some peers
                 setTimeout(()=>{
@@ -48,7 +48,8 @@ export default function PeerManager(root){
         let ipAddr = (peer instanceof Peer) ? peer.id : peer
         let url = ipAddr.replace('http', 'ws');
         let wire = new root.WebSocket(url);
-        if(!(peer instanceof Peer))peer = new Peer(wire,ipAddr,intialPeer)
+        let ipa = wire.url
+        if(!(peer instanceof Peer))peer = new Peer(wire,ipAddr,ipa,intialPeer)
         else peer.wire = wire
         if(!root.isPeer)peer.wire.binaryType = 'arraybuffer'
         wire.onclose = function(){//if whoever we are connecting to closes
@@ -63,7 +64,7 @@ export default function PeerManager(root){
         wire.onopen = function(){
             self.peers.set(peer.id,peer)
             peer.connected = true
-            root.router.send.intro(peer)
+            //root.router.send.intro(peer) no longer doing intro
             root.router.send.challenge(peer)
             if(cb && cb instanceof Function)cb(peer)//hook so we know when this peer is connected??
         }

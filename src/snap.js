@@ -6,26 +6,17 @@ import {
     setValue,
     getValue,
     ISO_DATE_PATTERN,
-    ALL_INSTANCE_NODES,
-    DATA_INSTANCE_NODE,
-    RELATION_INSTANCE_NODE,
-    DATA_ADDRESS,
-    RELATION_ADDRESS,
-    INSTANCE_OR_ADDRESS,
-    isSub,
+    
     gunGet,
-    IS_STATE_INDEX,
-    IS_CONFIG,
-    IS_CONFIG_SOUL,
-    TIME_INDEX_PROP,
-    ALL_ADDRESSES,
     StringCMD,
     rand,
     randInt,
     mergeObj,
     snapID,
     intToBuff,
-    buffToInt
+    buffToInt,
+    encode,
+    decode
 } from './util.js'
 let gbGet
 
@@ -100,7 +91,6 @@ import addListeners from './events'
 import Aegis from './aegis';
 import Aeon from './aeon'
 import coreApi from './coreApi'
-import {encode,decode} from '@msgpack/msgpack'
 import {initNewGraph} from './configs'
 
 const defaultOpts = {
@@ -686,7 +676,7 @@ function groupChainOpt(base, group){
 function subThing (path,cb,sID,opts){
     //path must be a nodeID or address, nothing else
     //if sID already exists, this will ovrwrt the prev values
-    if(!ALL_ADDRESSES.test(path))throw new Error('Can only subscribe to an address!')
+    //if(!ALL_ADDRESSES.test(path))throw new Error('Can only subscribe to an address!')
     sID = sID || Symbol() //user can pass a truthy sID or we will create an always unique ID
     if(!(cb instanceof Function))throw new Error('Must provide a callback!')
     let {raw} = opts

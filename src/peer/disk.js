@@ -1,19 +1,67 @@
 import lmdb from 'node-lmdb'
 import fs from 'fs'
-import {encode,decode} from '@msgpack/msgpack'
-import {removeFromArr,notFound,DataStore} from '../util'
+import {removeFromArr,notFound,DataStore,encode,decode} from '../util'
 export default function DiskStore(root){
-    //LMDB for k/v and snap data
-    //fs for 'files'
-    //cli for 'git'
-    const gossipDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../GOSSIP_STORE'},{name:'gossip',create:true,keyIsBuffer:true})
-    this.gossip = false
+    this.env = new lmdb.Env()
+    const self = this
+    const envConfig = {path:root.opt.dataDir || __dirname+'/../../DATA_STORE'}
+    const dbiConfig = {name:'data',create:true,keyIsBuffer:true}
+    const {path} = envConfig
 
-    const dataDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../DATA_STORE'},{name:'data',create:true,keyIsBuffer:true})
-    this.data = new DataStore(dataDisk.rTxn,dataDisk.rwTxn)
-
-    const peerDisk = new LMDB({path:root.opt.dataDir || __dirname+'/../../PEER_CONFIG'},{name:'peer',create:true,keyIsBuffer:true}) // ? not sure
-    this.peer = false
+    if (!fs.existsSync(path)){
+        fs.mkdirSync(path);
+    }
+    self.env.open(envConfig)
+    this.dbi = self.env.openDbi(dbiConfig)
+    this.rTxn = function(nameSpace){
+        let txn = self.env.beginTxn({readOnly:true})
+        return {
+            get:get(txn),
+            commit: function(){txn.commit()},
+            abort: function(){txn.abort()}
+        }
+    }
+    this.rwTxn = function(nameSpace){
+        let txn = self.env.beginTxn()
+        return {
+            get:get(txn),
+            put:put(txn),
+            del:del(txn),
+            commit: function(){txn.commit()},
+            abort: function(){txn.abort()}
+        }
+    }
+    function get(txn){
+        return function(key,cb){
+            let data
+            try {
+                data = decode(txn.getBinary(self.dbi,key,{keyIsBuffer:true}))
+                if(cb instanceof Function)cb(false,data)
+            } catch (error) {
+                if(cb instanceof Function)cb(error)
+            }
+        }
+    }
+    function put(txn){
+        return function(key,value,cb){
+            try {
+                txn.putBinary(self.dbi,key,encode(value),{keyIsBuffer:true})
+                if(cb instanceof Function)cb(false,true)
+            } catch (error) {
+                if(cb instanceof Function)cb(error)
+            }
+        }
+    }
+    function del(txn){
+        return function(key,cb){
+            try {
+                txn.del(self.dbi,key,{keyIsBuffer:true})
+                if(cb instanceof Function)cb(false,true)
+            } catch (error) {
+                if(cb instanceof Function)cb(error)
+            }
+        }
+    }
 }
 const NULL = String.fromCharCode(0)
 const IS_STRINGIFY = String.fromCharCode(1)
@@ -71,7 +119,7 @@ function LMDB(envConfig,dbiConfig){
     function get(txn,key,cb){
         let data
         try {
-            data = decode(txn.getBinary(self.dbi,encode(key),{keyIsBuffer:true}))
+            data = decode(txn.getBinary(self.dbi,key,{keyIsBuffer:true}))
             if(cb instanceof Function)cb(false,data)
         } catch (error) {
             if(cb instanceof Function)cb(error)
@@ -79,7 +127,7 @@ function LMDB(envConfig,dbiConfig){
     }
     function put(txn,key,value,cb){
         try {
-            txn.putBinary(self.dbi,encode(key),encode(value),{keyIsBuffer:true})
+            txn.putBinary(self.dbi,key,encode(value),{keyIsBuffer:true})
             if(cb instanceof Function)cb(false,true)
         } catch (error) {
             if(cb instanceof Function)cb(error)
@@ -87,7 +135,7 @@ function LMDB(envConfig,dbiConfig){
     }
     function del(txn,key,cb){
         try {
-            txn.del(self.dbi,encode(key),{keyIsBuffer:true})
+            txn.del(self.dbi,key,{keyIsBuffer:true})
             if(cb instanceof Function)cb(false,true)
         } catch (error) {
             if(cb instanceof Function)cb(error)

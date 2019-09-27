@@ -24,7 +24,7 @@ export default [
 				btoa:'btoa'
 			}
 		},
-		external:['ws','text-encoding', 'crypto','atob','btoa'],
+		external:['ws','crypto','atob','btoa'],
 		plugins: [
 			hypothetical({
 				allowRealFiles: true,

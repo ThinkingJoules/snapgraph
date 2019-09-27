@@ -32,11 +32,10 @@
   "homepage": "https://github.com/ThinkingJoules/snapgraph#readme",
   "dependencies": {
     "@msgpack/msgpack": "^1.8.0",
+    "@peculiar/webcrypto": "^1.0.19",
     "eventemitter3": "^3.1.2",
-    "gun": "^0.2019.428",
     "node-lmdb": "^0.7.0",
-    "node-webcrypto-ossl": "^1.0.48",
-    "text-encoding": "^0.7.0",
+    "pako": "^1.0.10",
     "ws": "^7.1.1"
   },
   "files": [

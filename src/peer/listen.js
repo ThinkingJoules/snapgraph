@@ -15,14 +15,15 @@ export default function commsInit(root){
 		ws.maxPayload = ws.maxPayload; // || opt.pack || (opt.memory? (opt.memory * 1000 * 1000) : 1399000000) * 0.3;
 		ws.web = new WebSocket.Server(ws);
 		root.opt.debug('listening')
-		ws.web.on('connection', function(wire){ 
+		ws.web.on('connection', function(wire,req){ 
 			let peer;
 			root.opt.debug('new connection')
 			wire.upgradeReq = wire.upgradeReq || {};
-			let theirIP = wire.url
+			let theirIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress
+			console.log({theirIP})
 			wire.url = url.parse(wire.upgradeReq.url||'', true);
 			//console.log(wire)
-			peer = new Peer(wire,(theirIP || root.util.rand(12)))//if it is another peer, can we see their ip from the wire and use that instead??
+			peer = new Peer(wire,root.util.rand(12),theirIP)//if it is another peer, can we see their ip from the wire and use that instead??
 			peer.connected = true
 			root.mesh.peers.set(peer.id,peer)
 			root.router.send.challenge(peer)//we do not send intro

@@ -48,6 +48,35 @@ export default function Router(root){
         //if so, just send the messages
     }
     
+    router.newMsg = function(replying,type,body,expire){
+        return [replying?1:0,getType(),replying?replying:root.aegis.random(10),body||null,expire||null]
+        function getType(){
+            if(typeof type === 'number')return type
+            let types = {
+                challenge:  0,
+                redirect:   2,
+                ping:       4,
+                claimPeer:  14,
+                ask:        16,
+                say:        20,
+                create:     32,
+                update:     34,
+                read:       36,
+                delete:     38,
+                query:      40,
+                updated:    42,
+                created:    44,
+                file:       64,
+                chunk:      72,
+                rpc:        96,
+                
+            }
+            return types[type]
+        }
+        
+        
+
+    }
     send.intro = function(peer,opts){//sender generates
         opts = opts || {}
         let msg = msgs.send.intro(opts)
@@ -110,17 +139,12 @@ export default function Router(root){
     }
     send.challenge = function(peer,opts){//sender generates
         opts = opts || {}
-        let ons = {onDone,onExpire}
-        let msg = msgs.send.challenge(opts)
-        track(msg,new TrackOpts(opts.acks,opts.replies,{},ons))
-        peer.challenge = msg.s
-        if(!peer.met)peer.met = Date.now()
-        root.opt.debug('sending challenge',msg)
-        peer.send(msg)
-        function onDone(value){//what to do with their response
-            console.log('HAS SIG',value,this)
-            let {auth,pub,is} = value
-            root.verify(auth,pub,function(valid){
+        let msg = router.newMsg(false,'challenge',null)
+        root.event.once(msg[2].toString('binary'),function(msg){
+            console.log('HAS SIG',msg,this)
+            let [cid,pub,auth,authCode,isPeer] = msg[3]//COMBINED INTRO AND CHALLENGE
+            //is should be CID, we may need to make network request to verify identity
+            root.verify(auth,pub,function(valid){//redo all of this
                 if(valid){
                     root.opt.debug('Valid signature, now authenticated!')
                     peer.pub = pub
@@ -143,63 +167,49 @@ export default function Router(root){
                     //if these are two servers then no one will know this has failed
                 }
             })
-        }
-        function onExpire(value){
-            peer.challenge = false
-        }
-    }
-    msgs.send.challenge = function(opts){
-        let expireReq = opts.expire || (Date.now()+(1000*60*60*8))//must auth within 8 hrs??? Should only be browsers that will be waiting on human 
-        let b = {challenge:0}
-        let msg = new SendMsg('challenge',b,['auth','pub'],expireReq)
-        msg.b.challenge = msg.s //challenge is signing this msgID, that way the know where to respond
-        return msg
+        })
+        peer.challenge = msg[2]
+        if(!peer.met)peer.met = Date.now()
+        root.opt.debug('sending challenge',msg)
+        peer.send(msg)
     }
     recv.challenge = function(msg){//this is what the receiver is going to do on getting it
-        let {challenge} = msg.b
+        let challenge = msg[2]
         //authcode would be an invite YOU sent to join your base,they are claiming it?, or like IoT (crypto-less) signin.
         let peer = msg.from
         peer.theirChallenge = challenge
         if(root.sign){
             root.mesh.auth(peer)
         }else if(root.opt.authCode){
-            let m = msgs.recv.challenge(challenge)
-            console.log(m)
+            let m = msgs.recv.challenge(challenge,false,root.opt.authCode)
+            console.log('sending authCode',m)
             peer.send(m)
             //?? not sure if this will work, but for IoT or non-crypto things we can auth differently?
         }
         //else do nothing, we are not signed in.
         //if !root.isNode, handle 'has'
     }
-    msgs.recv.challenge = function(chal,sig){
-        let m = {m:'auth',r:chal},b
-        if(root.opt.authCode){
-            b = {authCode:root.opt.authCode}
-        }else{
-            //IS send our ~*PUB> node
-            b = {auth:sig,pub:root.user.pub}
-            if(root.isPeer){
-                b.is = root.is
-            }
-        }
-        m.b = b
-        return m
+    msgs.recv.challenge = function(chal,sig,authCode){
+        return router.newMsg(chal,'challenge',[root.user.cid,root.user.pub,sig,authCode||null,root.isPeer])
 
     }
     send.ping = function(peer){
-        let msg = new SendMsg('ping',false,false,false,true)
-        track(msg,new TrackOpts(1,0,0,{onDone,onAck}))
+        let msg = router.newMsg(false,'ping',Date.now())
+        let sent = Date.now()
+        let str = msg[2].toString('binary')
+        console.log('listener',str)
+        root.event.once(str,function(msg){
+            let theySent = msg[3]
+            let n = Date.now()
+            peer.drift = theySent-(n-((n-sent)/2))//theySent-(weGot-(1wayLatency))
+            peer.ping = n-sent
+            console.log('gotPing')
+        })
         peer.send(msg)
-        function onAck(ts){
-            let n = Date.now()
-            peer.drift = ts-(n-((n-this.sent)/2))//theySent-(weGot-(1wayLatency))
-        }
-        function onDone(value){
-            let n = Date.now()
-            peer.ping = n-this.sent //round trip
-        }
     }
-    recv.ping = function(){}//no logic, the ack is the ping
+    recv.ping = function(msg){
+        msg.from.send(router.newMsg(msg[2],msg[1],Date.now()))
+    }
     send.error = function(peer,err){
         let b = err
         let msg = new SendMsg('error',b,false)
@@ -426,6 +436,7 @@ export default function Router(root){
     */
 
     // m:msgType, s:originalMsgID, r:respondingToThisOrigID er:expectsResponse, b:body, e:expiration date to:message went/is going to
+
     function SendMsg(type,body,expectResponse,expire,ack,hops){
         this.m = type
         this.s = root.util.rand(12)

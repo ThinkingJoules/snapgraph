@@ -1,30 +1,33 @@
-import {encode,decode} from '@msgpack/msgpack'
+import {encode,decode} from './util'
+import pako from 'pako'
 export const onDisConn = (root) =>(peer)=>{
     if(peer && peer.wire && peer.wire.close)peer.wire.close()
     peer.connected = false
-    root.on.peerDisconnect(peer)
+    root.event.emit('peerDisconnect',peer)
 }
 export const onMsg = (root) => (raw,peer)=>{
     if(!raw){ return }
     let msg
     try {
-        msg = decode(raw)
-        if(msg.e){
-            if((peer.drift+msg.e+100) <= Date.now()){
-                root.opt.debug('Message expired, ignoring:',msg)
-                return 
-            }//if we are within 100ms, then don't bother as our response will probably not make it back in time.
+        raw = Buffer.from(raw,raw.byteOffset,raw.length)
+        let decomp = pako.inflate(raw)
+        msg = decode(decomp)
+        let expire = msg.pop()
+        if(expire && (peer.drift+expire+100) <= Date.now()){
+            root.opt.debug('Message expired, ignoring:',msg)
+            return
         }
-        if(msg.ack && msg.s)peer.send({m:'ack',r:msg.s,b:Date.now()})
         msg.from = peer
-        root.on.in(msg); //start of the in chain
+        root.event.emit('in',msg); //start of the in chain
     } catch (error) {
         root.opt.debug('wire.onMsg Error: ',error)
     }
 }
-export function Peer(socket,pid,initialPeer){
+export function Peer(socket,pid,IP,initialPeer){
+    let self = this
     this.wire = socket
     this.id = pid
+    this.ipAddr = IP
     this.ping = 1000
     this.challenge = false //our challenge to them for proof
     this.theirChallenge = false //they are challenging us, if we are not signed in yet, it waits here for our response
@@ -39,11 +42,11 @@ export function Peer(socket,pid,initialPeer){
     this.drift = 0
     this.gossip = new Map() //batching gossip by peer
     this.send = function(msg){
-        let s = {m:msg.m,s:msg.s,r:msg.r}
-        msg = encode(msg,{sortKeys:true})
-        let self = this
+        let s = {dir:msg[0],type:msg[1],id:msg[2]}
+        let enc = encode(msg)
+        msg = pako.deflate(enc,{level:1})
         if(self.connected && self.wire.send instanceof Function){
-            if(!['ack','ping'].includes(s.m))console.log('sent',s)
+            if(!['ack','ping'].includes(s.m))console.log('sent',s,msg.length)
             self.wire.send(msg);
         }
     }

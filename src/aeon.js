@@ -1,5 +1,4 @@
-import {encode, decode} from '@msgpack/msgpack'
-import { getBaseLog } from './util';
+import { getBaseLog,encode, decode } from './util';
 
 export default function Aeon(root){
     //this will be the inbetween of the crypto and outer APIs

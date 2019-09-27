@@ -8,9 +8,6 @@ import {convertValueToType,
     putData,
     newID,
     gunGet,
-    IS_CONFIG,
-    ALL_INSTANCE_NODES,
-    CONFIG_SOUL,
     lookupID,
     throwError,
     snapID,
@@ -395,7 +392,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 gun.get(stateSoul).once(function(data){
                     if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
                     for (const soul in data) {
-                        if(!ALL_INSTANCE_NODES.test(soul))continue
+                        //if(!ALL_INSTANCE_NODES.test(soul))continue
                         if(data[soul] !== null){//not Deleted
                             //this means `false` will pass through, so archived items will still keep increment and unique values enforced
                             soulList.push(soul)
@@ -448,7 +445,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
                 gun.get(stateSoul).once(function(data){
                     if(data === undefined){cb.call(cb,toObj); return}//for loop would error if not stopped
                     for (const soul in data) {
-                        if(!ALL_INSTANCE_NODES.test(soul))continue
+                        //if(!ALL_INSTANCE_NODES.test(soul))continue
                         if(data[soul] !== null){//not Deleted
                             //this means `false` will pass through, so archived items will still keep increment and unique values enforced
                             soulList.push(soul)
@@ -788,7 +785,7 @@ function handleConfigChange(gun,gb,getCell,cascade,solve,timeLog,timeIndex, conf
             for (const csoul in configPuts) {//put all configs in
                 const cObj = configPuts[csoul];
                 if(!Object.keys(cObj).length)continue
-                if(CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
+                //if(CONFIG_SOUL.test(csoul))timeLog(csoul,cObj)
                 //merge before put so putData will work
                 let cpath = configPathFromChainPath(csoul)
                 setValue(cpath,cObj,gb,true)
@@ -1246,8 +1243,8 @@ const gbGet = (gb) => (gun) => (pathArgs,cb) =>{
 
     for (const [path,requestedKeys] of pathArgs) {
         let cSoul = configSoulFromChainPath(path)
-        if(!CONFIG_SOUL.test(cSoul))continue
-        let type = IS_CONFIG(cSoul)
+        //if(!CONFIG_SOUL.test(cSoul))continue
+        //let type = IS_CONFIG(cSoul)
         let allKeys
         if(type === 'baseConfig')allKeys = Object.keys(newBaseConfig())
         else if(type === 'thingConfig' && path.includes('#'))allKeys = Object.keys(newNodeTypeConfig({alias:path}))

@@ -1,16 +1,18 @@
-import {getValue,setValue,rand} from './util'
-import {encode,decode} from '@msgpack/msgpack'
-import WebCrypto from 'node-webcrypto-ossl'
-import crypto from 'crypto'
+import {getValue,setValue,rand,encode,decode} from './util'
+import {Crypto} from "@peculiar/webcrypto"
 import atob from 'atob'
 import btoa from 'btoa'
 
 const isNode=new Function("try {return this===global;}catch(e){return false;}")()
 export default function Aegis(root){
     const aegis = this
-    aegis.crypto = crypto || (!isNode && (window.msCrypto || window.webkitCrypto || window.mozCrypto))
-    aegis.subtle = (aegis.crypto.subtle || aegis.crypto.webkitSubtle) || (isNode && new WebCrypto().subtle)
-    aegis.random = (len) => Buffer.from(aegis.crypto.getRandomValues(new Uint8Array(Buffer.alloc(len))))
+    aegis.crypto = (isNode && new Crypto()) || (!isNode && (window.crypto || window.msCrypto || window.webkitCrypto || window.mozCrypto))
+    aegis.subtle = (aegis.crypto.subtle || aegis.crypto.webkitSubtle) || (isNode && (new Crypto()).subtle)
+    aegis.random = (len) => {
+        let rand = aegis.crypto.getRandomValues || aegis.crypto.getRandomBytes
+        let r = aegis.crypto.getRandomValues(new Uint8Array(len))
+        return Buffer.from(r.buffer,r.byteOffset,r.length)
+    }
     const util = aegis.util = {}
     const s = aegis.settings = {};
     s.pbkdf2 = {hash: 'SHA-256', iter: 100000, ks: 64};

@@ -1,22 +1,70 @@
 import { snapID } from "./util";
+import EventEmitter from "eventemitter3";
 
 export default function addListeners (root){
-    let on = root.on = {}
-    on.auth = function(){
+    root.event = new EventEmitter()
+    root.event.on('in',function(msg){
+        //msg = [req/res,msgType,msgID,payload,expire]
+        console.log('on.in',msg)
+        switch (msg[0]) {
+            case 0:root.event.emit('req',msg);break;
+            case 1:root.event.emit(Buffer.from(msg[2]).toString('binary'),msg);break;//response, emit on msgID so things that sent this can handle response
+        }
+    })
+    root.event.on('req',function(msg){
+        switch (msg[1]) {//on type
+            case 0: root.router.recv.challenge(msg)
+            case 4: root.router.recv.ping(msg)
+            
+            case 16: return true //ask
+            case 20: return true //say
+
+            case 32:
+            case 34:
+            case 36:
+            case 38:
+            case 40: root.sg.crudq(msg)
+
+            case 42: root.event.emit('change',msg)
+        }
+    })
+    root.event.on('change',function(msg){
+        let changes = msg[3]
+        for (const [key,value] of changes) {
+            switch (key[0]) {
+                case 24: return true //blk header
+                case 94: 
+                case 98: root.event.emit(key.toString('binary'),value)
+                default:
+                    break;
+            }
+        }
+    })
+
+    root.event.on('auth',function(){
         root.mesh.auth()
-    }
-    on.pairwise = function(peer){
-        if(peer.pub === root.user.pub){
+    })
+    root.event.on('pairwise',function(peer){
+        if(peer.cid === root.user.cid){
             peer.hasRoot = true
         }
-    }
-    on.signout = function(){
+    })
+    root.event.on('signout',function(){
         delete root.sign
         delete root.user
         root.mesh.signout()//disconnect all peers, as this peer is no longer authorized to interact with them.
         //really need to force refresh the page
-        
-    }
+    })
+    root.event.on('peerDisconnect',function(peer){
+        console.warn('API NOT FINISHED')
+        //IF CLIENT VVV
+        //if this peer is supplying a resource that we are currently looking for (subscribed to)
+        //then we need to see if we are still connected to it with another peer
+        //or if we have additional peers specified 
+        //this is something we should track in resources and let it handle this problem
+    })
+
+    let on = {}
     on.in = function(msg){
         let {m,s,r} = msg
         let temp
@@ -38,14 +86,6 @@ export default function addListeners (root){
         }else{
             root.opt.debug('Could not route:',msg)
         }
-    }
-    on.peerDisconnect = function(peer){
-        console.warn('API NOT FINISHED')
-        //IF CLIENT VVV
-        //if this peer is supplying a resource that we are currently looking for (subscribed to)
-        //then we need to see if we are still connected to it with another peer
-        //or if we have additional peers specified 
-        //this is something we should track in resources and let it handle this problem
     }
 }
 
