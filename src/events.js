@@ -5,44 +5,49 @@ export default function addListeners (root){
     root.event = new EventEmitter()
     root.event.on('in',function(msg){
         //msg = [req/res,msgType,msgID,payload,expire]
-        console.log('on.in',msg)
+        if(!(msg[2] instanceof Buffer))msg[2] = Buffer.from(msg[2].buffer,msg[2].byteOffset,msg[2].byteLength)
+        if(msg[1] !== 4)root.opt.debug('on.in',msg)
         switch (msg[0]) {
             case 0:root.event.emit('req',msg);break;
-            case 1:root.event.emit(Buffer.from(msg[2]).toString('binary'),msg);break;//response, emit on msgID so things that sent this can handle response
+            case 1:root.event.emit(msg[2].toString('binary'),msg);break;//response, emit on msgID so things that sent this can handle response
         }
     })
     root.event.on('req',function(msg){
         switch (msg[1]) {//on type
-            case 0: root.router.recv.challenge(msg)
-            case 4: root.router.recv.ping(msg)
+            case 0: root.router.recv.challenge(msg);break
+            case 4: root.router.recv.ping(msg);break
             
             case 16: return true //ask
             case 20: return true //say
 
-            case 32:
-            case 34:
-            case 36:
-            case 38:
-            case 40: root.sg.crudq(msg)
+            case 32://create
+            case 34://update
+            case 36://read
+            case 38://delete
+            case 40: root.sg.crudq(msg);break //query
 
-            case 42: root.event.emit('change',msg)
+            case 42: root.event.emit('change',msg);break//updated(state change, like a put to propagate changed values, *this is a subscription update or 'created'*)
         }
     })
-    root.event.on('change',function(msg){
+    root.event.on('change',function(msg){//all new and changed things will show up here
         let changes = msg[3]
         for (const [key,value] of changes) {
             switch (key[0]) {
-                case 24: return true //blk header
-                case 94: 
-                case 98: root.event.emit(key.toString('binary'),value)
-                default:
-                    break;
+                case 24: return true //blk header, not really a 'change', but a new thing
+                case 94: //node address value
+                case 98: root.event.emit(key.toString('binary'),value);break //list node key value
             }
         }
     })
 
     root.event.on('auth',function(){
-        root.mesh.auth()
+        root.mesh.auth()//can do this right away, as other requests here may need auth with other peers
+        //find peer id under name
+        //determine 'what' we are
+        //determine what we own
+        //determine what we have (browser)
+        //send sync message to one or our DIRPs
+        //once we have gotten all of our data up do data root.state.ready = true; root.event.emit('ready',true)
     })
     root.event.on('pairwise',function(peer){
         if(peer.cid === root.user.cid){

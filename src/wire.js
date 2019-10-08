@@ -41,12 +41,12 @@ export function Peer(socket,pid,IP,initialPeer){
     this.initialPeer = initialPeer || false
     this.drift = 0
     this.gossip = new Map() //batching gossip by peer
-    this.send = function(msg){
-        let s = {dir:msg[0],type:msg[1],id:msg[2]}
-        let enc = encode(msg)
-        msg = pako.deflate(enc,{level:1})
+    this.send = function(m){
         if(self.connected && self.wire.send instanceof Function){
-            if(!['ack','ping'].includes(s.m))console.log('sent',s,msg.length)
+            let s = {dir:m[0],type:m[1],id:m[2]}
+            let enc = encode(m)
+            let msg = pako.deflate(enc,{level:1})
+            if(m[1] !== 4)console.log('sent',s,'bytes:',msg.length)
             self.wire.send(msg);
         }
     }

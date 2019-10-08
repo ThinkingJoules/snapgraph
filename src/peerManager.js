@@ -64,7 +64,7 @@ export default function PeerManager(root){
         wire.onopen = function(){
             self.peers.set(peer.id,peer)
             peer.connected = true
-            //root.router.send.intro(peer) no longer doing intro
+            root.router.send.ping(peer)
             root.router.send.challenge(peer)
             if(cb && cb instanceof Function)cb(peer)//hook so we know when this peer is connected??
         }

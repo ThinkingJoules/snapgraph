@@ -139,11 +139,16 @@ export default function Router(root){
     }
     send.challenge = function(peer,opts){//sender generates
         opts = opts || {}
-        let msg = router.newMsg(false,'challenge',null)
-        root.event.once(msg[2].toString('binary'),function(msg){
+        let sendMsg = router.newMsg(false,'challenge',null)
+        root.event.once(sendMsg[2].toString('binary'),function(msg){
             console.log('HAS SIG',msg,this)
             let [cid,pub,auth,authCode,isPeer] = msg[3]//COMBINED INTRO AND CHALLENGE
-            //is should be CID, we may need to make network request to verify identity
+            //for CID, we may need to make network request to verify identity
+            let peer = msg.from
+            peer.isPeer = isPeer
+
+
+
             root.verify(auth,pub,function(valid){//redo all of this
                 if(valid){
                     root.opt.debug('Valid signature, now authenticated!')
@@ -168,10 +173,13 @@ export default function Router(root){
                 }
             })
         })
-        peer.challenge = msg[2]
+
+
+
+        peer.challenge = sendMsg[2]
         if(!peer.met)peer.met = Date.now()
-        root.opt.debug('sending challenge',msg)
-        peer.send(msg)
+        root.opt.debug('sending challenge',sendMsg)
+        peer.send(sendMsg)
     }
     recv.challenge = function(msg){//this is what the receiver is going to do on getting it
         let challenge = msg[2]
@@ -197,13 +205,13 @@ export default function Router(root){
         let msg = router.newMsg(false,'ping',Date.now())
         let sent = Date.now()
         let str = msg[2].toString('binary')
-        console.log('listener',str)
+        //console.log('listener',str)
         root.event.once(str,function(msg){
             let theySent = msg[3]
             let n = Date.now()
-            peer.drift = theySent-(n-((n-sent)/2))//theySent-(weGot-(1wayLatency))
+            peer.drift = Math.round(theySent-(n-((n-sent)/2)))//theySent-(weGot-(1wayLatency))
             peer.ping = n-sent
-            console.log('gotPing')
+            //console.log('gotPing')
         })
         peer.send(msg)
     }
