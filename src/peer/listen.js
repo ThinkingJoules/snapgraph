@@ -1,13 +1,12 @@
 import url from 'url'
 import WebSocket from 'ws'
-import {onDisConn,onMsg,Peer} from '../wire'
+import {onMsg,Peer} from '../wire'
 
 export default function commsInit(root){
 	let opt = root.opt
 	let ws = {};
 	ws.server = opt.web;
 	const onM = onMsg(root)
-	const onD = onDisConn(root)
 	if(ws.server && !ws.web){
 		root.WebSocket = WebSocket
 		opt.WebSocket = WebSocket
@@ -20,13 +19,13 @@ export default function commsInit(root){
 			root.opt.debug('new connection')
 			wire.upgradeReq = wire.upgradeReq || {};
 			let theirIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress
-			console.log({theirIP})
 			wire.url = url.parse(wire.upgradeReq.url||'', true);
+			//console.log({theirIP,url})
 			//console.log(wire)
-			peer = new Peer(wire,root.util.rand(12),theirIP)//if it is another peer, can we see their ip from the wire and use that instead??
+			peer = new Peer(root,false,false)//if it is another peer, can we see their ip from the wire and use that instead??
+			peer.wire = wire
 			peer.connected = true
-			root.mesh.peers.set(peer.id,peer)
-			root.router.send.challenge(peer)//we do not send intro
+			root.router.send.peerChallenge(peer)//we do not send intro
 			
 			wire.on('message', function(msg){
 				onM(msg,peer)
@@ -34,7 +33,9 @@ export default function commsInit(root){
 			wire.on('close', function(){//server does not try to reconnect to a peerer
 				root.opt.debug('peerer disconnected')
 				clearInterval(peer.heart)
-				onD(peer)
+				peer.onclose()
+				root.event.emit('peerDisconnect',peer)
+
 			});
 			wire.on('error', function(e){});
 			peer.heart = setInterval(function heart(){ //setInterval??

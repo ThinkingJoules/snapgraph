@@ -104,21 +104,36 @@ export default function SG(root){
         {_ALIAS:'stream',_ID:50,_REQPROPS:['_STATE','_CREATED','TAGS','_IN','_OUT']}
     ]
     const TVALS={},PVALS={},CLASSES={}
-    ;(function(){
-        for (const config of baseT) {
-            let b64ID = intToBuff(config._ID).toString('base64');
-            TVALS[config._ALIAS]=b64ID
-        }
-        for (const config of baseP) {
-            let b64ID = intToBuff(config._ID,10).toString('base64');
-            PVALS[config._ALIAS]=b64ID
-        }
-        for (const config of classes) {
-            let b64ID = intToBuff(config._ID,4).toString('base64');
-            CLASSES[config._ALIAS]=b64ID
-        }
-    })()
+    // ;(function(){
+    //     for (const config of baseT) {
+    //         let b64ID = intToBuff(config._ID).toString('base64');
+    //         TVALS[config._ALIAS]=b64ID
+    //     }
+    //     for (const config of baseP) {
+    //         let b64ID = intToBuff(config._ID,10).toString('base64');
+    //         PVALS[config._ALIAS]=b64ID
+    //     }
+    //     for (const config of classes) {
+    //         let b64ID = intToBuff(config._ID,4).toString('base64');
+    //         CLASSES[config._ALIAS]=b64ID
+    //     }
+    // })()
 
+
+    sg.newPID = async function(work){
+        if(!root.peer.isPeer)return {pid:root.aegis.random(8)}
+        let {ct,iv} = await root.aeon.pow(null,{target:work||24,all:true,contUpdateCB:root.opt.debug,updateEvery:1000000})
+        console.log('CT:',[...ct])
+        let pid = ct.slice(ct.length-16-16,ct.length-16).reverse()
+        return {pid,iv}
+    }
+    sg.makePID = async function(iv,opt){
+        opt = opt || {}
+        let {diffHit,ct} = await root.aeon.checkPow(null,iv,{all:true})
+        let pid = ct.slice(ct.length-16-16,ct.length-16).reverse()
+        if(opt.all)return {pid,diffHit}
+        return pid
+    }
     //sg interacts with store directly?
     //if we are making local calls we should batch?
 
@@ -141,8 +156,8 @@ export default function SG(root){
 
     }
     sg.writes = new RWBatch()
-    sg.reads = new RBatch()
-    sg.deletes = new DBatch()
+    // sg.reads = new RBatch()
+    // sg.deletes = new DBatch()
     function RWBatch(){
         let self = this
         this.state = true 

@@ -9,8 +9,7 @@ export default function Aegis(root){
     aegis.crypto = (isNode && new Crypto()) || (!isNode && (window.crypto || window.msCrypto || window.webkitCrypto || window.mozCrypto))
     aegis.subtle = (aegis.crypto.subtle || aegis.crypto.webkitSubtle) || (isNode && (new Crypto()).subtle)
     aegis.random = (len) => {
-        let rand = aegis.crypto.getRandomValues || aegis.crypto.getRandomBytes
-        let r = aegis.crypto.getRandomValues(new Uint8Array(len))
+        let r = aegis.crypto.getRandomValues?aegis.crypto.getRandomValues(new Uint8Array(len)):aegis.crypto.getRandomBytes(new Uint8Array(len))
         return Buffer.from(r.buffer,r.byteOffset,r.length)
     }
     const util = aegis.util = {}
@@ -129,9 +128,9 @@ export default function Aegis(root){
         return jsThing
     }
     
-    root.verify = async function(pub,b64sig,jsData,cb){
-        let data = encode(jsData,{sortKeys:true})
-        let sig = Buffer.from(b64sig,'base64')
+    root.verify = async function(pub,sig,jsData,cb){//sig must be buffer or base64
+        let data = (jsData instanceof Buffer || jsData instanceof Uint8Array)?jsData:encode(jsData,{sortKeys:true})
+        if(typeof sig === 'string')sig = Buffer.from(sig,'base64')
         let passed = await root.aegis.subtle.importKey('raw',pub,root.aegis.settings.ecdsa.pair,false,['verify'])
         .then((cKey)=> root.aegis.subtle.verify(root.aegis.settings.ecdsa.sign,cKey,sig,data))
         if(cb && cb instanceof Function) cb(passed)
@@ -139,8 +138,7 @@ export default function Aegis(root){
     }
 
     //not sure where to put this, its a general util with a dependencies(btoa,atob,encode,decode)
-    root.util.jsToStr = jsToStr
-    root.util.strToJs = strToJs
+    
     root.util.outputHeaderedStr = outputHeaderedStr
     root.util.parseHeaderedStr = parseHeaderedStr
     function jsToStr(js) {
@@ -156,7 +154,7 @@ export default function Aegis(root){
         return decode(bufView)
     }
     function outputHeaderedStr(jsTarget,what){
-        const exportedAsBase64 = root.util.jsToStr(jsTarget)
+        const exportedAsBase64 = encode(jsTarget,true,true)
         return `-----BEGIN ${what}-----\n${exportedAsBase64}\n-----END ${what}-----`;
     }
     function parseHeaderedStr(headeredString){

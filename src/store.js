@@ -6,7 +6,7 @@ export default function Store(root){
     let self = this
     this.mem = new Map()
     this.lru = new Map()
-    this.disk = root.opt.persist && ((root.isPeer && new Disk(root)) || new BrowserStore(root)) || false
+    this.disk = root.opt.persist && ((root.peer.isPeer && new Disk(root)) || new BrowserStore(root)) || false
     this.getKey = function(key,cb,txn){
         let openedTxn
         txn = txn || this.disk && (openedTxn=true) && this.disk.rTxn()

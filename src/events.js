@@ -1,15 +1,15 @@
-import { snapID } from "./util";
+import { snapID, buffUtil } from "./util";
 import EventEmitter from "eventemitter3";
 
 export default function addListeners (root){
     root.event = new EventEmitter()
     root.event.on('in',function(msg){
         //msg = [req/res,msgType,msgID,payload,expire]
-        if(!(msg[2] instanceof Buffer))msg[2] = Buffer.from(msg[2].buffer,msg[2].byteOffset,msg[2].byteLength)
+        msg[2] = buffUtil(msg[2])
         if(msg[1] !== 4)root.opt.debug('on.in',msg)
         switch (msg[0]) {
             case 0:root.event.emit('req',msg);break;
-            case 1:root.event.emit(msg[2].toString('binary'),msg);break;//response, emit on msgID so things that sent this can handle response
+            case 1:root.event.emit(msg[2].utilString(),msg);break;//response, emit on msgID so things that sent this can handle response
         }
     })
     root.event.on('req',function(msg){
@@ -67,6 +67,11 @@ export default function addListeners (root){
         //then we need to see if we are still connected to it with another peer
         //or if we have additional peers specified 
         //this is something we should track in resources and let it handle this problem
+    })
+    root.event.once('ready',function(){
+        root.state.ready = true
+        root.opt.log('Peer is up to date and online. Boot up time was:',Date.now()-root.state.initTime)
+        root.opt.debug('PID', root.peer.id.toString('base64'))
     })
 
     let on = {}

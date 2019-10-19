@@ -34,6 +34,7 @@
     "@msgpack/msgpack": "^1.8.0",
     "@peculiar/webcrypto": "^1.0.19",
     "eventemitter3": "^3.1.2",
+    "localforage": "^1.7.3",
     "node-lmdb": "^0.7.0",
     "pako": "^1.0.10",
     "ws": "^7.1.1"

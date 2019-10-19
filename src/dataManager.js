@@ -5,7 +5,7 @@ import BrowserStore from './browser/disk'
 export default function DataManager(root){
     let self = this
     this.mem = new Map()
-    this.disk = root.opt.persist && ((root.isPeer && new Disk(root)) || new BrowserStore(root)) || false
+    this.disk = root.opt.persist && ((root.peer.isPeer && new Disk(root)) || new BrowserStore(root)) || false
     this.addrSubs = {}
     this.nodeSubs = {}
     this.getCBs = {}

@@ -2053,23 +2053,64 @@ function isLink(val){
     return false
 }
 
-function toBuffer(val,fixedLen,encoding){
-    if(val === undefined)return
-    let temp
-    if(val instanceof Buffer){
-        return val
-    }else if(Array.isArray(val)){
-        return Buffer.from(val)
-    }else if(typeof val === 'string'){
-        if((temp = isLink(val)))val = temp //extract base64
-        return Buffer.from(val,encoding)
-    }else if(typeof val === 'number'){ //to signed or usig int
-        let sig = (val<0)
-        return intToBuff(val,fixedLen,sig)
-    }else{
-        throw new Error('Could not parse input to binary.')
+function buffUtil (input,opt){
+    opt = opt || {}
+    let buffer = toBuffer(input)
+    buffer.utilString = function(encoding,header){
+        encoding = encoding || 'binary'
+        if(header)return outputHeaderedStr()
+        return this.buffer.toString(encoding)
+        function outputHeaderedStr(){
+            const exportedAsBase64 = this.buffer.toString('base64')
+            return `-----BEGIN ${header}-----\n${exportedAsBase64}\n-----END ${header}-----`;
+        }
+    }
+    buffer.slice = function(start,end){
+        return buffUtil(Uint8Array.prototype.slice.call(this,start,end))
+    }
+    return buffer
+    
+}
+function toBuffer(input,encoding){
+    if(input instanceof Buffer)return input
+    if(input instanceof Uint8Array || input instanceof ArrayBuffer)return Buffer.from(input.buffer,input.byteOffset,input.byteLength)
+    if(typeof input !== 'string')return encode(input,false,true)
+    if(isHeadered(input)){
+        let {what,content} = parseHeaderedStr(input)
+        let b = Buffer.from(content,'base64')
+        b.what = what
+        return b
+    }else return Buffer.from(input,encoding)
+    
+    function parseHeaderedStr(headeredString){
+        //returns what was in the label 'what' and the contents
+        let r = /(?:-----BEGIN )(.+)(?:-----)/
+        let what = headeredString.match(r)[1]
+        let content = headeredString.split("\n")[1]
+        return {what,content}
+    }
+    function isHeadered(){
+        return /(?:-----BEGIN )(.+)(?:-----)/.test(input)
     }
 }
+
+// function toBuffer(val,fixedLen,encoding){
+//     if(val === undefined)return
+//     let temp
+//     if(val instanceof Buffer){
+//         return val
+//     }else if(Array.isArray(val)){
+//         return Buffer.from(val)
+//     }else if(typeof val === 'string'){
+//         if((temp = isLink(val)))val = temp //extract base64
+//         return Buffer.from(val,encoding)
+//     }else if(typeof val === 'number'){ //to signed or usig int
+//         let sig = (val<0)
+//         return intToBuff(val,fixedLen,sig)
+//     }else{
+//         throw new Error('Could not parse input to binary.')
+//     }
+// }
 function intToBuff(num,fixedLen,signed){
     let n = (num<0)?num*-1:num
     let byteLength = Math.ceil(Math.log((signed?2:1*n)+1)/Math.log(256)) || 1
@@ -2435,5 +2476,6 @@ export {
     isObj,
     randInt,
     encode,
-    decode
+    decode,
+    buffUtil
 }

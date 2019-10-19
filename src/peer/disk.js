@@ -1,6 +1,6 @@
 import lmdb from 'node-lmdb'
 import fs from 'fs'
-import {removeFromArr,notFound,DataStore,encode,decode} from '../util'
+import {encode,decode} from '../util'
 export default function DiskStore(root){
     this.env = new lmdb.Env()
     const self = this

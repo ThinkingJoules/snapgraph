@@ -1,5 +1,7 @@
-import { on, setValue, getValue } from "./util";
+import { on, setValue, getValue, intToBuff, buffUtil } from "./util";
 import EventEmitter from 'eventemitter3'
+import Aeon from "./aeon";
+import { Msg } from "./wire";
 const noop = function(){}
 export default function Router(root){
     //assume root has ws setup and bootstrap peers already listed/connected
@@ -47,109 +49,59 @@ export default function Router(root){
         //see if we have resources, if not add the messages to pending and setup connection cycle
         //if so, just send the messages
     }
-    
-    router.newMsg = function(replying,type,body,expire){
-        return [replying?1:0,getType(),replying?replying:root.aegis.random(10),body||null,expire||null]
-        function getType(){
-            if(typeof type === 'number')return type
-            let types = {
-                challenge:  0,
-                redirect:   2,
-                ping:       4,
-                claimPeer:  14,
-                ask:        16,
-                say:        20,
-                create:     32,
-                update:     34,
-                read:       36,
-                delete:     38,
-                query:      40,
-                updated:    42,
-                created:    44,
-                file:       64,
-                chunk:      72,
-                rpc:        96,
-                
-            }
-            return types[type]
-        }
-        
-        
+   
 
-    }
-    send.intro = function(peer,opts){//sender generates
+    send.peerChallenge = function(peer,opts){//sender generates
         opts = opts || {}
-        let msg = msgs.send.intro(opts)
-        let ons = {onDone,onAck}
-        track(msg,new TrackOpts(1,1,{},ons))
-        if(!peer.met)peer.met = Date.now()
-        root.opt.debug('sending intro',msg)
-        peer.send(msg)
-        function onAck(v){
-            if(this.acks === 1){//only on first ack
-                let n = Date.now()
-                peer.ping = n-this.sent //round trip
-                console.log(peer.ping)
-            }
-        }
-        function onDone(value){//what to do with their response
-            console.log(value)
-            let {isPeer,has} = value
-            console.log('intro reply',{isPeer,has})
-            peer.isPeer = isPeer
-            if(has){//should be valid snap nodes
-                let things = Object.keys(has)
-                //emulating an ask response
-                if (things.length){
-                    for (const id of things) {
-                        root.store.addAskCB(id,false,[(node)=>{root.assets.processResourceNode(id,node)}])
-                        root.assets.subResource(id)
-                    }
-                    root.resolver.resolveAsk({checkSigs:has})//emulate an ask response
-                }
-                
-            }
-        }
+        let sendMsg = new Msg(false,'peerChallenge',null)
+        let challenge = buffUtil(sendMsg.id)
+        root.event.once(challenge.utilString(),async function(msg){//onReply
+            console.log('HAS SIG',msg,this)
+            let [pid,pub,pubSig,iv,addrsig,date,addr,cid,sig,authCode,connectedTo] = msg[3]//COMBINED INTRO AND CHALLENGE
+            let peer = msg.from
+            if(!authCode && pub && !await root.verify(sig,pub,challenge)){root.opt.warn('Challenge Sig is invalid');peer.disconnect();return}
+            
+            //todo handle authcode
+            if(authCode)root.opt.debug('authCode API not done')//do something
+            
+            root.mesh.putPeerProof([pid,pub,pubSig,iv,addrsig,addr,date],peer)
+        })
+
+        root.opt.debug('sending challenge',sendMsg)
+        peer.send(sendMsg)
     }
-    msgs.send.intro = function(opts){
-        let expireReq = opts.expire || (Date.now()+(1000*20))//shouldn't take too long
-        let b = {isPeer:root.isPeer}
-        return new SendMsg('intro',b,['isPeer','has'],expireReq,true)
-    }  
-    recv.intro = function(msg){//this is what the receiver is going to do on getting it
-        console.log('incoming intro')
-        let {b} = msg
-        let {isPeer} = b
+    recv.peerChallenge = function(msg){//this is what the receiver is going to do on getting it
+        let challenge = msg.id
+        //authcode would be an invite YOU sent to join your base,they are claiming it?, or like IoT (crypto-less) signin.
         let peer = msg.from
-        peer.isPeer = isPeer
-        let m = msgs.recv.intro(msg)
-        console.log('sending intro reply',m)
-        peer.send(m)
-    }
-    msgs.recv.intro = function(incMsg){
-        let b = {isPeer:root.isPeer}
-        if(root.isPeer && root.opt.persist.data){//we need to get our 'has'
-            b.has = root.has
-            //root has should be things we have on disk and match the public gossip
-            //this will include more info than exactly what we have
-            //but this is good, as it gives the peer backups in case we go offline
-            //the peerer will validate all these records so this peer can't tamper with it.
+        peer.theirChallenge = challenge
+        if(root.sign){
+            root.mesh.auth(peer)
+        }else if(root.opt.authCode){
+            let m = msgs.recv.peerChallenge(challenge,false,root.opt.authCode)
+            console.log('sending authCode',m)
+            peer.send(m)
+            //?? not sure if this will work, but for IoT or non-crypto things we can auth differently?
         }
-        return new RespMsg(incMsg,b)
+        //else do nothing, we are not signed in.
+        //if !root.isNode, handle 'has'
+    }
+    msgs.recv.peerChallenge = function(chal,sig,authCode){
+        return router.newMsg(chal,'challenge',[root.user.cid,root.user.pub,sig,authCode||null,root.peer.isPeer])
+
     }
     send.challenge = function(peer,opts){//sender generates
         opts = opts || {}
         let sendMsg = router.newMsg(false,'challenge',null)
-        root.event.once(sendMsg[2].toString('binary'),function(msg){
+        root.event.once(sendMsg[2].toString('binary'),function(msg){//onReply
             console.log('HAS SIG',msg,this)
-            let [cid,pub,auth,authCode,isPeer] = msg[3]//COMBINED INTRO AND CHALLENGE
-            //for CID, we may need to make network request to verify identity
+            let [pid,pub,pubSig,iv,sig,authCode,isPeer] = msg[3]//COMBINED INTRO AND CHALLENGE
             let peer = msg.from
             peer.isPeer = isPeer
+            if(!isPeer){peer.pid = pid;return}
+            
 
-
-
-            root.verify(auth,pub,function(valid){//redo all of this
+            root.verify(sig,pub,function(valid){//redo all of this
                 if(valid){
                     root.opt.debug('Valid signature, now authenticated!')
                     peer.pub = pub
@@ -189,7 +141,7 @@ export default function Router(root){
         if(root.sign){
             root.mesh.auth(peer)
         }else if(root.opt.authCode){
-            let m = msgs.recv.challenge(challenge,false,root.opt.authCode)
+            let m = msgs.recv.peerChallenge(challenge,false,root.opt.authCode)
             console.log('sending authCode',m)
             peer.send(m)
             //?? not sure if this will work, but for IoT or non-crypto things we can auth differently?
@@ -198,7 +150,7 @@ export default function Router(root){
         //if !root.isNode, handle 'has'
     }
     msgs.recv.challenge = function(chal,sig,authCode){
-        return router.newMsg(chal,'challenge',[root.user.cid,root.user.pub,sig,authCode||null,root.isPeer])
+        return router.newMsg(chal,'challenge',[root.user.cid,root.user.pub,sig,authCode||null,root.peer.isPeer])
 
     }
     send.ping = function(peer){
