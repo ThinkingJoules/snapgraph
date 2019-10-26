@@ -42,15 +42,15 @@ export default function addListeners (root){
 
     root.event.on('auth',function(){
         root.mesh.auth()//can do this right away, as other requests here may need auth with other peers
-        //find peer id under name
-        //determine 'what' we are
-        //determine what we own
-        //determine what we have (browser)
-        //send sync message to one or our DIRPs
-        //once we have gotten all of our data up do data root.state.ready = true; root.event.emit('ready',true)
+        //root.router.ask('getCID'...)
+        //get our chain
+        //then on 'verified'
+        //connect to our Dirps
+        //sync...
+
     })
     root.event.on('pairwise',function(peer){
-        if(peer.cid === root.user.cid){
+        if(peer.owner === root.user.id){
             peer.hasRoot = true
         }
     })

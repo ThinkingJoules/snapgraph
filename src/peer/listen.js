@@ -1,12 +1,11 @@
 import url from 'url'
 import WebSocket from 'ws'
-import {onMsg,Peer} from '../wire'
+import {Peer} from '../wire'
 
 export default function commsInit(root){
 	let opt = root.opt
 	let ws = {};
 	ws.server = opt.web;
-	const onM = onMsg(root)
 	if(ws.server && !ws.web){
 		root.WebSocket = WebSocket
 		opt.WebSocket = WebSocket
@@ -28,7 +27,7 @@ export default function commsInit(root){
 			root.router.send.peerChallenge(peer)//we do not send intro
 			
 			wire.on('message', function(msg){
-				onM(msg,peer)
+				peer.recv(msg)
 			});
 			wire.on('close', function(){//server does not try to reconnect to a peerer
 				root.opt.debug('peerer disconnected')

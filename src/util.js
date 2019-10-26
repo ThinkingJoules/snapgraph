@@ -405,6 +405,22 @@ function mergeObj(oldO,newO){
         oldO[key] = newO[key]
     }
 }
+const MemoStore = (function(func,toKey,argChecker){
+    const cache = new Map()
+    if(!(func instanceof Function && toKey instanceof Function && argChecker instanceof Function)){
+        throw new Error('Must provide 3 functions to use MemoStore')
+    }
+    return function(){//key must be string
+        argChecker(arguments)
+        const key = toKey(arguments)
+        let val = cache.get(key)
+        if(val === undefined){
+            val = func.apply(this, arguments);
+            cache.set(key,val)
+        }
+        return val;
+    }  
+ })
 //error handling
 function throwError(cb,errmsg){
     let error = (errmsg instanceof Error) ? errmsg : new Error(errmsg)
@@ -2053,25 +2069,126 @@ function isLink(val){
     return false
 }
 
+const hammingWt = MemoStore(function(n) {
+    n = n - ((n >> 1) & 0x55555555)
+    n = (n & 0x33333333) + ((n >> 2) & 0x33333333)
+    return ((n + (n >> 4) & 0xF0F0F0F) * 0x1010101) >> 24
+    },
+    function(args){
+        return String(args[0])
+    },
+    function(args){
+        if(args.length !== 1)throw new Error('Must pass one arg')
+        if(isNaN(args[0]*1))throw new Error('Arg must be a number')
+    }
+)
+
+
+
+
+
+const mem = new Map()
+function BitID(uint8){//should only be used for ID's or things you want both the string and the buffer often
+    let buf,temp,binStr
+    const bin = this
+    if(uint8 instanceof BitID)return uint8
+    else if(uint8 instanceof Buffer || uint8 instanceof Uint8Array || uint8 instanceof ArrayBuffer || Array.isArray(uint8)){
+        buf = Buffer.from(uint8)//always copy
+    }else if(typeof uint8 === 'string'){
+        binStr = uint8
+        buf = Buffer.from(uint8,'binary')
+    }else throw new Error('Ambiguous input, please provide a string, or Array-like set of bytes')
+    bin.string = binStr || buf.toString('binary')
+    if((temp = mem.get(binStr)) !== undefined)return temp
+    bin.buffer = buf
+    mem.set(binStr, bin)
+    return bin
+}
+BitID.dist = function(bin1,bin2){
+    if(!(bin1 && bin2)) throw new Error('Must provide 2 Arguments')
+    bin1 = BitID(bin1),bin2 = BitID(bin2)
+    if(bin1.buffer.length !== bin2.buffer.length)throw new Error('Byte arrays must be the same length')
+    let d = 0
+    let len = bin1.buffer.length
+    for (let i = 0; i < len; i++) {
+        d += hammingWt(bin1.buffer[i]^bin2.buffer[i])
+    }
+    return d
+}
+
+
+
+
+function hammingDist(a,b){
+    let d = 0;
+    let h = a ^ b;
+    while (h > 0) {
+        d ++;
+        h &= h - 1;
+    }
+    return d;
+}
+function validBytes(compByte,dist){
+    if(dist > 8 || dist < 0)throw new Error('dist must be between 0-8')
+    if(compByte>255)throw new Error('must provide an unsigned 8 bit number')
+    if(dist === 0)return [compByte]
+    let total = (factorial(8)/(factorial(dist)*factorial(8-dist)))
+    let val = Math.pow(2,dist)-1
+    if(dist === 8)return [compByte^val]
+    let valid = []
+    for (let i = 0; i < total; i++) {
+        valid.push(compByte^val)
+        //https://math.stackexchange.com/questions/2254151/is-there-a-general-formula-to-generate-all-numbers-with-a-given-binary-hamming
+        let c = val & -val;
+        let r = val + c;
+        val = (((r^val) >> 2) / c) | r;
+    }
+    return valid;
+}
+function factorial(num) {
+    var result = num;
+    if (num === 0 || num === 1) 
+      return 1; 
+    while (num > 1) { 
+      num--;
+      result *= num;
+    }
+    return result;
+}
+
+
 function buffUtil (input,opt){
     opt = opt || {}
-    let buffer = toBuffer(input)
-    buffer.utilString = function(encoding,header){
-        encoding = encoding || 'binary'
-        if(header)return outputHeaderedStr()
-        return this.buffer.toString(encoding)
-        function outputHeaderedStr(){
-            const exportedAsBase64 = this.buffer.toString('base64')
-            return `-----BEGIN ${header}-----\n${exportedAsBase64}\n-----END ${header}-----`;
+    let buffer = toBuffer(input,opt.encoding)
+    buffer[Symbol.toPrimitive] = function(hint){
+        if (hint == 'string') {
+            return this.toString('binary');
         }
+        return this;
     }
-    buffer.slice = function(start,end){
-        return buffUtil(Uint8Array.prototype.slice.call(this,start,end))
-    }
+    // Object.defineProperties(buffer,{
+    //     utilString: {
+    //         value: function(encoding,header){
+    //             encoding = encoding || 'binary'
+    //             if(header)return outputHeaderedStr()
+    //             return this.toString(encoding)
+    //             function outputHeaderedStr(){
+    //                 const exportedAsBase64 = this.toString('base64')
+    //                 return `-----BEGIN ${header}-----\n${exportedAsBase64}\n-----END ${header}-----`;
+    //             }
+    //         }
+    //     },
+    //     slice: {
+    //         value: function(start,end){
+    //             return buffUtil(Uint8Array.prototype.slice.call(this,start,end))
+    //         }
+    //     }
+    // })
     return buffer
     
 }
 function toBuffer(input,encoding){
+    encoding = encoding || 'binary'
     if(input instanceof Buffer)return input
     if(input instanceof Uint8Array || input instanceof ArrayBuffer)return Buffer.from(input.buffer,input.byteOffset,input.byteLength)
     if(typeof input !== 'string')return encode(input,false,true)
@@ -2094,23 +2211,26 @@ function toBuffer(input,encoding){
     }
 }
 
-// function toBuffer(val,fixedLen,encoding){
-//     if(val === undefined)return
-//     let temp
-//     if(val instanceof Buffer){
-//         return val
-//     }else if(Array.isArray(val)){
-//         return Buffer.from(val)
-//     }else if(typeof val === 'string'){
-//         if((temp = isLink(val)))val = temp //extract base64
-//         return Buffer.from(val,encoding)
-//     }else if(typeof val === 'number'){ //to signed or usig int
-//         let sig = (val<0)
-//         return intToBuff(val,fixedLen,sig)
-//     }else{
-//         throw new Error('Could not parse input to binary.')
-//     }
-// }
+function uintToBuff(num,fixedLen){
+    let n = Math.abs(num)
+    let byteLength = Math.ceil(Math.log(n+1)/Math.log(256)) || 1
+    let buff = Array.from({length:(fixedLen || byteLength)},()=>0)
+    if(fixedLen && fixedLen<byteLength)console.warn('value exceeds buffersize. Buffer represents end bytes.')
+    fixedLen = fixedLen || byteLength
+    for ( let index = buff.length-1; index >= fixedLen-byteLength; index -- ) {
+        let byte = n & 0xff;
+        buff [ index ] = byte;
+        n = (n - byte) / 256 ;
+    }
+    return buff;
+}
+function buffToUint(bytes){
+    let value = 0;
+    for ( var index = 0; index < bytes.length; index ++ ) {
+        value = (value * 256) + bytes[index];
+    }
+    return value;
+}
 function intToBuff(num,fixedLen,signed){
     let n = (num<0)?num*-1:num
     let byteLength = Math.ceil(Math.log((signed?2:1*n)+1)/Math.log(256)) || 1
@@ -2121,13 +2241,8 @@ function intToBuff(num,fixedLen,signed){
     buff[op](num,fixedLen?fixedLen-byteLength:0,byteLength)
     return buff
 }
-function buffToInt(buff,signed){
-    let op = (signed)?'readIntBE':'readUIntBE'
-    if(typeof buff === 'string')buff=Buffer.from(buff,'base64')
-    return buff[op](0,buff.length);
-}
 function incBuffer (buffer,amt) {//increment buffer
-    amt = intToBuff(amt || 1)
+    amt = uintToBuff(amt || 1)
     let amtEnd = amt.length - 1
     for (var i = amtEnd; i >= 0; i--) {
         let j =  buffer.length - 1 - amtEnd+i
@@ -2145,7 +2260,23 @@ function incBuffer (buffer,amt) {//increment buffer
         }
     }
 }
+function buffToInt(buff,signed){
+    let op = (signed)?'readIntBE':'readUIntBE'
+    if(typeof buff === 'string')buff=Buffer.from(buff,'base64')
+    return buff[op](0,buff.length);
+}
 
+function outputHeaderedStr(jsTarget,what){
+    const exportedAsBase64 = encode(jsTarget,true,true)//always encode, even if it is already buffer
+    return `-----BEGIN ${what}-----\n${exportedAsBase64}\n-----END ${what}-----`;
+}
+function parseHeaderedStr(headeredString){
+    //returns what was in the label 'what' and the contents
+    let r = /(?:-----BEGIN )(.+)(?:-----)/
+    let what = headeredString.match(r)[1]
+    let content = headeredString.split("\n")[1]
+    return {what,content}
+}
 
 
 function rand(len, charSet,all){
@@ -2477,5 +2608,12 @@ export {
     randInt,
     encode,
     decode,
-    buffUtil
+    buffUtil,
+    MemoStore,
+    BitID,
+    uintToBuff,
+    buffToUint,
+    hammingWt,
+    outputHeaderedStr,
+    parseHeaderedStr
 }

@@ -89,7 +89,7 @@ import commsInit from './peer/listen'
 import Resolver from './resolver'
 import addListeners from './events'
 import Aegis from './aegis';
-import Aeon from './aeon'
+import Monarch from './monarch'
 import coreApi from './coreApi'
 import {initNewGraph} from './configs'
 import Store from './store.js';
@@ -134,7 +134,7 @@ export default function Snap(initialPeers,opts){
     root.resolver = new Resolver(root)
  
     root.aegis = new Aegis(root)
-    root.aeon = new Aeon(root)
+    root.monarch = new Monarch(root)
     coreApi(root)
     addListeners(root)
     //initializeSnap(root)//who are we, are we persistent, who do we bootstrap with, what is our ip
@@ -154,7 +154,7 @@ export default function Snap(initialPeers,opts){
     Object.assign(self,snapChainOpt(self))   
 }
 function initRoot(root){
-    const toRun = root.peer.isPeer?[pid,peers,chains,auth,initial,bootstrap,update]:[pid,initial]
+    const toRun = root.peer.isPeer?[pid,peers,chains,auth,initial,bootstrap,update]:[pid,peers,chains,initial,bootstrap]
     run()
     function run(){
         if(!toRun.length){done();return}
@@ -175,13 +175,13 @@ function initRoot(root){
                     owner = root.opt.owner;
                     date = Date.now()
                 }
-                let proof = await root.aeon.authPeer(version,priv,pub,pubsig,iv,stateSig,date,addr,owner)
+                let proof = await root.monarch.authPeer(version,priv,pub,pubsig,iv,stateSig,date,addr,owner)
                 if(version !== date)root.store.putKey(Buffer.from([0,0]),proof)
                 else run()
             }else{
-                auth = await root.aeon.newPID(24)
+                auth = await root.monarch.newPID(24)
                 root.store.putKey(Buffer.from([0,0]),auth)
-                if(!root.peer.isPeer){root.peer.id = auth[0]}
+                if(!root.peer.isPeer){root.peer.id = BitID(auth[0])}
                 run()
             }
         })
@@ -196,9 +196,8 @@ function initRoot(root){
     }
     function auth(){
         //if our peer proof says we are owned, then verify the owners cid on our local machine
-        let cidStr = root.peer.owner.utilString()
-        let they = root.crowd.people.get(cidStr)
-        if(!they || (they && !they.peers.has(root.peer.owner))){root.peer.owner = false;run();return}
+        let them = root.crowd.people.get(root.peer.owner.string)
+        if(!them || (them && !them.peers.has(root.peer.id))){root.peer.owner = false;run();return}
 
         //root.peer.owner = cid
         run()

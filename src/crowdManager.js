@@ -1,4 +1,4 @@
-import { setValue, signChallenge, getValue, buffUtil } from './util';
+import { setValue, signChallenge, getValue, buffUtil, BitID, buffToUint, uintToBuff, intToBuff } from './util';
 
 export default function Crowd(root){
     const crowd = this
@@ -18,13 +18,13 @@ export default function Crowd(root){
             }
         }
     }
-    crowd.putStmt = async function(header,payload,peer){ //only for genesis block???
+    crowd.putStmt = async function(header,payload,peer){ 
         if(!peer)peer = new Person(root,header)//we got this info from a 'putPeer' msg (this is either a new Peer Proof or an update to the state on the proof)
         if(!peer.isPeer){
             addToMesh()
             return
         }
-        let work = await root.aeon.verifyPID(...header)
+        let work = await root.monarch.verifyPID(...header)
         if(!work){root.opt.warn('PID did not match specified');peer.disconnect();return}
         if(work.diffHit < (root.opt.minPeerWork || 24)){root.opt.warn('PID proof did not make the minimum work threshold.');peer.disconnect();return}
         
@@ -137,38 +137,27 @@ export default function Crowd(root){
     crowd.updateRT = function(peer,routingTable){//from 'rtu' message
         //someone (peer) is telling us who they have connected/disconnected from.
     } 
-    function Stmt(header,body){
-        let s = this
-        s.cid = header[0]
-        s.st = header[1]
-        s.ts = header[2]
-        s.pub = header[3]
-        s.sig = header[4]
-        s.hash = header[5]
-        s.proof = header[6]
-        s.body = body
-        s.header = header
-    }
+    
 }
 
-function Person(root,cid,restore){
+function Person(root,cid,restore){//can only run constructor one time
     let them = this
 
     restore = restore || []
     them.id = restore[0] || cid
-    them.proof = restore[1] || null
-    them.said = parseRestoreSet(2)
-    them.tail = restore[3] || null
-    them.wkns = parseRestoreSet(4)
-    them.peers = parseRestoreSet(5)
-    them.pin = restore[6] || false
-    them.headersOnly = [null,undefined].includes(restore[7]) ? true : restore[7]
+    them.proof = restore[1] || null //set from saidStmt
+    them.said = parseRestoreSet(2) //only added to from saidStmt, set of stmt objects
+    them.tail = restore[3] || null //altered from adding by saidStmt, should be the prevSig of the last valid block on the chain
+    them.wkns = parseRestoreSet(4) //altered from adding by saidStm
+    them.peers = parseRestoreSet(5) //altered from adding by saidStm
+    them.pin = restore[6] || false //set from a 'follow' api call, will not prune regardless of dist
+    them.headersOnly = [null,undefined].includes(restore[7]) ? true : restore[7] //not sure...
     let where = (root.peer.isPeer && root.peer.id) || root.state.anchor
-    them.dist = restore[8] || (them.id && where) ? root.aeon.distance(where,this.id) : Infinity
+    them.dist = restore[8] || (them.id && where) ? root.aeon.distance(where,them.id) : Infinity
     them.diffHit = restore[9] || 0
     them.work = restore[10] || 0
     function parseRestoreSet(el){
-        return new Set((restore[el] && restore[el].length && restore[el].map((x)=>buffUtil(x).utilString()) || []))
+        return new Set((restore && restore[el] && restore[el].length && restore[el].map((x)=>BitID(x)) || []))
     }
     them.verifyStmt = async function(proof,work){
         work = work || await root.aeon.verifyPID(...proof)

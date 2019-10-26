@@ -87,29 +87,40 @@ export default function PeerManager(root){
         }
     }
     mesh.putPeerProof = async function(proof,peer){
-        if(typeof proof === 'string'){//this is something from initialized opts
+        if(typeof proof === 'string'){//this is something from initialized opts, this is just an IP address/url
             //we will end up here again once we get the proof from connecting
-            mesh.connect(new Peer(root,false,proof))
+            mesh.connect(new Peer(root,proof))
             return
         }
-        if(!peer)peer = new Peer(root,proof)//we got this info from a 'putPeer' msg (this is either a new Peer Proof or an update to the state on the proof)
+        if(peer){//this is only from getting a proof from a peer we are connecting to
+            if(await peer.addProof(proof)){
+                if(peer.owner && !peer.ownerVerified)root.gossip.verifyPeerOwner(peer)
+                return await addToMesh()
+            }
+        }
+        peer = peer || new Peer(root,false)//we got this info from a 'putPeer' msg (this is either a new Peer Proof or an update to the state on the proof)
+        if(peer){
+            peer.addProof(proof)
+
+        }
+        if(!peer){
+            if(await peer.addProof(proof)){}
+        }else if(peer.sameProof(proof)) {
+
+        }
+        if(!await peer.addProof(proof)){root.opt.warn('Invalid peer Proof.');peer.disconnect();return}
         if(!peer.isPeer){
             addToMesh()
             return
         }
-        let work = await root.aeon.verifyPID(...proof)
-        if(!work){root.opt.warn('PID did not match specified');peer.disconnect();return}
-        if(work.diffHit < (root.opt.minPeerWork || 24)){root.opt.warn('PID proof did not make the minimum work threshold.');peer.disconnect();return}
-        
-        let pidBuff = buffUtil(proof[0])
+        if(peer.diffHit < (root.opt.minPeerWork || 24)){root.opt.warn('PID proof did not make the minimum work threshold.');peer.disconnect();return}
         let changed = await addToMesh()
         if(changed){
             //this is either new or changed
             //we must propogate the changes to... all those connected to us? Or just in the direction?
         }
         async function addToMesh(){
-            let pidStr = pidBuff.utilString()
-            let inMesh = mesh.get(pidStr)
+            let inMesh = mesh.get(peer.id.string)
             let added = true
             if(inMesh)return analyzePeer()
             if(peer.connected || mesh.state.peerCount < root.opt.peerCache || !peer.isPeer){//incoming connection (we are a peer) OR browser loading opt initial
@@ -138,7 +149,7 @@ export default function PeerManager(root){
         
         function analyzeMesh(){
             //if this is a new peer (either browser or first boot on nodejs) then we need to request a bunch more nodes so we can build routes
-            let all = [...mesh.peers.values()].sort((a,b)=>a.dist - b.dist)        
+            let all = [...mesh.peers.values()].sort((a,b)=>a.peerDist - b.peerDist)        
             let allPeers = all.filter((x)=>x.isPeer)
             let allConn = all.filter((x)=>x.connected)
             let peerConn = allConn.filter((x)=>x.verified && x.isPeer)
@@ -147,7 +158,10 @@ export default function PeerManager(root){
             mesh.state.totalConnections = allConn.length
             mesh.state.peersConnected = peerConn.length
             mesh.state.hop2 = peerConn.map((x)=>x.connectedTo.size).reduce((acc,cur)=>acc+=cur,0)
-            mesh.state.closest = all[0].dist
+            mesh.state.closestPeer = all[0].peerDist
+            all.sort((a,b)=>a.chainDist-b.chainDist)
+            mesh.state.closestChain = all[0].chainDist
+
             mesh.state.map = mapDistr()
             mesh.state.gap = mesh.state.map.filter((x)=>x.actualCount<x.targetCount)
             if(all.length>root.opt.peerCache)pruneMesh(mesh.state.map)
@@ -217,7 +231,7 @@ export default function PeerManager(root){
             root.mesh.peers.set(peer.id.toString('base64'),peer);
             return
         }
-        let work = await root.aeon.verifyPID(...proof)
+        let work = await root.monarch.verifyPID(...proof)
         if(!work){root.opt.warn('PID did not match specified');peer.wire&&peer.wire.close();return}
         root.opt.debug('Valid signature, peer authenticated!')
         peer.addProof(proof)

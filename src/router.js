@@ -1,6 +1,6 @@
 import { on, setValue, getValue, intToBuff, buffUtil } from "./util";
 import EventEmitter from 'eventemitter3'
-import Aeon from "./aeon";
+import Monarch from "./monarch";
 import { Msg } from "./wire";
 const noop = function(){}
 export default function Router(root){
@@ -57,14 +57,14 @@ export default function Router(root){
         let challenge = buffUtil(sendMsg.id)
         root.event.once(challenge.utilString(),async function(msg){//onReply
             console.log('HAS SIG',msg,this)
-            let [pid,pub,pubSig,iv,addrsig,date,addr,cid,sig,authCode,connectedTo] = msg[3]//COMBINED INTRO AND CHALLENGE
+            let [pid,pub,pubsig,iv,stateSig,date,addr,owner,sig,authCode,connectedTo] = msg[3]//COMBINED INTRO AND CHALLENGE
             let peer = msg.from
             if(!authCode && pub && !await root.verify(sig,pub,challenge)){root.opt.warn('Challenge Sig is invalid');peer.disconnect();return}
             
             //todo handle authcode
             if(authCode)root.opt.debug('authCode API not done')//do something
             
-            root.mesh.putPeerProof([pid,pub,pubSig,iv,addrsig,addr,date],peer)
+            root.mesh.putPeerProof([pid,pub,pubsig,iv,stateSig,date,addr,owner],peer)
         })
 
         root.opt.debug('sending challenge',sendMsg)

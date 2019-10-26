@@ -122,14 +122,14 @@ export default function SG(root){
 
     sg.newPID = async function(work){
         if(!root.peer.isPeer)return {pid:root.aegis.random(8)}
-        let {ct,iv} = await root.aeon.pow(null,{target:work||24,all:true,contUpdateCB:root.opt.debug,updateEvery:1000000})
+        let {ct,iv} = await root.monarch.pow(null,{target:work||24,all:true,contUpdateCB:root.opt.debug,updateEvery:1000000})
         console.log('CT:',[...ct])
         let pid = ct.slice(ct.length-16-16,ct.length-16).reverse()
         return {pid,iv}
     }
     sg.makePID = async function(iv,opt){
         opt = opt || {}
-        let {diffHit,ct} = await root.aeon.checkPow(null,iv,{all:true})
+        let {diffHit,ct} = await root.monarch.checkPow(null,iv,{all:true})
         let pid = ct.slice(ct.length-16-16,ct.length-16).reverse()
         if(opt.all)return {pid,diffHit}
         return pid

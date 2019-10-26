@@ -1,7 +1,5 @@
 import {getValue,setValue,rand,encode,decode} from './util'
 import {Crypto} from "@peculiar/webcrypto"
-import atob from 'atob'
-import btoa from 'btoa'
 
 const isNode=new Function("try {return this===global;}catch(e){return false;}")()
 export default function Aegis(root){
@@ -71,13 +69,13 @@ export default function Aegis(root){
         opt = opt || {};
         let salt = entropy || opt.salt
         salt = (salt && Buffer.from(salt)) || aegis.random(16)
-        let srcBits = encode(jsThing,{sortKeys:true})
+        let srcBits = (jsThing instanceof Buffer || jsThing instanceof Uint8Array) ? jsThing : encode(jsThing,false,true)
         let keyBits = await aegis.subtle.importKey('raw', srcBits, {name:'PBKDF2'}, false, ['deriveBits'])
         .then(async(key) =>{
             console.log(key)
             return Buffer.from(await aegis.subtle.deriveBits({
                 name: 'PBKDF2',
-                iterations: opt.iterations || 250000,
+                iterations: opt.iterations || 750000,
                 salt: Buffer.from(salt),
                 hash: {name: 'SHA-256'},
               }, key, 256))
@@ -87,7 +85,7 @@ export default function Aegis(root){
     aegis.encrypt = async function(payload,keyBits,cb){
         let u
         if(u === payload){ console.warn('`undefined` not allowed. VALUE CHANGED TO `null`!!!') }
-        let encPayload = encode(payload,{sortKeys:true})
+        let encPayload = encode(payload,false,true)
         let iv = aegis.random(12)
         let ct = await aegis.subtle.importKey('raw', keyBits, 'AES-GCM', false, ['encrypt'])
         .then((aes) => aegis.subtle.encrypt(
@@ -123,7 +121,7 @@ export default function Aegis(root){
         let s = encObj.s
         let jsThing = await aegis.extend(passphrase,s)
         .then(async(keyBits) =>{
-            return Buffer.from(await aegis.decrypt(encObj,keyBits))
+            return await aegis.decrypt(encObj,keyBits)
         })
         return jsThing
     }
@@ -135,35 +133,7 @@ export default function Aegis(root){
         .then((cKey)=> root.aegis.subtle.verify(root.aegis.settings.ecdsa.sign,cKey,sig,data))
         if(cb && cb instanceof Function) cb(passed)
         return passed
-    }
-
-    //not sure where to put this, its a general util with a dependencies(btoa,atob,encode,decode)
-    
-    root.util.outputHeaderedStr = outputHeaderedStr
-    root.util.parseHeaderedStr = parseHeaderedStr
-    function jsToStr(js) {
-        return btoa(String.fromCharCode.apply(null, encode(js,{sortKeys:true})))
-    }
-    function strToJs(str){
-        str = atob(str)
-        const buf = new ArrayBuffer(str.length);
-        const bufView = new Uint8Array(buf);
-        for (let i = 0, strLen = str.length; i < strLen; i++) {
-          bufView[i] = str.charCodeAt(i);
-        }
-        return decode(bufView)
-    }
-    function outputHeaderedStr(jsTarget,what){
-        const exportedAsBase64 = encode(jsTarget,true,true)
-        return `-----BEGIN ${what}-----\n${exportedAsBase64}\n-----END ${what}-----`;
-    }
-    function parseHeaderedStr(headeredString){
-        //returns what was in the label 'what' and the contents
-        let r = /(?:-----BEGIN )(.+)(?:-----)/
-        let what = headeredString.match(r)[1]
-        let content = headeredString.split("\n")[1]
-        return {what,content}
-    }
+    }  
 }
 
 
