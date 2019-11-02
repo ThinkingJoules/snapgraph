@@ -1,4 +1,5 @@
 import { decode as dec, encode as enc } from "@msgpack/msgpack";
+import EventEmitter from "eventemitter3";
 
 //REGEX STUFF
 const regOr = (regArr) =>{
@@ -398,28 +399,40 @@ function mergeObj(oldO,newO){
     //console.log({oldO,newO})
     for (const key in newO) {
         const val = newO[key];
-        if(typeof val === 'object' && val !== null && !Array.isArray(val)){
-            if(typeof oldO[key] !== 'object')oldO[key] = {}
+        if(isObj(val,true)){
+            if(!isObj(oldO[key]))oldO[key] = {}
             mergeObj(oldO[key],newO[key])
         }
         oldO[key] = newO[key]
     }
 }
-const MemoStore = (function(func,toKey,argChecker){
+const MemoStore = (function(func,toKey,argChecker,isAsync){
     const cache = new Map()
     if(!(func instanceof Function && toKey instanceof Function && argChecker instanceof Function)){
         throw new Error('Must provide 3 functions to use MemoStore')
     }
-    return function(){//key must be string
-        argChecker(arguments)
-        const key = toKey(arguments)
+    return isAsync ?
+    async function(){//key must be string
+        argChecker(...arguments)
+        const key = toKey(...arguments)
+        let val = cache.get(key)
+        if(val === undefined){
+            val = await func.apply(this, arguments);
+            cache.set(key,val)
+        }
+        return val;
+    } :
+    function(){//key must be string
+        argChecker(...arguments)
+        const key = toKey(...arguments)
         let val = cache.get(key)
         if(val === undefined){
             val = func.apply(this, arguments);
             cache.set(key,val)
         }
         return val;
-    }  
+    }
+    
  })
 //error handling
 function throwError(cb,errmsg){
@@ -2074,16 +2087,363 @@ const hammingWt = MemoStore(function(n) {
     n = (n & 0x33333333) + ((n >> 2) & 0x33333333)
     return ((n + (n >> 4) & 0xF0F0F0F) * 0x1010101) >> 24
     },
-    function(args){
-        return String(args[0])
+    function(n){
+        return String(n)
     },
-    function(args){
-        if(args.length !== 1)throw new Error('Must pass one arg')
-        if(isNaN(args[0]*1))throw new Error('Arg must be a number')
+    function(n){
+        if(isNaN(n*1))throw new Error('Arg must be a number')
+        if(n>Math.pow(2,8*4)-1)throw new Error('Number must be within 32bit range')
     }
 )
+function buildStateMachine(configObj,Proto){
+    let masks = new Set(Array.from({length:31},(a,i)=>Math.pow(2,i)))
+    const keys = new Map()
+    const {inputStates,derivedStates} = configObj
+    for (let {key,mask,test} of inputStates) {
+        mask = getMask(mask)
+        let k = new State(key,mask,test,true)
+        keys.set(k.key,k)
+    }
+    if(derivedStates){
+        if(!Array.isArray(derivedStates))throw new Error('derivedStates must be an Array with elements of `[Sring(key),OPTNumber(mask),ARRAY(requires),FN(setter),Bool(setterIsAsync)]`')
+        for (let {key,mask,args,setter,isAsync} of derivedStates) {
+            if(!(setter instanceof Function))throw new Error('Must provide a function to derive state with')
+            if(!Array.isArray(args))throw new Error('Must provide an array of key names to use as arguments for your setter function')
+            let stateObj = keys.get(key)
+            mask = getMask(mask)
+            if(!stateObj){
+                stateObj = new State(key,mask,false,false,setter,isAsync)
+                keys.set(stateObj.key,stateObj)
+            }else{//only for equivalent keys, setting one will convert to other and vice-versa
+                stateObj.setter = setter
+                stateObj.async = isAsync
+            }
+            for (const dependentOnKey of args) {
+                let prev = keys.get(dependentOnKey)
+                if(!prev)throw new Error('Must specify derived keys using only input or derived keys already specified!')
+                stateObj.addPrev(prev)
+                //prev.addNext(stateObj)
+            }
+        }
+    }
+    function getMask(mask){
+        if(mask && !masks.has(mask))throw new Error('Mask value already used!')
+        if(mask && (isNaN(mask) || (mask < 1 || mask > Math.pow(2,31))))throw new Error('mask must be a number between (inclusive): 1 &',Math.pow(2,31))
+        if(!mask){
+            let arr = [...masks]
+            mask = arr.shift()
+            masks = new Set(arr)
+            return mask
+        }
+        masks.delete(mask)
+        return mask
+    }
+    function State(key,mask,test,isInput,setter,setterIsAsync){
+        const s = this
+        s.key = key
+        s.mask = mask //mask value of s key
+        s.prevMask = 0 //mask value of all keys needed to derive s key
+        s.test = test instanceof Function ? test : false
+        s.requires = []
+        s.input = !!isInput
+        s.setter = setter instanceof Function ? setter : false
+        s.async = !!setterIsAsync
+        s.adjacent = []
+        s.depth = 0
+        s.addPrev = function(stateObj){
+            s.requires.push(stateObj)
+            s.prevMask |= stateObj.mask
+            s.depth = Math.max(...s.requires.map((x)=>x.depth))+1
+        }        
+    }
+    return function(){//object factory
+        const values = {}//only this fn can alter
+        let state = 0//only this fn can alter
+        const event = new EventEmitter()
+        let o = new Proto(...arguments)
+        o.setKeys = setKeys
+        o.clearKeys = clearKeys
+        o.hasState = hasState
+        o.on = event.on
+        for (const key of keys.keys()) {
+            Object.defineProperty(o,key,{
+                enumerable:true,
+                get(){return values[key]},
+                set(val){setKeys([[key,val]])}
+            })
+        }
+        Object.defineProperty(o,'state',{
+            get(){return state},
+        })
+        return o
 
+        async function setKeys(map){
+            if(!Array.isArray(map)){
+                if(map.entries instanceof Function)map = [...map.entries()]
+                else map = Object.entries(map) 
+            }
+            if(!Array.isArray(map) || map.every((x)=>{return Array.isArray(x)}))throw new Error('Must provide a map array [[key,value],...]')
+            let changes = 0
+            let keysAltered = []
+            for (let [k,v] of map) {
+                let key = checkInput(k,v)
+                if(!key)continue
+                state |= key.mask
+                values[key.key] = v
+                changes |= key.mask
+                keysAltered.push(key)
+            }
+            if(!changes)return o
+            return await calc(changes,keysAltered)
+        }
+        async function clearKeys(arr){
+            if(!Array.isArray(arr))throw new Error('Must provide an array [key,...]')
+            let changes = 0
+            let keysAltered = []
+            for (let k of arr) {
+                let key = keys.get(k)
+                if(values[k] === undefined)continue
+                state ^= key.mask
+                values[k] = undefined
+                changes |= key.mask
+                keysAltered.push(key)
+            }
+            if(!changes)return o
+            return await calc(changes,keysAltered,clear)
+    
+        }
+        async function hasState(arr,mask){
+            if(!Array.isArray(arr))throw new Error('Must provide an array [key,...]')
+            if(mask && isNaN(mask))throw new Error('Must provide a number that represents the keys you are looking for')
+            if(mask)return (state == (mask | state))
+            for (let k of arr) {
+                let key = keys.get(k)
+                if(!key){ //invalid things will not throw error?
+                    throw new Error('Specified key is not stateful!')
+                }
+                if(!(state & key.mask))return false
+            }
+            return true
+    
+        }
+        function checkInput(k,v){
+            if(v === undefined)throw new Error('Must provide a value to set. To clear a state, use .clearKeys([key,...])')
+            let key = keys.get(k)
+            if(!key || !key.input)throw new Error('Invalid Key')
+            if(v === values[k])return false //no change
+            if(key.test)key.test(v)
+            return key
+        }
+        async function calc(changeMask,keysAltered,clear){
+            for (const keyObj of keys.values()) {
+                const {depth,mask,prevMask,async,setter,key} = keyObj
+                if(depth === 0)continue
+                if(!(changeMask & prevMask))continue
+                if(prevMask !== (state & prevMask))continue
+                if(clear){
+                    values[key] = undefined
+                    changeMask |= mask
+                    state ^= mask
+                    keysAltered.push(keyObj)
+                    continue
+                }
+                let curVal = keyObj.value,newVal
+                let args = keyObj.requires.map((x)=>{return values[x.key]})
+                if(async){
+                    newVal = await setter(...args)
+                }else{
+                    newVal = setter(...args)
+                }
+                if(newVal === curVal)continue //the input change did not effect the output
+                values[keyObj.key] = newVal
+                changeMask |= keyObj.mask
+                state |= keyObj.mask
+                keysAltered.push(keyObj)
+            }
+            for (const key of keysAltered) {
+                event.emit(key.key,key.value)
+                //event.emit(key.mask,key.value)
+            }
+            event.emit('stateChange',keysAltered.map((x)=>x.key),keysAltered.map((x)=>x.mask))
+            return o
+        }
+    }
+}
 
+function StateManager(thing,configObj){//MAYBE DON'T ATTACH IT TO AN OBJECT, THAT WAY WE DON'T HAVE TO CREATE THE STRUCTURE ON EVERY INSTANCE, JUST MAKE AN EMPTY STATE?
+    const sm = this
+    sm.thing = thing //for object to attach to
+    const {inputStates,derivedStates,initialStates} = configObj
+    let masks = new Set(Array.from({length:31},(a,i)=>Math.pow(2,i)))
+    sm.keys = new Map()
+    sm.state = 0
+    //sm.maxDepth = 0
+    const event = new EventEmitter()
+    sm.on = event.on
+    sm.setKeys = async function(map){
+        if(!Array.isArray(map) || map.every((x)=>Array.isArray(x)))throw new Error('Must provide a map array [[key,value],...]')
+        let changes = 0
+        let keysAltered = []
+        for (let [k,v] of map) {
+            k = String(k)
+            let key = checkInput(k,v)
+            if(!key)continue
+            sm.state |= key.mask
+            key.value = v
+            changes |= key.mask
+            keysAltered.push(key)
+        }
+        if(!changes)return sm.thing
+        return await calc(changes,keysAltered)
+    }
+    sm.clearKeys = async function(arr){
+        if(!Array.isArray(arr))throw new Error('Must provide an array [key,...]')
+        let changes = 0
+        let keysAltered = []
+        for (let k of arr) {
+            k = String(k)
+            let key = sm.keys.get(k)
+            if(key.value === undefined)continue
+            sm.state ^= key.mask
+            key.value = undefined
+            changes |= key.mask
+            keysAltered.push(key)
+        }
+        if(!changes)return sm.thing
+        return await calc(changes,keysAltered,clear)
+
+    }
+    function checkInput(k,v){
+        if(v === undefined)throw new Error('Must provide a value to set. To clear a state, use .clearState(key)')
+        let key = sm.keys.get(k)
+        if(!key || !key.input)throw new Error('Invalid Key')
+        if(v === key.value)return false //no change
+        if(key.test)key.test(v)
+        return key
+    }
+    async function calc(changeMask,keysAltered,clear){
+        console.log(changeMask,keysAltered)
+        for (const key of sm.keys.values()) {
+            const {depth,prevMask,async,setter} = key
+            if(depth === 0)continue
+            if(!(changeMask & prevMask))continue
+            if(prevMask !== (sm.state & prevMask))continue
+            if(clear){
+                key.value = undefined
+                changeMask |= key.mask
+                sm.state ^= key.mask
+                keysAltered.push(key)
+                continue
+            }
+            let curVal = key.value,newVal
+            let args = key.requires.map((x)=>x.value)
+            if(async){
+                newVal = await setter(...args)
+            }else{
+                newVal = setter(...args)
+            }
+            if(newVal === curVal)continue //the input change did not effect the output
+            key.value = newVal
+            changeMask |= key.mask
+            sm.state |= key.mask
+            keysAltered.push(key)
+        }
+        for (const key of keysAltered) {
+            event.emit(key.key,key.value)
+            //event.emit(key.mask,key.value)
+        }
+        event.emit('stateChange',keysAltered.map((x)=>x.key),keysAltered.map((x)=>x.mask))
+        return sm.thing
+    }
+
+    //construct the state manager
+    for (let {key,mask,test} of inputStates) {
+        mask = getMask(mask)
+        let k = new State(key,mask,test,true)
+        sm.keys.set(k.key,k)
+    }
+    if(derivedStates){
+        if(!Array.isArray(derivedStates))throw new Error('derivedStates must be an Array with elements of `[Sring(key),OPTNumber(mask),ARRAY(requires),FN(setter),Bool(setterIsAsync)]`')
+        for (let {key,mask,args,setter,isAsync} of derivedStates) {
+            if(!(setter instanceof Function))throw new Error('Must provide a function to derive state with')
+            if(!Array.isArray(args))throw new Error('Must provide an array of key names to use as arguments for your setter function')
+            let stateObj = sm.keys.get(key)
+            mask = getMask(mask)
+            if(!stateObj){
+                stateObj = new State(key,mask,false,false,setter,isAsync)
+                sm.keys.set(stateObj.key,stateObj)
+            }else{//only for equivalent keys, setting one will convert to other and vice-versa
+                stateObj.setter = setter
+                stateObj.async = isAsync
+            }
+            for (const dependentOnKey of args) {
+                let prev = sm.keys.get(dependentOnKey)
+                if(!prev)throw new Error('Must specify derived keys using only input or derived keys already specified!')
+                stateObj.addPrev(prev)
+                //prev.addNext(stateObj)
+            }
+        }
+    }
+    if(initialStates){
+        sm.setKeys(initialStates)
+    }
+    
+    
+    function getMask(mask){
+        if(mask && !masks.has(mask))throw new Error('Mask value already used!')
+        if(mask && (isNaN(mask) || (mask < 1 || mask > Math.pow(2,31))))throw new Error('mask must be a number between (inclusive): 1 &',Math.pow(2,31))
+        if(!mask){
+            let arr = [...masks]
+            mask = arr.shift()
+            masks = new Set(arr)
+            return mask
+        }
+        masks.delete(mask)
+        return mask
+    }
+
+    function State(key,mask,test,isInput,setter,setterIsAsync){
+        const s = this
+        s.key = s.key || String(key)
+        s.value = undefined
+        s.mask = s.mask || mask //mask value of s key
+        s.prevMask = s.prevMask || 0 //mask value of all keys needed to derive s key
+        //s.nextMask = s.nextMask || 0 //mask value of all keys that are dependent on s key
+        s.test = s.test || test instanceof Function ? test : false
+        s.requires = []
+        s.input = s.input === undefined ? isInput : s.input
+        s.setter = setter instanceof Function ? setter : false
+        s.async = !!setterIsAsync
+        s.adjacent = []
+        s.depth = 0
+        Object.defineProperty(thing,key,{
+            get(){return s.value},
+            enumerable:true
+        })
+        s.addPrev = function(stateObj){
+            s.requires.push(stateObj)
+            s.prevMask |= stateObj.mask
+            s.depth = Math.max(...s.requires.map((x)=>x.depth))+1
+            //sm.maxDepth = Math.max(sm.maxDepth,s.depth)
+        }
+        // s.addNext = function(stateObj){
+        //     s.adjacent.push(stateObj)
+        //     s.adjacent.sort((a,b)=>{a.depth-b.depth})
+        //     s.nextMask |= stateObj.mask
+        // }
+    }
+}
+function BinParse(){}
+function stateMask(maskInt,leftPos){
+    //designed to set specific bits at specific positions
+    //if a single bit, maskInt = 1, leftPos = 0-31
+    //if 3 bit int val, maskInt = 0-7, leftPos = 3-31
+    const blank = 0
+    const maskLen = Number(maskInt).toString(2).length
+    leftPos = (leftPos < maskLen) ? maskLen : leftPos
+    return (blank+maskInt)<<(leftPos-maskLen)
+
+}
 
 
 
@@ -2615,5 +2975,6 @@ export {
     buffToUint,
     hammingWt,
     outputHeaderedStr,
-    parseHeaderedStr
+    parseHeaderedStr,
+    buildStateMachine
 }

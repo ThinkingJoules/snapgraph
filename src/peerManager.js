@@ -1,12 +1,10 @@
-import {onMsg, Peer} from './wire'
+import {Peer} from './wire'
 import { setValue, signChallenge, getValue, buffUtil } from './util';
 import WebSocket from 'ws'
-import { cursorTo } from 'readline';
 
 export default function PeerManager(root){
     const mesh = this
     let opt = root.opt
-    const onM = onMsg(root)
     let env;
     if(root.peer.isPeer)env = global
     else env = window
@@ -48,6 +46,7 @@ export default function PeerManager(root){
         let doc = 'undefined' !== typeof document && document;
         if(!peer){ return }
         let ipAddr = peer.address
+        if(!ipAddr)return
         let url = ipAddr.replace('http', 'ws');
         let wire = new root.WebSocket(url);
         if(!(peer instanceof Peer)){root.opt.warn('must supply a peer object to make a connection');return}
@@ -71,7 +70,7 @@ export default function PeerManager(root){
             root.router.send.peerChallenge(peer)
         }
         wire.onmessage = function(raw){
-            onM((raw.data || raw),peer)
+            peer.recv((raw.data || raw),peer)
         };
         return wire
         function reconnect(peer){//move reconnect in to Peer object?
@@ -224,7 +223,7 @@ export default function PeerManager(root){
     mesh.updateRT = function(peer,routingTable){//from 'rtu' message
         //someone (peer) is telling us who they have connected/disconnected from.
     }
-    mesh.newPeer = function(peer,proof){//from connection
+    mesh.newPeer = async function(peer,proof){//from connection
         peer.isPeer = !!proof[1]
         if(!peer.isPeer){
             peer.id = Buffer.from(pid);

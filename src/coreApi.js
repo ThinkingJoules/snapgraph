@@ -1,4 +1,4 @@
-import {onDisConn,onMsg,Peer} from './wire'
+import {Peer} from './wire'
 import { snapID, isLink, isSub, notFound } from './util';
 export default function coreApi(root){
     root.initGraph = function(cid){
@@ -114,7 +114,7 @@ export default function coreApi(root){
         peer.challenge = false
         peer.pub = false
         wire.onclose = function(){//if whoever we are connecting to closes
-            onDisConn(root,peer);
+            //onDisConn(root,peer);
             reconnect(peer);
         };
         wire.onerror = function(error){
@@ -126,7 +126,7 @@ export default function coreApi(root){
             cb(peer)
         }
         wire.onmessage = function(raw){
-            onMsg((raw.data || raw),peer,root.route)
+            //onMsg((raw.data || raw),peer,root.route)
         };
         return wire
         function reconnect(peer){

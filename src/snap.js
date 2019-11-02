@@ -16,7 +16,8 @@ import {
     intToBuff,
     buffToInt,
     encode,
-    decode
+    decode,
+    BitID
 } from './util.js'
 let gbGet
 
@@ -95,14 +96,9 @@ import {initNewGraph} from './configs'
 import Store from './store.js';
 
 const defaultOpts = {
-    networkMaxStmts: 5000000,
-    networkConnMap: [256,256,256,256],
-    //number of keys, instead of max size
-    //networkConnections = x/2 on each side of us these will connect
-    persist: {
-        gossip:{},
-        data:{}, //would be nice to give it a namespace of things to persist (if this peer was only watching 1 db?)
-    },
+    peerCache: isNode?5000000:100,
+    stmtCache: isNode?10000000:1000,
+    
     allocate: isNode ? Infinity : 1024*1024*1024,//max on server, 1 gig in indexddb
     log: console.log,
     debug: function(){},
@@ -196,11 +192,13 @@ function initRoot(root){
     }
     function auth(){
         //if our peer proof says we are owned, then verify the owners cid on our local machine
-        let them = root.crowd.people.get(root.peer.owner.string)
+        run()
+        return
+        if(!root.peer.owner instanceof BitID){run();return}
+        let them = root.crowd.people.get(root.peer.owner)
         if(!them || (them && !them.peers.has(root.peer.id))){root.peer.owner = false;run();return}
 
         //root.peer.owner = cid
-        run()
     }
     function initial(){
         run()

@@ -181,8 +181,7 @@ export default function Monarch(root){
     monarch.verifyCID = async function(cid,proof,hash){
         let {ct,chance,diffHit} = await root.monarch.checkPow(hash,proof,{all:true})
         let cidcheck = ct.slice(0,32)
-        cid = cid instanceof BitID ? cid.buffer : cid
-        return !Buffer.compare(cid,cidcheck)?{diffHit,chance}:0//should be 0 if a match (!0 = true), else -1/1 (!1 = false)
+        return !Buffer.compare(cid instanceof BitID ? cid.buffer : cid,cidcheck)?{diffHit,chance}:0//should be 0 if a match (!0 = true), else -1/1 (!1 = false)
     }
     monarch.auth = async function(auth,cb){
         const {passphrase,creds,authNameString} = auth || {}
@@ -390,6 +389,31 @@ export default function Monarch(root){
         }
         return (num) ? l : Array.from({length:l},(a,i)=>i)
     }
+    monarch.PeerProof = function(proof){
+        const noop = (val)=>{return val}
+        const order = [
+            ['pid',BitID,(val)=>val.buffer],
+            ['pub',Buffer.from,noop],
+            ['pubSig',Buffer.from],noop,
+            ['proof',Buffer.from,noop],
+            ['stateSig',Buffer.from,noop],
+            ['date',noop,noop]
+            ['address',noop,noop],
+            ['owner',(val)=>{val && BitID(val)},(val)=>{val && val.buffer}]
+        ]
+        for (let i = 0; i < order.length; i++) {
+            const [key,b2v] = order[i];
+            const val = proof[i] || proof[key]
+            this[key] = b2v(val)
+        }
+        this.transform = function(){
+            let proof = []
+            for (const [key,b2v,v2b] of order) {
+                proof.push(v2b(this[key]))
+            }
+            return proof
+        }
+    }
     monarch.newPID = async function(work){
         if(!root.peer.isPeer)return [root.aegis.random(8)]
         const {priv,pub} = await root.aegis.pair()
@@ -398,24 +422,23 @@ export default function Monarch(root){
         let {ct,iv} = await monarch.pow(pt,{target:work||24,all:true,contUpdateCB:root.opt.debug,updateEvery:1000000})
         return await monarch.authPeer(0,priv,pub,pt,iv,null,Date.now(),root.opt.address||null,root.opt.owner||null)
     }
-    monarch.verifyPID = async function(pid,pub,pubsig,iv,stateSig,date,addr,owner){
-        if(!await root.verify(pub,pubsig,pub)){root.opt.warn('PubSig is invalid');return false}
-        if(!await root.verify(pub,stateSig,[date,addr,owner])){root.opt.warn('StateSig is invalid');return false}
-        let {ct,chance,diffHit} = await root.monarch.checkPow(pubsig,iv,{all:true})
+    monarch.verifyPID = async function(proof){
+        const {pid,pub,pubSig,proof,stateSig,date,address,owner} = proof
+        if(!await root.verify(pub,pubSig,pub)){root.opt.warn('PubSig is invalid');return false}
+        if(!await root.verify(pub,stateSig,[date,address,owner])){root.opt.warn('StateSig is invalid');return false}
+        let {ct,chance,diffHit} = await root.monarch.checkPow(pubSig,proof,{all:true})
         let pidcheck = ct.slice(0,32)
         return !Buffer.compare(pid,pidcheck)?{diffHit,chance}:0//should be 0 if a match (!0 = true), else -1/1 (!1 = false)
     }
-    monarch.authPeer = async function(version,priv,pub,pubsig,iv,stateSig,date,addr,owner){
-        root.peer.sign = await sign(priv)
-        root.peer.pub = pub
-        let {ct} = await root.monarch.checkPow(pubsig,iv,{all:true})
+    monarch.authPeer = async function(version,priv,pub,pubSig,proof,stateSig,date,address,owner){
+        let thisPeer = new root.gossip.ThisPeer()
+        thisPeer.sign = await sign(priv)
+        let {ct} = await root.monarch.checkPow(pubSig,proof,{all:true})
         root.peer.id = ct.slice(0,32)
-        root.peer.address = addr
-        let stateSig = (version<date || !stateSig)?await root.peer.sign([date,addr,owner]):stateSig
-        root.peer.proof = [root.peer.id,pub,pubsig,iv,stateSig,date,addr,owner]
-        root.peer.owner = buffUtil(owner)
-        root.opt.debug('authPeer Proof:',root.peer.proof)
-        return root.peer.proof
+        root.peer.address = address
+        stateSig = (version<date || !stateSig)?await root.peer.sign([date,address,owner]):stateSig
+        let proof = new monarch.PeerProof({pid:root.peer.id,pub,pubSig,proof,stateSig,date,address,owner})
+        return 
     }
     monarch.distance = function (a,b){
         if(!(a instanceof BitID && b instanceof BitID))throw new Error('Both coords must be a BitID')

@@ -33,33 +33,48 @@ export default function DiskStore(root){
     }
     function get(txn){
         return function(key,cb){
-            let data
-            try {
-                data = decode(txn.getBinary(self.dbi,key,{keyIsBuffer:true}))
-                if(cb instanceof Function)cb(false,data)
-            } catch (error) {
-                if(cb instanceof Function)cb(error)
-            }
+            return new Promise((res,rej)=>{
+                let data
+                try {
+                    data = decode(txn.getBinary(self.dbi,key,{keyIsBuffer:true}))
+                    res(data)
+                    if(cb instanceof Function)cb(false,data)
+                } catch (error) {
+                    rej(error)
+                    if(cb instanceof Function)cb(error)
+                }
+            })
+            
         }
     }
     function put(txn){
         return function(key,value,cb){
-            try {
-                txn.putBinary(self.dbi,key,encode(value),{keyIsBuffer:true})
-                if(cb instanceof Function)cb(false,true)
-            } catch (error) {
-                if(cb instanceof Function)cb(error)
-            }
+            return new Promise((res,rej)=>{
+                try {
+                    txn.putBinary(self.dbi,key,encode(value),{keyIsBuffer:true})
+                    res(true)
+                    if(cb instanceof Function)cb(false,true)
+                } catch (error) {
+                    rej(error)
+                    if(cb instanceof Function)cb(error)
+                }
+            })
+            
         }
     }
     function del(txn){
         return function(key,cb){
-            try {
-                txn.del(self.dbi,key,{keyIsBuffer:true})
-                if(cb instanceof Function)cb(false,true)
-            } catch (error) {
-                if(cb instanceof Function)cb(error)
-            }
+            return new Promise((res,rej)=>{
+                try {
+                    txn.del(self.dbi,key,{keyIsBuffer:true})
+                    res(true)
+                    if(cb instanceof Function)cb(false,true)
+                } catch (error) {
+                    rej(error)
+                    if(cb instanceof Function)cb(error)
+                }
+            })
+            
         }
     }
 }

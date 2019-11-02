@@ -23,15 +23,35 @@ export default function WebStore(root){
             abort: function(){}
         }
     }
-    function get(key,cb){
-        localforage.getItem(key.toString('binary'),function(err,value){
-            if(cb instanceof Function)cb(err,value?decode(value):value)
-        })  
+    async function get(key,cb){
+        try {
+            let data = await localforage.getItem(key.toString('binary'))
+            if(cb instanceof Function)cb(false,data?decode(data):data)
+            return data  
+        } catch (error) {
+            if(cb instanceof Function)cb(error)
+            throw error
+        }
     }
-    function put(key,value,cb){
-        localforage.setItem(key.toString('binary'),encode(value,true,true),cb)
+    async function put(key,value,cb){
+        try {
+            let data = await localforage.setItem(key.toString('binary'),encode(value,true,true))
+            if(cb instanceof Function)cb(false,data)
+            return data  
+        } catch (error) {
+            if(cb instanceof Function)cb(error)
+            throw error
+        }
     }
-    function del(key,cb){
-        localforage.removeItem(key.toString('binary'),cb)  
+    async function del(key,cb){
+        try {
+            let data = await localforage.removeItem(key.toString('binary'))
+            if(cb instanceof Function)cb(false,data)
+            return data  
+        } catch (error) {
+            if(cb instanceof Function)cb(error)
+            throw error
+        }
+          
     }
 }

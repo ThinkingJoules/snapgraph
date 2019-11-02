@@ -9,18 +9,24 @@ export function Msg(replying,type,msgID,body,expire){
     this.body = body || null
     this.expire = expire !== undefined ? expire : Date.now()+30000 //30 second default?
     this.transform = function(){return [this.replying,this.tid,id.buffer,body,expire]}
+    //need to add something for an onion like routed encrypted message
+    //? Maybe that is the next layer down with the encoding/compressing?
     function setType(){
         let types = [//these are the wire message types
-            ['peerChallenge',  0],
+            ['peerChallenge',0],
+            ['signChallenge',1]
             ['redirect',   2],
             ['ping',       4],
             ['routingInfo', 8],
             ['getPeer',    12],
             ['putPeer',    13],
             ['getWKN',     16],
-            ['putWKN',     17],
+            ['getRL',     18],
             ['getStmt',    20],
-            ['putStmt',    21],
+            ['say',    21],
+
+            
+
 
             ['create',     32],
             ['update',     34],
@@ -34,7 +40,7 @@ export function Msg(replying,type,msgID,body,expire){
             ['rpc',        96],
             
         ]
-        let select = types.filter((value)=>{return value.includes(type)}).shift()
+        let select = types.filter((value)=>{return value.includes(type)})[0]
         if(!select)throw new Error('Invalid message type given')
         msg.type = select[0]
         msg.tid = select[1]
